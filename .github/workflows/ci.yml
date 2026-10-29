@@ -99,6 +99,13 @@ jobs:
       - uses: actions/setup-node@v6
         with:
           node-version: "20"
+      # macOS has only 127.0.0.1 on lo0 and sends UDP datagrams of at most 9 KB: the tests' stand-in processors use more
+      # loopback addresses and a 60 KB discovery answer, as Linux and Windows allow out of the box
+      - name: macOS loopback addresses and UDP size for the stand-ins
+        if: runner.os == 'macOS'
+        run: |
+          for i in 2 3 4 5 6 7 8 9 42; do sudo ifconfig lo0 alias 127.0.0.$i up; done
+          sudo sysctl -w net.inet.udp.maxdgram=65535
       # every tools/test_*.py and app/tests/*_test.js; parts that need private data (recordings, captures, Samples) SKIP
       - name: Run every test
         run: python tools/run_tests.py --json test-results.json

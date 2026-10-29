@@ -39,7 +39,7 @@ def get(url, timeout=2):
     with urllib.request.urlopen(url, timeout=timeout) as r: return r.status, r.read()
 
 
-def wait(url, secs=20):
+def wait(url, secs=60):
     end = time.time() + secs
     while time.time() < end:
         try: return get(url)

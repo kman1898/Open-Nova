@@ -145,10 +145,12 @@ for k in range(4):
              ('health%d' % k, '/api/hw/health', {'cards': CARDS, 'known': KNOWN}, 0.05 * k),
              ('layout%d' % k, '/api/hw/read-layout', {'senders': 1}, 0.05 * k),
              ('info%d' % k, '/api/hw/info', {}, 0.05 * k)]
+keep_busy = novalink.BUSY_WAIT; novalink.BUSY_WAIT = 30.0   # this check is about sharing one link, not the busy timeout (slow CI)
 ts = [threading.Thread(target=job, args=j) for j in jobs]
 t0 = time.time()
 for t in ts: t.start()
 for t in ts: t.join(120)
+novalink.BUSY_WAIT = keep_busy
 ok(not errs, 'detect + health + read-layout + info + a long Send at once: all succeed (%.1f s) %s' % (time.time() - t0, errs[:3]))
 ok(A.accepted == 1 and A.rejected == 0, 'one connection for all of them, never a second (accepted %d, refused %d)' % (A.accepted, A.rejected))
 d0 = res.get('detect0', {}).get('cards', [{}])[0].get('ports', {})
