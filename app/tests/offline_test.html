@@ -53,6 +53,7 @@ function run(w, toasts, posts) {
   var d = w.document, $ = function (id) { return d.getElementById(id); };
   var pj = w.ensureLct(w.newProject()); pj.name = 'Offline parity'; pj.mode = 'offline'; pj.procsChosen = true;
   w.replaceProject(pj);
+  posts.length = 0;   // what the server's previous project (another test page's linked processor) asked before this one landed
   var keys = ['h5', 'vx1000', 'vx1000pro', 'mx40pro'], devs = keys.map(function (k) { return w.addProcessor(k); }), lcs = [];
   devs.forEach(function (dv, i) {   // two sections of 4 × 2 cabinets on the first two ports of each processor, on its own screen
     var c0 = w.cardsOfDevice(dv)[0], lc = i ? w.lctNew(dv) : w.P.lct[0];   // (a screen belongs to one processor)
