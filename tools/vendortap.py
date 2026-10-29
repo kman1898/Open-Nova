@@ -1153,14 +1153,17 @@ class Relay:
                     except Exception as e:  # noqa: BLE001
                         self.tape.rec('err', link=link, error='recorder: %s: %s' % (type(e).__name__, e))
                     return
-                try: dst.sendall(d)                       # first passed on, unchanged …
+                def record():                             # a recorder problem never touches the bytes
+                    try: cn.sides[side].feed(d)
+                    except Exception as e:  # noqa: BLE001
+                        self.tape.rec('err', link=link, error='recorder: %s: %s' % (type(e).__name__, e))
+                if side == 'tx': record()                 # a request is recorded before it leaves, so its echo / reply finds it
+                try: dst.sendall(d)                       # passed on unchanged
                 except OSError:
                     for x in pair: x.close()
                     return
                 self.st[key] += len(d)
-                try: cn.sides[side].feed(d)               # … then recorded (a recorder problem never touches the bytes)
-                except Exception as e:  # noqa: BLE001
-                    self.tape.rec('err', link=link, error='recorder: %s: %s' % (type(e).__name__, e))
+                if side != 'tx': record()                 # an answer: passed on first, then recorded
         t = threading.Thread(target=pump, args=(u, c, 'rx', 'down'), daemon=True); t.start()
         pump(c, u, 'tx', 'up'); t.join(10)                # the processor gets 10 s to finish after the vendor app's end
         for s in pair:
