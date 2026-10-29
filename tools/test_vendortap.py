@@ -522,7 +522,8 @@ def t_relay_lossless_http():
         lone = b'POST /noanswer HTTP/1.1\r\nHost: x\r\nContent-Length: 5\r\n\r\nhello'
         c2.sendall(lone); time.sleep(0.3); c2.close(); time.sleep(1.0)
         ok(dev.got == sent + lone and got == dev.sent, 'lossless relay: both ways passed on byte for byte (%d up, %d down)' % (len(sent) + len(lone), len(got)))
-        recs = tape_records(r)
+        recs = tape_records(r, lambda rs: any(x['kind'] == 'http' and x['url'].endswith('/big') and (x.get('resp') or {}).get('file') for x in rs)
+                            and any(x['kind'] == 'http' and x['url'].endswith('/noanswer') for x in rs), wait=15)
         h = {x['url'].split(':18090')[1]: x for x in recs if x['kind'] == 'http'}
         b = h.get('/big', {})
         day = time.strftime('%Y-%m-%d') + '/bodies/'
