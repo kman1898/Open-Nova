@@ -33,11 +33,15 @@ def ok(cond, what):
     if not cond: fails.append(what)
 
 
-def tape_records(r):
-    out = []
-    for p in r.tape.files:
-        with open(p, encoding='utf-8') as f: out += [json.loads(x) for x in f]
-    return out
+def tape_records(r, until=None, wait=8.0):
+    """The relay's recording; with until(records): poll until it holds (slow CI machines record a little later)."""
+    end = time.time() + wait
+    while True:
+        out = []
+        for p in r.tape.files:
+            with open(p, encoding='utf-8') as f: out += [json.loads(x) for x in f if x.strip()]
+        if until is None or until(out) or time.time() > end: return out
+        time.sleep(0.1)
 
 
 # ------------------------------------------------------------------ parsing
@@ -268,7 +272,7 @@ def t_relay_lct():
         c.close(); time.sleep(0.3)
         ok(dev.got == blob, 'processor got exactly what the vendor app sent (%d bytes)' % len(dev.got))
         ok(got == dev.sent, 'vendor app got exactly what the processor sent (%d bytes)' % len(got))
-        recs = tape_records(r)
+        recs = tape_records(r, lambda rs: any(x['kind'] == 'echo' for x in rs) and len([x for x in rs if x['kind'] == 'tg']) >= 6)
         tg = [x for x in recs if x['kind'] == 'tg']
         ok(len([x for x in tg if x['dir'] == 'tx']) == 3 and len([x for x in tg if x['dir'] == 'rx']) == 3, 'recorded 3 requests and 3 replies')
         ok(all(x['link'] == '%s:5231' % DEV for x in tg) and any(x.get('rtt') is not None for x in tg if x['dir'] == 'rx'), 'recorded on the processor’s link, with round-trip times')
@@ -402,7 +406,7 @@ def t_relay_unico():
         sent, got = http_exchange(18088)
         ok(dev.got == sent, 'device got exactly what the app sent (%d bytes, incl. WebSocket frames)' % len(dev.got))
         ok(got == dev.sent, 'app got exactly what the device sent (%d bytes)' % len(got))
-        recs = tape_records(r)
+        recs = tape_records(r, lambda rs: len([x for x in rs if x['kind'] == 'http']) >= 3)
         h = [x for x in recs if x['kind'] == 'http']
         ok(len(h) == 3 and [x['status'] for x in h] == [200, 200, 101], 'three HTTP calls paired with their answers: %s' % [(x['method'], x['url'], x['status']) for x in h])
         ok(h and h[0]['url'] == 'http://%s:18088/unico/v1/system/auth/login' % DEV, 'URL on the processor’s link')
@@ -561,8 +565,8 @@ def t_relay_lossless_lct():
         stray = bytes(i % 50 + 1 for i in range(5000))                    # no 55 AA / AA 55 in it
         tail = tg_frame(9, 0x02000001, b'\x01')[:10]                         # a frame cut off by the close
         c = socket.create_connection((RIP, 5233), 3); c.settimeout(3)
-        c.sendall(stray + tg_frame(1, 0x00000002, op=0)); time.sleep(0.3); c.sendall(tail); time.sleep(0.3); c.close(); time.sleep(0.5)
-        recs = tape_records(r)
+        c.sendall(stray + tg_frame(1, 0x00000002, op=0)); time.sleep(0.3); c.sendall(tail); time.sleep(0.3); c.close()
+        recs = tape_records(r, lambda rs: any(x['kind'] == 'junk' and 'closed' in x.get('note', '') for x in rs))
         u = [x for x in recs if x['kind'] == 'udp' and x['dir'] == 'rx']
         ok(len(u) >= 2 and all(bytes.fromhex(x['hex']) == big and x['n'] == len(big) and len(x.get('text', '')) == len(big) for x in u),
            'every 60 KB discovery answer recorded whole (%d of them: hex and text)' % len(u))

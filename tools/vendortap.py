@@ -232,6 +232,11 @@ def _talks(conns, pids):
     return to[:20], sorted(listen, key=lambda x: int(x) if x.isdigit() else 0)[:20]
 
 
+def _base(p):
+    """The file name of a path in either form (a Windows path read on macOS / Linux too)."""
+    return re.split(r'[\\/]', p or '')[-1]
+
+
 def match_apps(installed, exes, procs, conns, services=()):
     """Put the pieces together per app: installed = [{name, version, location, publisher}] (installed-programs list / app
     bundles), exes = [path], procs = [{name, pid}], services = [{name, path, state}] -> [app rows] (only apps seen at all)."""
@@ -246,12 +251,12 @@ def match_apps(installed, exes, procs, conns, services=()):
                            seenAs=e.get('name'))
                 break
         for p in exes:
-            if os.path.basename(p).lower() in a['exe']:
+            if _base(p).lower() in a['exe']:
                 row['installed'] = True
                 if not row['path'] or not row['path'].lower().endswith('.exe'): row['path'] = p
                 break
         for s in services:
-            if os.path.basename(s.get('path', '')).lower() in a['exe']:
+            if _base(s.get('path', '')).lower() in a['exe']:
                 row['installed'] = True; row['service'] = '%s (%s)' % (s['name'], s.get('state') or 'service'); row['path'] = s['path']   # the one that runs
         row['running'] = sorted(p['pid'] for p in procs if p['name'].lower() in a['exe'])
         if row['running']: row['talksTo'], row['listens'] = _talks(conns, set(row['running']))
@@ -988,6 +993,8 @@ class Relay:
         if self.stop_ev.is_set(): return
         self.stop_ev.set()
         for s in self.socks + [x for c in self.conns for x in c]:
+            try: s.shutdown(socket.SHUT_RDWR)       # Linux: a listening socket closed while accept() waits keeps listening
+            except OSError: pass
             try: s.close()
             except OSError: pass
         self.tape.rec('mark', source='vendor', text='Relay stopped')
@@ -1142,6 +1149,9 @@ class Relay:
                 if not d:                                 # the end passes on as an end (half-close), an error closes both
                     try: dst.shutdown(socket.SHUT_WR) if d is not None else [x.close() for x in pair]
                     except OSError: pass
+                    try: cn.sides[side].close()           # this side's leftover bytes, recorded now (not after the other end)
+                    except Exception as e:  # noqa: BLE001
+                        self.tape.rec('err', link=link, error='recorder: %s: %s' % (type(e).__name__, e))
                     return
                 try: dst.sendall(d)                       # first passed on, unchanged …
                 except OSError:

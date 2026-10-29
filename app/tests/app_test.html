@@ -1305,7 +1305,7 @@ function screenReadTest(n) {
   // already on its way is not counted
   var keepWatch = w.hlt.watch[d.id]; w.hlt.watch[d.id] = { inflight: true };
   // card 0 of P1: gamma 16 (2.2), brightness 8C (55 %), R / G / B FE B3 42 (3200 K), colour space FF (off)
-  w.DRV.post = function (fam, path) { if (/\/health$/.test(path)) return Promise.resolve({ ok: false, error: 'monitoring: not in this test' }); asked.push(path); return Promise.resolve(path === '/api/hw/color-read' ? { ok: true, ports: [{ dst: 0, port: 0, via: [0, 0], hex: '168cfeb342fe' + new Array(43).join('00'), gamut: 'ff', record: null, src: 5 }] } : { ok: false, error: 'not in this test' }); };
+  w.DRV.post = function (fam, path) { if (/\/(health|detect)$/.test(path)) return Promise.resolve({ ok: false, error: 'monitoring / live detect: not in this test' }); asked.push(path); return Promise.resolve(path === '/api/hw/color-read' ? { ok: true, ports: [{ dst: 0, port: 0, via: [0, 0], hex: '168cfeb342fe' + new Array(43).join('00'), gamut: 'ff', record: null, src: 5 }] } : { ok: false, error: 'not in this test' }); };
   var finish = function (ok, text) { row(ok, text); w.DRV.post = keepPost; if (keepWatch) w.hlt.watch[d.id] = keepWatch; else delete w.hlt.watch[d.id]; w.setTab('layout'); w.replaceProject(w.ensureLct(w.newProject())); w.pullProject = keepPull; w.sync.dirty = keepDirty; pending--; };
   w.scr.readDone = {}; w.scrRead(lc);
   setTimeout(function () {
