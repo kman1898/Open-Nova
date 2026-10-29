@@ -210,7 +210,7 @@ ok(any(e.startswith('reconnect after: closed by the processor') for e in ev) and
    'recorder: reconnects with the reason')
 
 # ------------------------------------------------------------------ two targets in parallel; one target in series
-B, C = Fake(0.03), Fake(0.03)
+B, C = Fake(0.15), Fake(0.15)   # the processor's time per frame dominates even on a slow CI runner
 def reads(port, n, out):
     L = novalink.open_link('127.0.0.1', port)
     try:
@@ -229,7 +229,7 @@ for t in ts: t.start()
 for t in ts: t.join(10)
 ser = time.time() - t0
 # relative: slow CI runners (macOS) stretch both times
-ok(par < ser * 0.7 and ser > 0.55, 'two targets run in parallel (%.2f s for 2 x 10 frames), one target one frame at a time (%.2f s)' % (par, ser))
+ok(par < ser * 0.75 and ser > 2.9, 'two targets run in parallel (%.2f s for 2 x 10 frames), one target one frame at a time (%.2f s)' % (par, ser))
 ok(B.accepted == 1 and C.accepted == 1 and B.rejected + C.rejected == 0, 'one connection each')
 
 # ------------------------------------------------------------------ idle close, refused target, LINK_IDLE 0
