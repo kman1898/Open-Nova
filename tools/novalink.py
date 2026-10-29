@@ -26,6 +26,8 @@ over that one connection (off unless asked).
 Sends only to the host:port it is given. It never runs the receiving-card Save (0x01000011) unless a plan asks.
 """
 import itertools, json, lzma, math, os, socket, struct, sys, time, datetime, threading
+if os.environ.get('OPENNOVA_STARTUP_TRACE'):   # tools/smoke_package.py: where a start that never answers is stuck
+    import faulthandler; faulthandler.dump_traceback_later(float(os.environ['OPENNOVA_STARTUP_TRACE']), repeat=True)
 import wirelog   # the flight recorder: every frame to / from a processor (docs/DIAGNOSTICS.md)
 import alpha     # version, the alpha's read-only gate, first-contact snapshots, the problem report (docs/DIAGNOSTICS.md "The alpha build")
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -2392,7 +2394,9 @@ def main(argv):
         alpha.prune_daily()
         print('novalink helper on http://%s:%d — %s%s' % (host, port, alpha.version_line(), ' · read-only until unlocked' if alpha.read_only() else '')); sys.stdout.flush()
         threading.Thread(target=net_watch, daemon=True).start()   # interfaces that come and go (USB Ethernet, Wi-Fi, VPN)
-        ThreadingHTTPServer((host, port), Handler).serve_forever(); return 0
+        srv = ThreadingHTTPServer((host, port), Handler)
+        if os.environ.get('OPENNOVA_STARTUP_TRACE'): import faulthandler; faulthandler.cancel_dump_traceback_later()   # it started
+        srv.serve_forever(); return 0
     if cmd == 'serial':                                  # serial [--probe 1]: USB / serial ports, which answer (read-only)
         a = dict(zip(argv[1::2], argv[2::2]))
         for p in (probe_serial_all(None, float(a['--probe'])) if '--probe' in a else serial_ports()):

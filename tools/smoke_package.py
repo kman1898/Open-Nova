@@ -121,7 +121,7 @@ def main(argv):
     data = os.path.join(tmp, 'data')
     log = open(os.path.join(tmp, 'opennova.out'), 'wb')
     p = subprocess.Popen([sys.executable, '-u', 'opennova.py', '--no-browser', '--local-only', '--port', str(port), '--helper-port', str(hport), '--data-dir', data],
-                         cwd=folder, stdout=log, stderr=subprocess.STDOUT, env=dict(os.environ, PYTHONIOENCODING='utf-8', PYTHONDONTWRITEBYTECODE='1'))
+                         cwd=folder, stdout=log, stderr=subprocess.STDOUT, env=dict(os.environ, PYTHONIOENCODING='utf-8', PYTHONDONTWRITEBYTECODE='1', OPENNOVA_STARTUP_TRACE='20'))
     base = 'http://127.0.0.1:%d/' % port
     try:
         st = None
