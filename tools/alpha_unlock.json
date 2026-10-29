@@ -1,0 +1,8 @@
+{
+ "_note": "Default unlock for every alpha build (salted hashes only; the code itself is in no file). Built by make_package.py --alpha unless OPENNOVA_UNLOCK_CODE / --unlock-code gives another.",
+ "unlock": {
+  "salt": "1901f4e4ce35a0b67e5c5f3bcc6685c5",
+  "sha256": "b4344f17b78f784fa0991ea60bf13e44dd32df821d430afc0bc13d6e03da66b9",
+  "tokenSha256": "8ffdd8104d82bab225b6ae2449767efdedfa16723f05c9e8e7a67a7527aaea9c"
+ }
+}

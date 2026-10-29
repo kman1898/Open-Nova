@@ -1,0 +1,64 @@
+name: Release
+
+# A tag v<version> (v + the version in app/version.json, e.g. v1.2.0-beta.1): every test, the packages, each package started
+# on Linux / macOS / Windows (ci.yml, called), then a GitHub release with the zips. A tag with -alpha / -beta / -rc is a
+# PRE-release and never becomes "latest".
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  tag:
+    name: Tag = app/version.json
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: The tag names the version the app says it is
+        run: |
+          v=$(python3 -c "import json; print(json.load(open('app/version.json', encoding='utf-8-sig'))['version'])")
+          if [ "${GITHUB_REF_NAME}" != "v$v" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} but app/version.json says $v - tag v$v, or change version.json first"; exit 1
+          fi
+          echo "OK: ${GITHUB_REF_NAME} = app/version.json $v"
+
+  ci:
+    name: Tests, packages, smoke tests
+    needs: tag
+    uses: ./.github/workflows/ci.yml
+
+  release:
+    name: GitHub release
+    needs: ci
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v6          # only the release-notes template (before the download: checkout cleans the folder)
+        with:
+          sparse-checkout: .github/release-notes.md
+          sparse-checkout-cone-mode: false
+      - uses: actions/download-artifact@v8
+        with:
+          name: open-nova-packages
+          path: dist
+      - name: Checksums
+        run: |
+          cd dist && sha256sum *.zip > SHA256SUMS.txt && cat SHA256SUMS.txt
+      - name: Release notes from .github/release-notes.md (GitHub adds the changes since the last release)
+        run: |
+          sed "s/{version}/${GITHUB_REF_NAME#v}/g" .github/release-notes.md > notes.md && cat notes.md
+      - uses: softprops/action-gh-release@v3
+        with:
+          name: Open Nova ${{ github.ref_name }}
+          body_path: notes.md
+          generate_release_notes: true
+          draft: false
+          prerelease: ${{ contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc') }}
+          make_latest: ${{ (contains(github.ref_name, '-alpha') || contains(github.ref_name, '-beta') || contains(github.ref_name, '-rc')) && 'false' || 'true' }}
+          files: |
+            dist/*.zip
+            dist/SHA256SUMS.txt

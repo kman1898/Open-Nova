@@ -1,0 +1,388 @@
+/* looks/pro-panels.css - the pro look, panels area (docs/DESIGN_SYSTEM.md). Loaded after looks/pro.css, pro look only.
+   The menu bar, the side panels (project tree, property editor on every tab), the shared buttons / form controls (also in
+   dialogs) and the status line, drawn as the gallery (app/out/pro/pro.css: .mb .ph .tr .sec .sh .rows .fld .seg .btn .sw .sb).
+   Rules: a 4 px grid; 24 px rows; one control height (22 px, --h-ctl); right-aligned row labels in a 96 px column with the
+   control on the right; small-caps group labels with a fold triangle; wells (fields) darker than their frame with an inner
+   top shadow, raised controls (buttons, segments) top-lit; one blue accent. Nothing wraps inside a control: a row of buttons
+   shares the width and moves a whole button to the next line when it can't fit. Tokens only (looks/pro.css). */
+
+/* the gallery's heights, grown with View ▸ Text size (--fs) so bigger text never clips; at 100 % exactly 22 / 24 / 23 px */
+:root[data-look="pro"] { --ctl-h: max(var(--h-ctl), calc(var(--h-ctl) * var(--fs, 1))); --ctl-lh: max(20px, calc(20px * var(--fs, 1)));
+  --row-h: max(var(--h-row), calc(var(--h-row) * var(--fs, 1))); --tree-lh: max(23px, calc(23px * var(--fs, 1)));
+  --sm-h: max(18px, calc(18px * var(--fs, 1))); --sm-lh: max(16px, calc(16px * var(--fs, 1))); }
+
+/* ===================================================================================================== menu bar (.mb) */
+:root[data-look="pro"] .menubar { height: 25px; padding-right: 8px; background: var(--menubar); border-bottom: 1px solid var(--edge); box-shadow: inset 0 -1px 0 var(--hair-2); }
+:root[data-look="pro"] .menubar .mb-top, :root[data-look="pro"] .menubar .mb-burger { height: 20px; min-height: 20px; margin: 2px 0; padding: 0 9px; border: 0; border-radius: var(--r-seg);
+  color: var(--ink-2); font: 500 calc(var(--fs-l) * var(--fs, 1))/20px var(--f-cond); letter-spacing: .01em; box-shadow: none; }
+:root[data-look="pro"] .menubar > .mb-logo { color: var(--ink-2); }
+:root[data-look="pro"] .menubar > .mb-logo svg { color: inherit; }
+:root[data-look="pro"] .menubar .mb-proj { height: 18px; line-height: 16px; padding: 0 10px; border: 1px solid var(--edge); border-radius: var(--r-ctl); background: var(--bg-field);
+  box-shadow: inset 0 1px 2px rgba(0, 0, 0, .7), 0 1px 0 var(--hi); color: var(--ink-2); font: 500 calc(var(--fs-s) * var(--fs, 1))/16px var(--f-cond); letter-spacing: .02em; }
+:root[data-look="pro"][data-theme="light"] .menubar .mb-proj { box-shadow: var(--well-sh); }
+:root[data-look="pro"] .menubar .mb-menu, :root[data-look="pro"] .menubar .mb-subm { padding: 4px; }
+:root[data-look="pro"] .menubar .mb-menu > button, :root[data-look="pro"] .menubar .mb-menu > label.btn, :root[data-look="pro"] .menubar .mb-sub > .mb-subbtn,
+:root[data-look="pro"] .menubar .mb-menu .proj-row { min-height: 24px; padding-top: 0; padding-bottom: 0; font: 500 calc(var(--fs-l) * var(--fs, 1))/24px var(--f-cond); }
+:root[data-look="pro"] .menubar .mb-menu hr, :root[data-look="pro"] .dropmenu hr { margin: 4px 6px; border: 0; height: 1px; background: var(--edge); box-shadow: 0 1px 0 var(--hair-2); }
+:root[data-look="pro"] .menubar .mb-menu .proj-head, :root[data-look="pro"] .menubar .mb-menu .mb-h { font: 600 calc(var(--fs-xs) * var(--fs, 1))/1 var(--f-cond); letter-spacing: .16em;
+  text-transform: uppercase; color: var(--ink-3); }
+/* Settings ▸ Preferences: each setting a small-caps group label over its segmented control (22 px, sharing the width) */
+:root[data-look="pro"] .menubar .menu-size { padding: 2px 8px 6px; }
+:root[data-look="pro"] .menubar .menu-size > span:first-child { display: block; height: var(--row-h); line-height: var(--row-h); font: 600 calc(var(--fs-xs) * var(--fs, 1))/var(--row-h) var(--f-cond);
+  letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); }
+:root[data-look="pro"] .menubar .menu-size > .seg { display: flex; width: 100%; }
+:root[data-look="pro"] .menubar .menu-size > .seg > button { flex: 1 1 0; min-width: 0; height: var(--ctl-lh); min-height: var(--ctl-lh); padding: 0 6px; border: 0; border-right: 1px solid var(--edge);
+  border-radius: 0; background: var(--g-raise); box-shadow: inset 0 1px 0 var(--hi); color: var(--ink-2); font: 500 calc(var(--fs-m) * var(--fs, 1))/var(--ctl-lh) var(--f-cond); }
+:root[data-look="pro"] .menubar .menu-size > .seg > button:last-child { border-right: 0; }
+:root[data-look="pro"] .menubar .menu-size > .seg > button:hover { background: var(--g-raise-hov); color: var(--ink); }
+:root[data-look="pro"] .menubar .menu-size > .seg > :is(button.on, button[aria-pressed="true"]) { background: var(--g-acc); color: #fff; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .25); }
+
+/* ===================================================================================================== shared buttons (.btn) */
+/* one height everywhere in the side panels, the dialogs' forms and the menus' rows: 22 px, one line, top-lit */
+:root[data-look="pro"] :is(.panel, .logbox, .wt-pop, .qa-box) button:not(.itip, .card-t, .dv-cr-go, .tn-go, .sc-reset, .dp-model, .dp-fam, .ctl-corners > button, .pattern-pad > button, .plib-row button, .bk-port) {
+  height: auto; min-height: var(--ctl-h); padding: 0 10px; margin: 0; overflow: hidden; white-space: nowrap; text-overflow: clip; vertical-align: middle;
+  font: 600 calc(var(--fs-m) * var(--fs, 1))/var(--ctl-lh) var(--f-cond); letter-spacing: .03em; }
+/* a dialog's close (×): a quiet square icon button */
+:root[data-look="pro"] .logbox > .loghead > button[id$="Close"] { width: var(--ctl-h); min-width: var(--ctl-h); padding: 0; border-color: transparent; background: transparent; box-shadow: none;
+  color: var(--ink-3); font: 400 calc(16px * var(--fs, 1))/var(--ctl-lh) var(--f-cond); }
+:root[data-look="pro"] .logbox > .loghead > button[id$="Close"]:hover { border-color: var(--edge); background: var(--g-raise-hov); color: var(--ink); }
+/* a dialog's form: label right-aligned in a 96 px column, the field on the right (as the side panels) */
+:root[data-look="pro"] .logbox .keysbody label:not(.chk):has(> :is(input:not([type=checkbox], [type=radio]), select)) { display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: center; gap: 0 10px;
+  min-height: var(--row-h); margin: 2px 0; text-align: right; white-space: nowrap; font: 500 calc(var(--fs-m) * var(--fs, 1))/1 var(--f-cond); color: var(--ink-3); }
+:root[data-look="pro"] .logbox .keysbody label:not(.chk):has(> :is(input:not([type=checkbox], [type=radio]), select)) > :is(input, select, .spin) { grid-column: 2; text-align: left; }
+:root[data-look="pro"] .panel button.mini, :root[data-look="pro"] .logbox button.mini { margin-left: 0; padding: 0 8px; font-size: calc(var(--fs-s) * var(--fs, 1)); }
+/* a button that only says ×: a quiet square icon button (remove / unlink / delete), red on hover */
+:root[data-look="pro"] .panel button:is([data-hw="unlink"], [data-act="rmcard"], [data-act="pdel"], [data-act="cdel"], [data-ps="delete"], [data-dp="delete"], [data-sh="delete"], [data-lb="remove"]) {
+  flex: none !important; width: var(--ctl-h); min-width: var(--ctl-h) !important; padding: 0 !important; border-color: transparent; background: transparent; box-shadow: none; color: var(--ink-3);
+  font: 400 calc(15px * var(--fs, 1))/var(--ctl-lh) var(--f-cond); text-align: center; }
+:root[data-look="pro"] .panel button:is([data-hw="unlink"], [data-act="rmcard"], [data-act="pdel"], [data-act="cdel"], [data-ps="delete"], [data-dp="delete"], [data-sh="delete"], [data-lb="remove"]):hover:not(:disabled) {
+  border-color: var(--edge); background: var(--g-bad-tile); color: var(--bad-ink); }
+:root[data-look="pro"] .panel button:is([data-hw="unlink"], [data-act="rmcard"], [data-act="pdel"], [data-act="cdel"], [data-ps="delete"], [data-dp="delete"], [data-sh="delete"], [data-lb="remove"]):disabled {
+  opacity: .3; background: transparent; }
+:root[data-look="pro"] button.danger { color: var(--bad-ink); }
+/* a row of buttons: equal shares of the width, never narrower than the words; a button that can't fit moves down whole */
+:root[data-look="pro"] .panel .row { display: flex; flex-wrap: wrap; align-items: center; gap: var(--s1); margin-top: var(--s1); }
+:root[data-look="pro"] .panel .row > button { flex: 1 1 0; min-width: max-content; }
+:root[data-look="pro"] .panel .row > :is(.itip, label.chk, .hint, span:not(.grow)) { flex: none; }
+:root[data-look="pro"] .panel .row > .grow { flex: 1 1 0; }
+:root[data-look="pro"] .panel button.wide { width: 100%; }
+
+/* ===================================================================================================== form controls (.fld) */
+/* fields are wells: darker than the panel, an inner shadow at the top; mono, right-aligned digits; text in the UI face */
+:root[data-look="pro"] :is(.panel, .logbox, .wt-pop, .qa-box) :is(input:not([type=checkbox], [type=radio], [type=range], [type=file], [type=color]), select:not([multiple])) {
+  height: var(--ctl-h); min-height: var(--ctl-h); padding: 0 6px; border: 1px solid var(--edge); border-radius: var(--r-in); background-color: var(--bg-field); color: var(--ink);
+  box-shadow: var(--well-sh); font: 500 calc(var(--fs-m) * var(--fs, 1))/var(--ctl-lh) var(--f-cond); letter-spacing: .01em; }
+:root[data-look="pro"] :is(.panel, .logbox, .wt-pop, .qa-box) input[type=number] { font: 400 calc(var(--fs-s) * var(--fs, 1))/var(--ctl-lh) var(--f-mono); letter-spacing: 0; color: #eef0f3; }
+:root[data-look="pro"][data-theme="light"] :is(.panel, .logbox, .wt-pop, .qa-box) input[type=number] { color: var(--ink); }
+:root[data-look="pro"] :is(.panel, .logbox, .wt-pop, .qa-box) select:not([multiple]) { padding: 0 22px 0 7px; background: var(--lk-chev) right 7px center / 8px 8px no-repeat, var(--bg-field); }
+:root[data-look="pro"] :is(.panel, .logbox, .wt-pop, .qa-box) :is(input, select)::placeholder { color: var(--ink-4); }
+:root[data-look="pro"] :is(.panel, .logbox) :is(input, select):disabled { opacity: .5; }
+:root[data-look="pro"] :is(.panel, .logbox) textarea { padding: 4px 6px; font: 400 calc(var(--fs-s) * var(--fs, 1))/1.4 var(--f-mono); }
+/* spin box: the ▲▼ column inside the well (app-controls.js) */
+:root[data-look="pro"] :is(.panel, .logbox, .wt-pop, .qa-box) .spin > input[type=number] { padding: 0 19px 0 4px; text-align: right; }
+:root[data-look="pro"] .spin-b { width: 14px; }
+/* segmented controls: the buttons share the width (a proxy of a drop-down, Bit depth, Rotation, the tree views …) */
+:root[data-look="pro"] .panel .seg { display: flex; width: 100%; margin: 0; }
+:root[data-look="pro"] .panel .seg > button, :root[data-look="pro"] .panel .seg > button + button { flex: 1 1 auto; min-width: 0; height: var(--ctl-lh); min-height: var(--ctl-lh); padding: 0 6px;
+  border: 0; border-right: 1px solid var(--edge); border-radius: 0; font: 500 calc(var(--fs-m) * var(--fs, 1))/var(--ctl-lh) var(--f-cond); letter-spacing: .03em; text-overflow: clip; }
+:root[data-look="pro"] .panel .seg > button:last-child { border-right: 0; }
+:root[data-look="pro"] .panel .seg > button:disabled { opacity: .5; }
+:root[data-look="pro"] .panel .seg > button.on:disabled { opacity: .7; }
+/* switch (.sw): the on / off settings */
+:root[data-look="pro"] :is(.panel, .view-menu, .logbox, .wt-pop) label:is(.chk, .wt-chk) { display: inline-flex; flex-direction: row; align-items: center; gap: var(--s2); min-height: var(--ctl-h); white-space: nowrap;
+  color: var(--ink-2); font: 500 calc(var(--fs-m) * var(--fs, 1))/1 var(--f-cond); }
+:root[data-look="pro"] :is(.panel, .view-menu, .wt-pop) label:is(.chk, .wt-chk) > input[type=checkbox] { flex: none; width: 32px; height: 18px; margin: 0; -webkit-appearance: none; appearance: none;
+  border: 1px solid var(--edge); border-radius: var(--r-pill); box-shadow: var(--well-sh); cursor: pointer;
+  background: radial-gradient(circle 7px at 8px 50%, #f4f6f8 0, #d3d8df 3px, #9aa1ab 6px, transparent 7px) no-repeat, var(--bg-field); }
+:root[data-look="pro"] :is(.panel, .view-menu, .wt-pop) label:is(.chk, .wt-chk) > input[type=checkbox]:checked {
+  background: radial-gradient(circle 7px at 22px 50%, #fff 0, #e6ecf5 3px, #b9c7dc 6px, transparent 7px) no-repeat, var(--g-acc); }
+:root[data-look="pro"][data-theme="light"] :is(.panel, .view-menu, .wt-pop) label:is(.chk, .wt-chk) > input[type=checkbox]:not(:checked) {
+  background: radial-gradient(circle 7px at 8px 50%, #fff 0, #eef1f5 3px, #aab2bd 6px, transparent 7px) no-repeat, #d5dae1; }
+
+/* ===================================================================================================== side panels: headers (.ph) */
+:root[data-look="pro"] :is(.panel, .menubar, .stage-tools) .itip { color: var(--ink-3); }
+:root[data-look="pro"] .panel.right { padding-bottom: var(--s4); }
+:root[data-look="pro"] :is(.tree-top, .dv-ptabs) { position: relative; display: flex; align-items: center; gap: var(--s2); height: var(--row-h); min-height: var(--row-h); margin: 0; padding: 0 var(--s1) 0 var(--s2);
+  background: var(--g-head); border-bottom: 1px solid var(--edge); box-shadow: inset 0 1px 0 rgba(255, 255, 255, .05); }
+:root[data-look="pro"][data-theme="light"] :is(.tree-top, .dv-ptabs) { box-shadow: inset 0 1px 0 #fff; }
+:root[data-look="pro"] :is(.tree-title, .dv-ptabs span) { padding: 0; border: 0; margin: 0; font: 600 calc(var(--fs-xs) * var(--fs, 1))/1 var(--f-cond); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); }
+:root[data-look="pro"] .dv-ptabs > span:not(.on) { margin-left: auto; display: flex; gap: var(--s1); letter-spacing: .03em; text-transform: none; }
+/* header buttons: small (18 px), as the gallery's .ph .seg */
+:root[data-look="pro"] .panel :is(.tree-top, .dv-ptabs, .dv-proj) button.mini { height: var(--sm-h); min-height: var(--sm-h); padding: 0 7px; font: 600 calc(var(--fs-s) * var(--fs, 1))/var(--sm-lh) var(--f-cond); letter-spacing: .03em; }
+:root[data-look="pro"] :is(#btnTreeAdd, #btnDevAdd) { width: 20px; min-width: 20px; padding: 0; font: 500 calc(14px * var(--fs, 1))/var(--sm-lh) var(--f-cond); text-align: center; }
+:root[data-look="pro"] #btnTreeAdd { margin-left: auto; }
+
+/* ===================================================================================================== left panel: project tree (.tr) */
+/* the Screens / Processors views sit in the header, on the right, as in the gallery */
+:root[data-look="pro"] .panel.left { position: relative; }
+:root[data-look="pro"] .panel.left > .tree-top { padding-right: 32px; }
+:root[data-look="pro"] .panel.left > .tree-seg { position: absolute; top: 3px; right: 30px; z-index: 1; display: flex; width: auto; margin: 0; }
+:root[data-look="pro"] .panel.left > .tree-seg > button, :root[data-look="pro"] .panel.left > .tree-seg > button + button { flex: none; height: var(--sm-h); min-height: var(--sm-h); padding: 0 8px;
+  font: 500 calc(var(--fs-s) * var(--fs, 1))/var(--sm-h) var(--f-cond); letter-spacing: .02em; }
+:root[data-look="pro"] .panel.left > .tree-top > #btnTreeAdd { position: absolute; right: 4px; top: 3px; }
+:root[data-look="pro"] .tree-search { height: var(--ctl-h); min-height: var(--ctl-h); margin: var(--s2) var(--s2) var(--s1); padding: 0 8px; border: 1px solid var(--edge); border-radius: var(--r-in);
+  background: var(--bg-field); box-shadow: var(--well-sh); color: var(--ink); font: 500 calc(var(--fs-m) * var(--fs, 1))/var(--ctl-lh) var(--f-cond); }
+:root[data-look="pro"] .tree-search::placeholder { color: var(--ink-4); }
+:root[data-look="pro"] .tree { padding: 0 0 var(--s2); }
+/* rows: 24 px, one line; a 12 px step per level; the selected row blue, its parents just brighter */
+:root[data-look="pro"] .tree .tn { position: relative; flex-wrap: wrap; gap: 0 6px; min-height: var(--tree-lh); margin: 0 0 1px; padding: 0 var(--s2) 0 8px; border-radius: 0; box-shadow: none;
+  color: var(--ink-2); font: 500 calc(var(--fs-l) * var(--fs, 1))/var(--tree-lh) var(--f-cond); white-space: nowrap; }
+:root[data-look="pro"] .tree .tn:hover { background: var(--lk-hover); }
+:root[data-look="pro"] .tree .tn > * { line-height: var(--tree-lh); }
+:root[data-look="pro"] .tree .tn-proj { color: var(--ink); font-weight: 600; }
+:root[data-look="pro"] .tree .tn-lct { padding-left: 8px; color: var(--ink); font-weight: 600; }
+:root[data-look="pro"] .tree .tn-dev { padding-left: 22px; font-size: calc(var(--fs-l) * var(--fs, 1)); font-weight: 500; }
+:root[data-look="pro"] .tree .tn-card { padding-left: 36px; }
+:root[data-look="pro"] .tree .tn-port { padding-left: 56px; font-size: calc(var(--fs-l) * var(--fs, 1)); }
+:root[data-look="pro"] .tree .tn-none { padding-left: 22px; color: var(--ink-3); }
+:root[data-look="pro"] .tree :is(.tn-tw, .tn-ico) { width: 10px; flex: none; color: var(--ink-3); font-size: calc(9px * var(--fs, 1)); text-align: center; border-radius: var(--r-xs); }
+:root[data-look="pro"] .tree .tn-ico { font-size: calc(11px * var(--fs, 1)); }
+/* the fold triangle drawn (the gallery's .tw), pointing right when the row is folded */
+:root[data-look="pro"] .tree .tn-tw { display: inline-flex; align-items: center; justify-content: center; align-self: center; height: 16px; font-size: 0; cursor: pointer; }
+:root[data-look="pro"] .tree .tn-tw::before { content: ''; border-width: 4px 4px 0; border-style: solid; border-color: currentColor transparent transparent; }
+:root[data-look="pro"] .tree .tn[aria-expanded="false"] > .tn-tw::before { transform: rotate(-90deg); }
+:root[data-look="pro"] .tree .tn-tw:hover { background: var(--lk-hover); color: var(--ink); }
+:root[data-look="pro"] .tree .tn-dico { width: 14px; height: 11px; stroke: var(--ink-3); }
+:root[data-look="pro"] .tree .tn-dico path { fill: var(--ink-3); }
+:root[data-look="pro"] .tree .tn-name { flex: 1 1 auto; }
+:root[data-look="pro"] .tree .tn-tag { margin-left: auto; font: 400 calc(var(--fs-xs) * var(--fs, 1))/var(--row-h) var(--f-mono); letter-spacing: 0; color: var(--ink-3); }
+:root[data-look="pro"] .tree .tn-name + .tn-tag { margin-left: 0; }
+:root[data-look="pro"] .tree .tn-own { font-weight: 400; }
+:root[data-look="pro"] .tree .tn-port .sw { width: 10px; height: 10px; flex: none; border-radius: var(--r-xs); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .45), 0 0 0 1px rgba(255, 255, 255, .06); }
+:root[data-look="pro"] .tree .tn-port.over .tn-tag { color: var(--bad-ink); font-weight: 400; }
+/* the screen's type chip and the backup tag: small caps chips (.chip) */
+:root[data-look="pro"] .tree .tn-type { flex: none; height: 16px; padding: 0 5px; border: 0; border-radius: var(--r-xs); background: var(--idle); color: var(--ink-2); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .6);
+  font: 600 calc(9.5px * var(--fs, 1))/16px var(--f-cond); letter-spacing: .08em; text-transform: uppercase; }
+:root[data-look="pro"][data-theme="light"] .tree .tn-type { background: #e3e7ec; box-shadow: inset 0 0 0 1px var(--edge); }
+:root[data-look="pro"] .tree .tn-bk { line-height: 1; }
+/* close (×) and Edit: only on the row under the pointer */
+:root[data-look="pro"] .tree .tn-x { flex: none; width: 16px; padding: 0; margin-right: -4px; text-align: center; border-radius: var(--r-xs); color: var(--ink-3); opacity: 0; }
+:root[data-look="pro"] .tree .tn:hover .tn-x, :root[data-look="pro"] .tree .tn-x:focus { opacity: 1; }
+:root[data-look="pro"] .tree .tn-x:hover { background: var(--g-bad-tile); color: var(--bad-ink); }
+:root[data-look="pro"] .tree .tn-go { top: 3px; right: var(--s2); height: var(--sm-h); line-height: var(--sm-lh); border: 1px solid var(--edge); border-radius: var(--r-ctl); background: var(--g-raise); color: var(--ink);
+  box-shadow: inset 0 1px 0 var(--hi); font: 600 calc(var(--fs-s) * var(--fs, 1))/var(--sm-lh) var(--f-cond); }
+:root[data-look="pro"] .tree .tn-go:hover { background: var(--g-raise-hov); color: var(--ink); border-color: var(--edge); }
+/* the card's port-use bar: a thin row of lit segments under its name */
+:root[data-look="pro"] .tree .tn-bar { height: 3px; margin: -3px 0 4px 16px; gap: 1px; }
+:root[data-look="pro"] .tree .tn-bar i { border-radius: 1px; background: var(--idle); }
+/* selection: the deepest selected row is the blue one (as .tr.sel); its screen / processor / card rows only brighten */
+:root[data-look="pro"] .tree .tn.on { background: transparent; color: var(--ink); box-shadow: none; }
+:root[data-look="pro"] .tree .tn.on :is(.tn-name, .tn-ico, .tn-tw) { color: var(--ink); }
+:root[data-look="pro"] .tree .tn.on .tn-tag { color: var(--ink-3); }
+:root[data-look="pro"] .tree .tn.on .tn-dico { stroke: var(--acc-hi); }
+:root[data-look="pro"] .tree .tn.on .tn-dico path { fill: var(--acc-hi); }
+:root[data-look="pro"] .tree .tn-port.on,
+:root[data-look="pro"] .tree:not(:has(.tn-port.on)) .tn-card.on,
+:root[data-look="pro"] .tree:not(:has(.tn-port.on, .tn-card.on)) .tn-dev.on,
+:root[data-look="pro"] .tree:not(:has(.tn-port.on, .tn-card.on, .tn-dev.on)) .tn-lct.on,
+:root[data-look="pro"] .tree .dv-li.on {
+  margin: 0 var(--s1) 1px; padding-right: 4px; border-radius: var(--r-seg); background: var(--sel-row); color: #fff;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .14), inset 0 -1px 0 rgba(0, 0, 0, .4); }
+:root[data-look="pro"] .tree .tn-port.on { padding-left: 52px; }
+:root[data-look="pro"] .tree:not(:has(.tn-port.on)) .tn-card.on { padding-left: 32px; }
+:root[data-look="pro"] .tree:not(:has(.tn-port.on, .tn-card.on)) .tn-dev.on { padding-left: 18px; }
+:root[data-look="pro"] .tree:not(:has(.tn-port.on, .tn-card.on, .tn-dev.on)) .tn-lct.on { padding-left: 4px; }
+:root[data-look="pro"] .tree :is(.tn-port.on, .dv-li.on) :is(.tn-name, .tn-tag, .tn-ico, .tn-tw, .dv-li-s),
+:root[data-look="pro"] .tree:not(:has(.tn-port.on)) .tn-card.on :is(.tn-name, .tn-tag, .tn-ico, .tn-tw),
+:root[data-look="pro"] .tree:not(:has(.tn-port.on, .tn-card.on)) .tn-dev.on :is(.tn-name, .tn-tag, .tn-tw),
+:root[data-look="pro"] .tree:not(:has(.tn-port.on, .tn-card.on, .tn-dev.on)) .tn-lct.on :is(.tn-name, .tn-tag, .tn-tw) { color: #fff; }
+:root[data-look="pro"] .tree .tn-port.on .tn-tag, :root[data-look="pro"] .tree .dv-li.on .dv-li-s { color: #d9e6ff; }
+:root[data-look="pro"][data-theme="light"] .tree .tn-port.on .tn-tag, :root[data-look="pro"][data-theme="light"] .tree .dv-li.on .dv-li-s { color: #fff; }
+:root[data-look="pro"] .tree:not(:has(.tn-port.on, .tn-card.on, .tn-dev.on)) .tn-lct.on .tn-type { background: rgba(0, 0, 0, .28); color: #fff; box-shadow: none; }
+/* Processors view: the project line, then one row per processor (name over its model), its screens under it */
+:root[data-look="pro"] #treeProcs .dv-proj { position: relative; display: grid; grid-template-columns: minmax(0, 1fr) auto; column-gap: 6px; align-items: center; margin: 0; padding: var(--s2) var(--s2) 0 var(--s2); }
+:root[data-look="pro"] #treeProcs .dv-proj > b { font: 600 calc(var(--fs-l) * var(--fs, 1))/1.35 var(--f-cond); color: var(--ink); }
+:root[data-look="pro"] #treeProcs .dv-proj > .hint { margin: 0; font: 500 calc(var(--fs-s) * var(--fs, 1))/1.35 var(--f-cond); color: var(--ink-3); }
+:root[data-look="pro"] .tree .dv-li { gap: 8px; min-height: 36px; margin: 0; padding: 2px var(--s2) 2px 8px; align-items: center; }
+:root[data-look="pro"] .tree .dv-li .tn-name { font: 600 calc(var(--fs-l) * var(--fs, 1))/1.3 var(--f-cond); color: var(--ink); }
+:root[data-look="pro"] .tree .dv-li .dv-li-s { font: 500 calc(var(--fs-s) * var(--fs, 1))/1.3 var(--f-cond); color: var(--ink-3); }
+:root[data-look="pro"] .tree .dv-li.on { padding-left: 4px; }
+:root[data-look="pro"] .tree .dv-li.on .tn-name { color: #fff; }
+:root[data-look="pro"] .tree .dv-scr { min-height: var(--row-h); padding-left: 22px; font: 500 calc(var(--fs-m) * var(--fs, 1))/var(--row-h) var(--f-cond); color: var(--ink-2); }
+:root[data-look="pro"] .tree .dv-scr .dv-n { font: 400 calc(var(--fs-xs) * var(--fs, 1))/1 var(--f-mono); color: var(--ink-3); }
+
+/* ===================================================================================================== right panel: sections (.sec / .sh) */
+:root[data-look="pro"] .panel.right .card { border-bottom: 1px solid var(--edge); box-shadow: 0 1px 0 var(--hair-2); }
+:root[data-look="pro"] .panel.right .card-h { min-height: var(--row-h); padding: 0 var(--s1) 0 0; gap: var(--s1); background: transparent; border: 0; }
+:root[data-look="pro"] .panel.right .card-t { display: flex; align-items: center; gap: 6px; min-width: 0; height: var(--row-h); min-height: var(--row-h); padding: 0 6px 0 10px; border: 0; background: transparent; box-shadow: none;
+  font: 600 calc(var(--fs-xs) * var(--fs, 1))/1 var(--f-cond); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); white-space: nowrap; overflow: hidden; }
+:root[data-look="pro"] .panel.right .card-t:hover { color: var(--ink); background: transparent; }
+:root[data-look="pro"] .panel.right .card-t .card-sub { margin-left: auto; overflow: hidden; text-overflow: ellipsis; font: 500 calc(var(--fs-s) * var(--fs, 1))/1 var(--f-cond); letter-spacing: .03em;
+  text-transform: none; color: var(--ink-3); }
+:root[data-look="pro"] .panel.right .card-t > span:not(.chev):not(.card-sub) { overflow: hidden; text-overflow: ellipsis; }
+:root[data-look="pro"] .panel.right .card-h > .itip { flex: none; }
+/* the fold triangle (the gallery's .sh .tw) */
+:root[data-look="pro"] .panel.right .chev { flex: none; width: 8px; height: 8px; display: inline-flex; align-items: center; justify-content: center; }
+:root[data-look="pro"] .panel.right .chev::before { margin: 0; border-width: 4px 4px 0; border-style: solid; border-color: var(--ink-3) transparent transparent; }
+:root[data-look="pro"] .panel.right .card.collapsed .chev::before { transform: rotate(-90deg); margin: 0; }
+:root[data-look="pro"] .panel.right .card-b { padding: 0 var(--s3) 10px; }
+:root[data-look="pro"] .panel.right .card-b > :first-child { margin-top: 0; }
+/* group labels inside a section (Wiring, sub-heads, the Output fold) */
+:root[data-look="pro"] .panel.right :is(h3, .sub-h) { display: flex; flex-wrap: wrap; align-items: center; gap: 0 6px; min-height: var(--row-h); margin: var(--s2) calc(-1 * var(--s3)) var(--s1); padding: 6px var(--s3) 4px;
+  border-top: 1px solid var(--hair-2); font: 600 calc(var(--fs-xs) * var(--fs, 1))/14px var(--f-cond); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); }
+:root[data-look="pro"] .panel.right .sub-h { letter-spacing: .08em; }
+:root[data-look="pro"] .panel.right .out-group { margin: var(--s2) calc(-1 * var(--s3)) 0; padding: 0 var(--s3); border-top: 1px solid var(--hair-2); }
+:root[data-look="pro"] .panel.right .out-group > summary { display: flex; align-items: center; gap: 6px; height: var(--row-h); padding: 0; list-style: none; cursor: pointer;
+  font: 600 calc(var(--fs-xs) * var(--fs, 1))/1 var(--f-cond); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); }
+:root[data-look="pro"] .panel.right .out-group > summary::-webkit-details-marker { display: none; }
+:root[data-look="pro"] .panel.right .out-group > summary::before { content: ''; flex: none; border-width: 4px 4px 0; border-style: solid; border-color: var(--ink-3) transparent transparent; transform: rotate(-90deg); }
+:root[data-look="pro"] .panel.right .out-group[open] > summary::before { transform: none; }
+:root[data-look="pro"] .panel.right .out-group > summary .card-sub { margin-left: auto; font: 500 calc(var(--fs-s) * var(--fs, 1))/1 var(--f-cond); letter-spacing: .03em; text-transform: none; color: var(--ink-3); }
+:root[data-look="pro"] .panel.right .out-group > summary:hover { color: var(--ink); }
+
+/* ===================================================================================================== right panel: rows (.rows) */
+/* label (right-aligned, 96 px) · control; 24 px rows (22 px control + 2 px); the labels and fields keep their markup */
+:root[data-look="pro"] .panel.right .grid2 { grid-template-columns: 96px minmax(0, 1fr); gap: 2px 10px; align-items: center; }
+:root[data-look="pro"] .panel.right .grid2 > label:not(.chk) { grid-column: 1 / -1; display: grid; grid-template-columns: subgrid; align-items: center; gap: 0 10px; min-height: var(--row-h);
+  text-align: right; white-space: nowrap; font: 500 calc(var(--fs-m) * var(--fs, 1))/1.15 var(--f-cond); letter-spacing: .02em; color: var(--ink-3); }
+:root[data-look="pro"] .panel.right .grid2 > label:not(.chk) > :is(input, select, .spin, .seg, .ctl-corners) { grid-column: 2; text-align: left; }
+:root[data-look="pro"] .panel.right .grid2 > label:not(.chk) > .spin > input { text-align: right; }
+:root[data-look="pro"] .panel.right .grid2 > label.chk { grid-column: 2; }
+:root[data-look="pro"] .panel.right .grid2 > .lbl-row { grid-column: 1; display: flex; justify-content: flex-end; align-items: center; gap: 2px; min-height: var(--row-h); margin: 0; }
+:root[data-look="pro"] .panel.right .grid2 > .lbl-row label { white-space: nowrap; font: 500 calc(var(--fs-m) * var(--fs, 1))/1 var(--f-cond); color: var(--ink-3); }
+:root[data-look="pro"] .panel.right .grid2 > .lbl-row + input { grid-column: 2 / -1; }
+:root[data-look="pro"] .panel.right .grid2 > div.span2:not(.lbl-row) { grid-column: 2 / -1; }
+:root[data-look="pro"] .panel.right .grid2 > :is(.hint, p) { grid-column: 1 / -1; }
+/* pairs on one row (X · Y, Columns · Rows, Canvas W · H): label · field · short label · field */
+:root[data-look="pro"] .panel.right .grid2:has(> label > #sX, > label > .spin > #sX, > label > #canvasW, > label > .spin > #canvasW, > label > #pxX, > label > .spin > #pxX) { grid-template-columns: 96px minmax(0, 1fr) max-content minmax(0, 1fr); }
+:root[data-look="pro"] .panel.right .grid2:has(> label > #sX, > label > .spin > #sX, > label > #canvasW, > label > .spin > #canvasW, > label > #pxX, > label > .spin > #pxX) > label:not(.chk) > :is(input, select, .spin, .seg) { grid-column: 2 / -1; }
+:root[data-look="pro"] .panel.right .grid2 > label:is(:has(> #sX), :has(> .spin > #sX), :has(> #sCols), :has(> .spin > #sCols), :has(> #canvasW), :has(> .spin > #canvasW), :has(> #pxX), :has(> .spin > #pxX)) { grid-column: 1 / 3; }
+:root[data-look="pro"] .panel.right .grid2 > label:is(:has(> #sY), :has(> .spin > #sY), :has(> #sRows), :has(> .spin > #sRows), :has(> #canvasH), :has(> .spin > #canvasH), :has(> #pxY), :has(> .spin > #pxY)) { grid-column: 3 / 5; }
+:root[data-look="pro"] .panel.right .grid2:has(> label > #sX, > label > .spin > #sX, > label > #canvasW, > label > .spin > #canvasW, > label > #pxX, > label > .spin > #pxX) > label:is(:has(> #sX), :has(> .spin > #sX), :has(> #sCols), :has(> .spin > #sCols), :has(> #canvasW), :has(> .spin > #canvasW), :has(> #pxX), :has(> .spin > #pxX), :has(> #sY), :has(> .spin > #sY), :has(> #sRows), :has(> .spin > #sRows), :has(> #canvasH), :has(> .spin > #canvasH), :has(> #pxY), :has(> .spin > #pxY)) > :is(input, .spin) { grid-column: 2; }
+/* facts (dl): the same label column, values in the UI face (mono where they are addresses) */
+:root[data-look="pro"] .panel.right .dv-facts { grid-template-columns: 96px minmax(0, 1fr); gap: 0 10px; margin: var(--s1) 0 0; }
+:root[data-look="pro"] .panel.right .dv-facts dt { display: flex; justify-content: flex-end; align-items: center; gap: 2px; text-align: right; white-space: nowrap;
+  font: 500 calc(var(--fs-m) * var(--fs, 1))/var(--ctl-h) var(--f-cond); color: var(--ink-3); }
+:root[data-look="pro"] .panel.right .dv-facts dd { text-align: left; font: 500 calc(var(--fs-m) * var(--fs, 1))/var(--ctl-h) var(--f-cond); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:root[data-look="pro"] .panel.right .dv-ft { margin: 2px 0 0; padding-left: 106px; gap: 2px; }
+/* a label row that isn't in a grid: Rotation, the card's port count */
+:root[data-look="pro"] .panel.right #screenForm > .grid2 + .row { flex-wrap: nowrap; gap: 10px; }
+:root[data-look="pro"] #screenForm > .grid2 + .row > .hint { width: 96px; flex: none !important; margin: 0; text-align: right; font: 500 calc(var(--fs-m) * var(--fs, 1))/1 var(--f-cond); color: var(--ink-3); }
+:root[data-look="pro"] #screenForm > .grid2 + .row > .seg { flex: 1 1 auto; width: auto; }
+:root[data-look="pro"] .panel.right label.blk { grid-template-columns: 96px minmax(0, 1fr); gap: 0 10px; min-height: var(--row-h); margin-top: 2px; white-space: nowrap;
+  font: 500 calc(var(--fs-m) * var(--fs, 1))/1 var(--f-cond); color: var(--ink-3); }
+:root[data-look="pro"] .panel.right .dims { margin: 2px 0 0; padding-left: 106px; font: 500 calc(var(--fs-m) * var(--fs, 1))/var(--row-h) var(--f-cond); color: var(--ink-2); white-space: nowrap; }
+:root[data-look="pro"] .panel.right .cap { display: grid; grid-template-columns: 96px auto auto minmax(0, 1fr); align-items: center; justify-items: end; min-height: var(--row-h); margin: 2px 0 0; padding: 0;
+  white-space: nowrap; font: 500 calc(var(--fs-m) * var(--fs, 1))/1 var(--f-cond); color: var(--ink-3); }
+:root[data-look="pro"] .panel.right .cap b { justify-self: start; margin: 0 4px 0 10px; font: 400 calc(var(--fs-s) * var(--fs, 1))/1 var(--f-mono); color: var(--ink); }
+:root[data-look="pro"] .panel.right .cap .itip { justify-self: start; margin-left: 4px; }
+:root[data-look="pro"] .panel.right .hint, :root[data-look="pro"] .panel.right .card-b > .row:first-child { font: 500 calc(var(--fs-s) * var(--fs, 1))/1.35 var(--f-cond); color: var(--ink-3); }
+:root[data-look="pro"] .panel.right .card-proc { font: 600 calc(var(--fs-m) * var(--fs, 1))/var(--row-h) var(--f-cond); color: var(--ink); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:root[data-look="pro"] .panel.right .danger-row { margin-top: var(--s3); }
+/* the wiring start corner and the fill patterns */
+:root[data-look="pro"] .ctl-corners { grid-template-columns: repeat(2, 28px); grid-template-rows: repeat(2, 18px); gap: 3px; }
+:root[data-look="pro"] .panel.right .pattern-head { display: grid; grid-template-columns: 96px minmax(0, 1fr); gap: 0 10px; margin: var(--s2) 0 var(--s1);
+  font: 600 calc(var(--fs-xs) * var(--fs, 1))/1 var(--f-cond); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); }
+:root[data-look="pro"] .panel.right .pattern-head > span { display: flex; align-items: center; justify-content: flex-end; gap: 2px; white-space: nowrap; letter-spacing: .1em; }
+:root[data-look="pro"] .panel.right .pattern-head select { text-transform: none; letter-spacing: .01em; }
+:root[data-look="pro"] .panel.right .pattern-pad { grid-template-columns: repeat(4, 40px); gap: var(--s1); max-width: none; margin-left: 106px; }
+:root[data-look="pro"] .panel.right .pattern-pad > button { height: 40px; padding: 4px; border-radius: var(--r-ctl); }
+:root[data-look="pro"] .panel.right .pattern-pad svg { max-width: 30px; }
+/* cabinet types: the open one's × is the quiet remove button */
+:root[data-look="pro"] .panel.right .plib-row { min-height: 28px; padding: 2px 4px 2px 6px; border-radius: var(--r-seg); }
+:root[data-look="pro"] .panel.right .plib-row.on { background: var(--accent-soft); border-color: var(--acc); }
+:root[data-look="pro"] .panel.right .plib-row > button { width: var(--ctl-h); height: var(--ctl-h); min-height: var(--ctl-h); padding: 0; border-color: transparent; background: transparent; box-shadow: none;
+  color: var(--ink-3); font: 400 calc(15px * var(--fs, 1))/var(--ctl-lh) var(--f-cond); }
+:root[data-look="pro"] .panel.right .plib-row > button:hover { border-color: var(--edge); background: var(--g-bad-tile); color: var(--bad-ink); }
+:root[data-look="pro"] .panel.right .plib-head { font: 600 calc(var(--fs-xs) * var(--fs, 1))/1 var(--f-cond); letter-spacing: .12em; text-transform: uppercase; color: var(--ink-3); }
+:root[data-look="pro"] .panel.right .plib-res { font: 400 calc(var(--fs-s) * var(--fs, 1))/1 var(--f-mono); color: var(--ink-3); }
+:root[data-look="pro"] .panel.right .plib-n { font: 400 calc(var(--fs-xs) * var(--fs, 1))/1 var(--f-mono); color: var(--ink-3); }
+:root[data-look="pro"] .panel.right #panelSearch { width: 100%; }
+:root[data-look="pro"] .panel.right #manualOpts > .hint { padding-left: 106px; }
+
+/* ===================================================================================================== Processors: cards, hardware */
+/* output card rows: slot · what it feeds (two short lines) · card type · remove; the open one marked as a table's .sel */
+:root[data-look="pro"] .panel.right .dv-cr { display: grid; grid-template-columns: minmax(0, 1fr) 112px var(--ctl-h); gap: var(--s1); align-items: center; min-height: 32px; margin: 0 calc(-1 * var(--s3)) 0;
+  padding: 2px var(--s2); border-radius: 0; border-bottom: 1px solid var(--hair-2); }
+:root[data-look="pro"] .panel.right .dv-cr:first-child { border-top: 1px solid var(--hair-2); }
+:root[data-look="pro"] .panel.right .dv-cr.on { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--acc); }
+:root[data-look="pro"] .panel.right .dv-cr-go { display: flex; flex-direction: column; align-items: flex-start; justify-content: center; min-width: 0; height: auto; min-height: 28px; padding: 0 4px; border: 0;
+  background: transparent; box-shadow: none; text-align: left; }
+:root[data-look="pro"] .panel.right .dv-cr-go b { font: 600 calc(var(--fs-m) * var(--fs, 1))/14px var(--f-cond); color: var(--ink); }
+:root[data-look="pro"] .panel.right .dv-cr-go span { display: block; max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font: 500 calc(var(--fs-xs) * var(--fs, 1))/14px var(--f-cond); letter-spacing: .02em; color: var(--ink-3); }
+:root[data-look="pro"] .panel.right .dv-cr-go:hover { background: transparent; }
+:root[data-look="pro"] .panel.right .dv-cr-go:hover b { color: var(--acc-hi); }
+:root[data-look="pro"] .panel.right .dv-cr > select { width: 100%; padding: 0 18px 0 6px; background-position: right 6px center, 0 0; font-size: calc(var(--fs-s) * var(--fs, 1)); }
+:root[data-look="pro"] .panel.right .dv-cr > :is(label, .dv-cr-ports) { grid-column: 2 / -1; display: flex; align-items: center; justify-content: flex-end; gap: 6px; white-space: nowrap;
+  font: 500 calc(var(--fs-m) * var(--fs, 1))/1 var(--f-cond); color: var(--ink-3); }
+:root[data-look="pro"] .panel.right .dv-cr + .row { margin-top: var(--s2); }
+/* hardware: the link line, then rows of equal buttons; Live as a switch */
+:root[data-look="pro"] .panel.right .hw-link { margin: 0 0 var(--s1); font: 500 calc(var(--fs-m) * var(--fs, 1))/1.5 var(--f-cond); color: var(--ink-2); }
+:root[data-look="pro"] .panel.right .hw-link b { color: var(--ink); font-weight: 600; }
+:root[data-look="pro"] #dvHwBody > p.hint { margin: 0 0 var(--s2); }
+:root[data-look="pro"] #dvHwBody > p.hint .mini { height: var(--sm-h); min-height: var(--sm-h); line-height: var(--sm-lh); vertical-align: 0; }
+:root[data-look="pro"] .panel.right .svc-row > button { flex: 1 1 auto; }
+
+/* ===================================================================================================== Screen Settings / Correction side panels */
+:root[data-look="pro"] .sc-panel > .sc-seg { width: auto; margin: var(--s2) var(--s3) 0; }
+:root[data-look="pro"] .sc-panel > .sc-seg > button { gap: 4px; }
+:root[data-look="pro"] .sc-seg .sc-live { height: 14px; padding: 0 4px; margin-left: 4px; border-radius: var(--r-xs); background: rgba(63, 208, 122, .16); color: var(--ok-ink); box-shadow: inset 0 0 0 1px rgba(63, 208, 122, .38);
+  font: 700 calc(9px * var(--fs, 1))/14px var(--f-cond); letter-spacing: .08em; text-transform: uppercase; vertical-align: 1px; }
+:root[data-look="pro"] .sc-seg button.on .sc-live { background: rgba(0, 0, 0, .3); color: #fff; box-shadow: none; }
+:root[data-look="pro"] .sc-panel .sc-form { padding: 0 var(--s3) var(--s3); }
+:root[data-look="pro"] .sc-panel .sc-target { display: flex; align-items: center; gap: 6px; height: var(--row-h); margin: var(--s2) calc(-1 * var(--s3)) 0; padding: 0 var(--s3); background: transparent;
+  border-top: 1px solid var(--edge); border-bottom: 1px solid var(--edge); box-shadow: inset 0 1px 0 var(--hair-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  font: 600 calc(var(--fs-m) * var(--fs, 1))/1 var(--f-cond); color: var(--ink); }
+:root[data-look="pro"] .sc-panel .sc-target.none { color: var(--ink-3); font-weight: 500; }
+/* each field is a section: its name as a small-caps group label (its note on the right), the control under it */
+:root[data-look="pro"] .sc-panel .sc-field { margin: 0 calc(-1 * var(--s3)); padding: 0 var(--s3) 10px; border-bottom: 1px solid var(--edge); box-shadow: 0 1px 0 var(--hair-2); }
+:root[data-look="pro"] .sc-panel .sc-field > label:first-child:not(.chk) { display: flex; flex-direction: row; align-items: center; justify-content: flex-start; gap: 6px; height: var(--row-h); margin: 0 0 2px; white-space: nowrap;
+  font: 600 calc(var(--fs-xs) * var(--fs, 1))/1 var(--f-cond); letter-spacing: .16em; text-transform: uppercase; color: var(--ink-3); }
+:root[data-look="pro"] .sc-panel .sc-field > label:first-child > span:first-child { display: inline-flex; align-items: center; gap: 2px; }
+:root[data-look="pro"] .sc-panel .sc-field > label:first-child .hint { margin: 0 0 0 auto; font: 500 calc(var(--fs-s) * var(--fs, 1))/1 var(--f-cond); letter-spacing: .03em; text-transform: none; color: var(--ink-3); }
+:root[data-look="pro"] .sc-panel .sc-field.off { opacity: 1; }
+:root[data-look="pro"] .sc-panel .sc-field.off > :not(label) { opacity: .55; }
+:root[data-look="pro"] .sc-panel .sc-field > .row { margin-top: var(--s1) !important; }
+:root[data-look="pro"] .sc-panel .sc-field > .seg { margin: 0; }
+:root[data-look="pro"] .sc-panel :is(.sc-note, .sc-why, .sc-field .hint:not(label .hint)) { margin: 6px 0 0; font: 500 calc(var(--fs-s) * var(--fs, 1))/1.35 var(--f-cond); color: var(--ink-3); }
+:root[data-look="pro"] .sc-panel .sc-check { margin: 6px 0 0; padding: 6px 8px; border: 1px solid var(--edge); border-radius: var(--r-ctl); background: var(--bg-field); box-shadow: var(--well-sh);
+  font: 500 calc(var(--fs-s) * var(--fs, 1))/1.35 var(--f-cond); }
+:root[data-look="pro"] .sc-panel .sc-check.bad { color: var(--bad-ink); }
+:root[data-look="pro"] .sc-panel .sc-check.ok { color: var(--ok-ink); }
+/* sliders: "Brightness ……… [ 80 ] %" over a full-width groove; the value column the same on every row */
+:root[data-look="pro"] .sc-panel .sc-slide { padding: 6px var(--s3) 8px; gap: 0 8px; }
+:root[data-look="pro"] .sc-panel .sc-slide .sc-head { min-height: var(--row-h); }
+:root[data-look="pro"] .sc-panel .sc-slide .sc-head label { font: 600 calc(var(--fs-m) * var(--fs, 1))/1 var(--f-cond); letter-spacing: .02em; color: var(--ink-2); }
+:root[data-look="pro"] .sc-panel .sc-slide .sc-head .chg { font-size: calc(9px * var(--fs, 1)); color: var(--warn); }
+:root[data-look="pro"] .sc-panel .sc-slide .sc-val { grid-template-columns: 72px 12px var(--ctl-h); gap: 0 4px; }
+:root[data-look="pro"] .sc-panel .sc-slide .sc-val .spin, :root[data-look="pro"] .sc-panel .sc-slide .sc-val input[type=number] { width: 72px; }
+:root[data-look="pro"] .sc-panel .sc-slide .sc-val .unit { font: 400 calc(var(--fs-xs) * var(--fs, 1))/1 var(--f-mono); color: var(--ink-3); }
+:root[data-look="pro"] .sc-panel .sc-range { height: 20px; }
+:root[data-look="pro"] .sc-reset { width: var(--ctl-h); height: var(--ctl-h); min-height: var(--ctl-h); padding: 0; border-radius: var(--r-ctl); font: 400 calc(var(--fs-m) * var(--fs, 1))/1 var(--f-cond); }
+:root[data-look="pro"] .sc-panel .sc-field select { width: 100%; }
+:root[data-look="pro"] .sc-panel .sc-foot { gap: var(--s1); padding: var(--s2) var(--s3); background: var(--g-head); border-top: 1px solid var(--edge); box-shadow: inset 0 1px 0 var(--hi); }
+:root[data-look="pro"] .sc-panel .sc-foot:not(:has(> button:not([hidden]))) { display: none; }
+
+/* ===================================================================================================== Backup side panel */
+:root[data-look="pro"] #bkBody > .seg { margin: 0 0 var(--s2); }
+:root[data-look="pro"] .panel.right .bk-set { grid-template-columns: 52px minmax(0, 1fr); gap: var(--s1) 8px; font: 500 calc(var(--fs-m) * var(--fs, 1))/1 var(--f-cond); color: var(--ink-3); }
+:root[data-look="pro"] .panel.right .bk-set > span { text-align: right; }
+:root[data-look="pro"] .panel.right .bk-set > div { flex-wrap: nowrap; gap: var(--s1); }
+:root[data-look="pro"] .panel.right .bk-set select { flex: 1 1 auto; min-width: 0; }
+:root[data-look="pro"] .panel.right .bk-pp { gap: 2px; color: var(--ink-3); }
+:root[data-look="pro"] .panel.right .bk-pp input { width: 38px; padding: 0 5px; text-align: right; }
+:root[data-look="pro"] .panel.right .bk-pp .bk-to { width: 38px; padding-right: 6px; font: 400 calc(var(--fs-s) * var(--fs, 1))/1 var(--f-mono); color: var(--ink); }
+:root[data-look="pro"] .panel.right .bk-list { margin: var(--s2) calc(-1 * var(--s3)) 0; }
+:root[data-look="pro"] .panel.right .bk-li { gap: 8px; min-height: var(--row-h); padding: 0 var(--s1) 0 var(--s3); border-radius: 0; border-top: 1px solid var(--hair-2); font: 500 calc(var(--fs-m) * var(--fs, 1))/1 var(--f-cond); }
+:root[data-look="pro"] .panel.right .bk-li:last-child { border-bottom: 1px solid var(--hair-2); }
+:root[data-look="pro"] .panel.right .bk-li b { font-weight: 600; color: var(--ink); white-space: nowrap; }
+:root[data-look="pro"] .panel.right .bk-li span { font: 400 calc(var(--fs-s) * var(--fs, 1))/1 var(--f-mono); color: var(--ink-3); }
+:root[data-look="pro"] .panel.right .bk-li:hover { background: var(--lk-hover); }
+:root[data-look="pro"] .panel.right .bk-li.on { background: var(--accent-soft); box-shadow: inset 3px 0 0 var(--acc); }
+
+/* ===================================================================================================== other side panels: presets, events, checks, details */
+/* the processors' own presets: one section per processor (not a card in the panel) */
+:root[data-look="pro"] .ps-panel .ps-dev { padding: 0 var(--s3); }
+:root[data-look="pro"] .ps-panel .ps-dev .ps-scene { margin: 0 calc(-1 * var(--s3)); padding: 0 var(--s3) var(--s2); border: 0; border-bottom: 1px solid var(--edge); border-radius: 0; background: transparent;
+  box-shadow: 0 1px 0 var(--hair-2); }
+:root[data-look="pro"] .ps-panel .ps-dev .ps-scene > h3 { margin: 0 calc(-1 * var(--s3)); padding: 0 var(--s1) 0 var(--s3); border-top: 0; gap: var(--s1); flex-wrap: nowrap; }
+:root[data-look="pro"] .ps-panel .ps-dev .ps-scene > h3 .hint { margin: 0 0 0 4px; font: 500 calc(var(--fs-s) * var(--fs, 1))/1 var(--f-cond); letter-spacing: .03em; text-transform: none; }
+:root[data-look="pro"] .ps-panel .ps-dev .ps-scene > h3 button { text-transform: none; letter-spacing: .03em; }
+:root[data-look="pro"] .ps-panel .ps-dev .ps-scene > .hint { margin: 2px 0 0; }
+:root[data-look="pro"] .dg-side-tools { display: flex; flex-wrap: wrap; gap: var(--s1); padding: var(--s2) var(--s3); border-bottom: 1px solid var(--edge); box-shadow: 0 1px 0 var(--hair-2); }
+:root[data-look="pro"] .dg-side-tools > button { flex: 1 1 0; min-width: max-content; }
+
+/* ===================================================================================================== status line (.sb) */
+:root[data-look="pro"] .status { display: flex; align-items: center; gap: 0; min-height: var(--h-status); padding: 0 10px; background: var(--sb-bg); border-top: 1px solid var(--edge); box-shadow: inset 0 1px 0 var(--hair-2);
+  font: 500 calc(var(--fs-s) * var(--fs, 1))/1.3 var(--f-cond); letter-spacing: .02em; color: var(--ink-2); }
+:root[data-look="pro"] .status:empty { display: none; }

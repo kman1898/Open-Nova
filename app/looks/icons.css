@@ -1,0 +1,52 @@
+/* app/looks/icons.css - an opt-in line-icon set for the try-on looks (docs/DESIGN_LOOKS.md): a look that wants icons
+   imports this file. Pure CSS: each icon is an inline SVG used as a mask on ::before, drawn in the button's text colour,
+   so no markup, id or label changes (the buttons keep their aria-label / title; text-only toolbar glyphs are hidden).
+   24×24 grid, 1.8 px round strokes, like Unico's / VMP's toolbar icons. */
+
+:root[data-look] {
+  --ic-undo: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M9 14L4 9l5-5'/%3E%3Cpath d='M4 9h10.5a5.5 5.5 0 0 1 0 11H11'/%3E%3C/svg%3E");
+  --ic-redo: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M15 14l5-5-5-5'/%3E%3Cpath d='M20 9H9.5a5.5 5.5 0 0 0 0 11H13'/%3E%3C/svg%3E");
+  --ic-fit: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5'/%3E%3Crect x='8' y='8' width='8' height='8' rx='1'/%3E%3C/svg%3E");
+  --ic-zin: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='10.5' cy='10.5' r='6.5'/%3E%3Cpath d='M20 20l-4.6-4.6M10.5 7.5v6M7.5 10.5h6'/%3E%3C/svg%3E");
+  --ic-zout: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Ccircle cx='10.5' cy='10.5' r='6.5'/%3E%3Cpath d='M20 20l-4.6-4.6M7.5 10.5h6'/%3E%3C/svg%3E");
+  --ic-black: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='18' height='13' rx='1.5'/%3E%3Cpath d='M8 21h8M5 7l14 9'/%3E%3C/svg%3E");
+  --ic-freeze: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 3v18M4.2 7.5l15.6 9M4.2 16.5l15.6-9M9.5 4.5L12 7l2.5-2.5M9.5 19.5L12 17l2.5 2.5'/%3E%3C/svg%3E");
+  --ic-normal: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='18' height='13' rx='1.5'/%3E%3Cpath d='M8 21h8M10.5 9l4 2.5-4 2.5z'/%3E%3C/svg%3E");
+  --ic-send: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M12 15V4M7.5 8.5L12 4l4.5 4.5'/%3E%3Cpath d='M4 14v4.5A1.5 1.5 0 0 0 5.5 20h13a1.5 1.5 0 0 0 1.5-1.5V14'/%3E%3C/svg%3E");
+  --ic-save: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M5 4h11l3 3v13H5z'/%3E%3Cpath d='M8 4v5h7V4M8 20v-6h8v6'/%3E%3C/svg%3E");
+  --ic-export: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M14 3H6.5A1.5 1.5 0 0 0 5 4.5v15A1.5 1.5 0 0 0 6.5 21h11a1.5 1.5 0 0 0 1.5-1.5V8z'/%3E%3Cpath d='M14 3v5h5M12 11v6M9.5 14.5L12 17l2.5-2.5'/%3E%3C/svg%3E");
+  --ic-test: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Crect x='3' y='5' width='18' height='14' rx='1.5'/%3E%3Cpath d='M7.5 5v14M12 5v14M16.5 5v14'/%3E%3C/svg%3E");
+  --ic-arrange: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 3v18'/%3E%3Crect x='7' y='6' width='12' height='4' rx='1'/%3E%3Crect x='7' y='14' width='7' height='4' rx='1'/%3E%3C/svg%3E");
+  --ic-view: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.5 12S6 5.5 12 5.5 21.5 12 21.5 12 18 18.5 12 18.5 2.5 12 2.5 12z'/%3E%3Ccircle cx='12' cy='12' r='3'/%3E%3C/svg%3E");
+  --ic-plus: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 24 24' fill='none' stroke='%23000' stroke-width='2' stroke-linecap='round'%3E%3Cpath d='M12 5v14M5 12h14'/%3E%3C/svg%3E");
+}
+
+/* toolbar icon buttons: the text glyph hidden, the icon drawn instead */
+:root[data-look] #btnUndo, :root[data-look] #btnRedo, :root[data-look] #btnZoomFit, :root[data-look] #btnZoomIn, :root[data-look] #btnZoomOut {
+  font-size: 0; width: 28px; min-width: 28px; height: 28px; padding: 0; background: transparent; border-color: transparent; color: var(--lk-icon-ink, var(--muted)); }
+:root[data-look] #btnUndo:hover, :root[data-look] #btnRedo:hover, :root[data-look] #btnZoomFit:hover, :root[data-look] #btnZoomIn:hover, :root[data-look] #btnZoomOut:hover {
+  background: var(--lk-hover); color: var(--ink); border-color: transparent; }
+:root[data-look] #btnUndo::before, :root[data-look] #btnRedo::before, :root[data-look] #btnZoomFit::before, :root[data-look] #btnZoomIn::before, :root[data-look] #btnZoomOut::before,
+:root[data-look] #btnBlackout::before, :root[data-look] #btnFreeze::before, :root[data-look] #btnNormalHdr::before, :root[data-look] #btnSendHdr::before,
+:root[data-look] #btnSaveHw::before, :root[data-look] #btnExport::before, :root[data-look] #btnTest::before, :root[data-look] #btnArrange::before, :root[data-look] #btnView::before {
+  content: ''; flex: none; width: 17px; height: 17px; background: currentColor; -webkit-mask: var(--ic) center / contain no-repeat; mask: var(--ic) center / contain no-repeat; }
+:root[data-look] #btnTest::before, :root[data-look] #btnArrange::before, :root[data-look] #btnView::before { width: 15px; height: 15px; opacity: .85; }
+:root[data-look] #btnUndo { --ic: var(--ic-undo); }
+:root[data-look] #btnRedo { --ic: var(--ic-redo); }
+:root[data-look] #btnZoomFit { --ic: var(--ic-fit); }
+:root[data-look] #btnZoomIn { --ic: var(--ic-zin); }
+:root[data-look] #btnZoomOut { --ic: var(--ic-zout); }
+:root[data-look] #btnBlackout { --ic: var(--ic-black); }
+:root[data-look] #btnFreeze { --ic: var(--ic-freeze); }
+:root[data-look] #btnNormalHdr { --ic: var(--ic-normal); }
+:root[data-look] #btnSendHdr { --ic: var(--ic-send); }
+:root[data-look] #btnSaveHw { --ic: var(--ic-save); }
+:root[data-look] #btnExport { --ic: var(--ic-export); }
+:root[data-look] #btnTest { --ic: var(--ic-test); }
+:root[data-look] #btnArrange { --ic: var(--ic-arrange); }
+:root[data-look] #btnView { --ic: var(--ic-view); }
+:root[data-look] header.bar .bar-actions > button { gap: 6px; }
+/* phones: tighter header buttons (icon + label still fit two rows at 375 px) */
+@media (max-width: 520px) {
+  :root[data-look] header.bar .bar-actions > button { padding-left: 8px; padding-right: 8px; }
+}

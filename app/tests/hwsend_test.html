@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Send to processor test</title>
+<style>
+  :root { --bg: #f6f7f9; --fg: #1d2330; --muted: #5d6675; --line: #d6dae1; --ok: #1d7a3a; --bad: #b42318; --card: #fff; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #161a21; --fg: #e6e9ef; --muted: #9aa3b2; --line: #2c3340; --ok: #4cc27a; --bad: #ff7a6b; --card: #1e232c; } }
+  body { background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; margin: 0; padding: 16px; }
+  fieldset { border: 1px solid var(--line); background: var(--card); border-radius: 6px; margin: 0 0 12px; }
+  label { margin-right: 12px; white-space: nowrap; }
+  input, select, button { font: inherit; }
+  pre { background: var(--card); border: 1px solid var(--line); padding: 8px; overflow: auto; max-height: 50vh; white-space: pre-wrap; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<h2>Send to processor (test page)</h2>
+<p class="muted">Builds the Send plan with the app's own code (hwsend.js) and hands it to the local helper (tools\novalink.py on port 8790).
+No Save: the receiving-card save is never part of a Send.</p>
+<fieldset><legend>Show file</legend>
+  <input id="file" type="text" size="32" placeholder="name.scr in app/samples" title="A show file in app/samples (private, not in the repository), or pick one">
+  <input type="file" id="pick" accept=".scr">
+</fieldset>
+<fieldset><legend>Processor</legend>
+  <label>Model <select id="model"></select></label>
+  <label>Sending cards <input id="senders" type="number" min="1" max="20" value="4" style="width:4em"></label>
+  <label><input type="checkbox" id="backup" checked> Back up every port of each card in use on the next unused card</label>
+</fieldset>
+<fieldset><legend>Target</legend>
+  <label>Host <input id="host" value="127.0.0.1"></label>
+  <label>Port <input id="port" value="5201" style="width:5em"></label>
+  <button id="build">Build plan</button>
+  <button id="sim">Simulate</button>
+  <button id="send">Send to processor</button>
+</fieldset>
+<pre id="out"></pre>
+<script src="../scr.js"></script>
+<script src="../hwsend.js"></script>
+<script>
+var HELPER = 'http://127.0.0.1:8790';
+var out = document.getElementById('out'), modelSel = document.getElementById('model'), picked = null;
+Object.keys(HWSEND.MODELS).forEach(function (id) { var o = document.createElement('option'); o.value = id; o.textContent = HWSEND.MODELS[id].name + ' (0x' + (+id).toString(16) + ')'; modelSel.appendChild(o); });
+modelSel.value = String(0x7B48);
+function say(s, cls) { var d = document.createElement('div'); d.textContent = s; if (cls) d.className = cls; out.appendChild(d); }
+document.getElementById('pick').onchange = function (e) { picked = e.target.files[0] || null; };
+
+async function loadModel() {
+  var buf = picked ? await picked.arrayBuffer() : await (await fetch('../samples/' + encodeURIComponent(document.getElementById('file').value))).arrayBuffer();
+  return SCR.parse(buf);
+}
+async function buildPlan(modelId, senders) {
+  var m = await loadModel(), M = HWSEND.MODELS[modelId], used = {};
+  m.screens.forEach(function (s) { (s.cells || []).forEach(function (c) { if (c.sender !== 255) used[c.sender] = 1; }); });
+  var prim = Object.keys(used).map(Number).sort(), backup = [];
+  if (document.getElementById('backup').checked) {
+    var free = []; for (var d = 0; d < senders; d++) if (!used[d]) free.push(d);
+    if (free.length < prim.length) throw new Error('Need ' + prim.length + ' unused sending cards for backup, have ' + free.length);
+    backup = HWSEND.portBackupPairs(prim, free.slice(0, prim.length), M.ports);
+  }
+  return HWSEND.buildSendPlan(m, { modelId: +modelId, senders: senders, backup: backup });
+}
+async function post(path, body) {
+  var r = await fetch(HELPER + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  return r.json();
+}
+function summary(plan) {
+  var w = plan.ops.filter(function (o) { return o.op === 'w'; }).length;
+  return plan.model + ' x' + plan.senders + ': ' + plan.cabinets + ' cabinets, ' + plan.pairs + ' backup pairs, ' + plan.ops.length + ' ops (' + w + ' writes)';
+}
+document.getElementById('build').onclick = async function () {
+  out.textContent = '';
+  try { var p = await buildPlan(modelSel.value, +document.getElementById('senders').value); window.lastPlan = p; say(summary(p), 'ok');
+    p.ops.slice(0, 60).forEach(function (o) { say(JSON.stringify(o).slice(0, 160)); }); }
+  catch (e) { say(e.message, 'bad'); }
+};
+document.getElementById('sim').onclick = async function () {
+  out.textContent = '';
+  try { var p = await buildPlan(modelSel.value, +document.getElementById('senders').value); say(summary(p));
+    var r = await post('/api/hw/simulate', { plan: p }); say(JSON.stringify(r), r.ok ? 'ok' : 'bad'); }
+  catch (e) { say(e.message, 'bad'); }
+};
+document.getElementById('send').onclick = async function () {
+  out.textContent = '';
+  var host = document.getElementById('host').value, port = document.getElementById('port').value;
+  try { var p = await buildPlan(modelSel.value, +document.getElementById('senders').value); say(summary(p));
+    say('Sending to ' + host + ':' + port + ' ...');
+    var r = await post('/api/hw/run', { host: host, port: +port, plan: p });
+    say(r.ok ? 'Done: ' + r.frames + ' frames' : 'Failed: ' + r.error, r.ok ? 'ok' : 'bad'); (r.tail || []).forEach(function (l) { say(l, 'muted'); }); say('log: ' + r.log, 'muted'); }
+  catch (e) { say(e.message, 'bad'); }
+};
+// for automated checks: build + simulate every model, saving each as novalink_sim\<name>
+window.simulateAll = async function (file, senders, backup) {
+  document.getElementById('file').value = file; document.getElementById('backup').checked = !!backup;
+  var res = [];
+  for (var id of Object.keys(HWSEND.MODELS)) {
+    try { var p = await buildPlan(id, senders); var name = file.replace(/\W+/g, '_') + '_' + id + (backup ? '_bk' : '');
+      var r = await post('/api/hw/simulate', { plan: p, name: name }); res.push(HWSEND.MODELS[id].name + ': ' + (r.ok ? 'ok ' + r.out : r.error)); }
+    catch (e) { res.push(HWSEND.MODELS[id].name + ': ' + e.message); }
+  }
+  return res;
+};
+</script>
+</body>
+</html>

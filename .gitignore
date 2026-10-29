@@ -1,0 +1,111 @@
+# Open Nova: only the app goes into the repository. Everything is ignored by default and only the files listed below are
+# allowed, so recordings, captures, project data, vendor samples, test fakes and research notes can never slip in.
+/*
+/*/
+!/.gitignore
+!/.gitattributes
+!/README.md
+!/DISCLAIMER.md
+!/CONTRIBUTING.md
+!/SECURITY.md
+!/ROADMAP.md
+!/LICENSE-MIT
+!/LICENSE-APACHE
+!/NOTICE
+!/opennova.py
+!/Start Open Nova.command
+!/Start Open Nova.bat
+!/start-open-nova.sh
+
+!/.github/
+!/.github/**
+
+# the logo and the README screenshots (made-up data only)
+!/assets/
+!/assets/**
+# logo options stay local until one is chosen
+/assets/logo-options/
+
+# the app
+!/app/
+/app/*
+!/app/index.html
+!/app/app.css
+!/app/polish.css
+!/app/scr.js
+!/app/scfg.js
+!/app/hwsend.js
+!/app/unicosend.js
+!/app/serve.py
+!/app/serve.ps1
+!/app/version.json
+!/app/icon.svg
+!/app/js/
+!/app/looks/
+!/app/fonts/
+!/app/tests/
+
+# the helper (tools/): runtime modules, the build script and the tests that need no private data
+!/tools/
+/tools/*
+!/tools/novalink.py
+!/tools/unicolink.py
+!/tools/coexlink.py
+!/tools/hweb.py
+!/tools/netif.py
+!/tools/wirelog.py
+!/tools/alpha.py
+!/tools/alpha_unlock.json
+!/tools/vendortap.py
+!/tools/rcvfile.py
+!/tools/rcvguard.py
+!/tools/rcvlib.py
+!/tools/vmpproject.py
+!/tools/tg_registers.json
+!/tools/build_wireshark.py
+!/tools/make_package.py
+!/tools/wireshark/
+!/tools/test_hweb.py
+!/tools/test_linkpool.py
+!/tools/test_projects.py
+!/tools/test_serial.py
+!/tools/test_usb.py
+!/tools/test_netif.py
+# tests whose private parts (captures, Samples, recordings, research tools) SKIP when those aren't here (docs/TESTING.md)
+!/tools/test_alpha.py
+!/tools/test_vendortap.py
+!/tools/test_wirelog.py
+!/tools/test_lct_color.py
+!/tools/test_rcvguard.py
+!/tools/test_rcvlib.py
+!/tools/test_recorder_complete.py
+!/tools/test_error_report.py
+# guard tests, the test runners, the package smoke test and the one stand-in a repository test needs (test_hweb)
+!/tools/test_repo_hygiene.py
+!/tools/test_version.py
+!/tools/test_workflows.py
+!/tools/repo_files.py
+!/tools/run_tests.py
+!/tools/browser_tests.py
+!/tools/smoke_package.py
+!/tools/fake_hweb.py
+
+# user documentation
+!/docs/
+/docs/*
+!/docs/RUNNING.md
+!/docs/DIAGNOSTICS.md
+!/docs/README-ALPHA.md
+!/docs/VENDOR_CAPTURE.md
+!/docs/TESTING.md
+!/docs/DESIGN_SYSTEM.md
+
+# never, even inside allowed folders
+__pycache__/
+*.pyc
+*.nwl
+*.nwl.gz
+*.pcap
+*.pcapng
+*.zip
+CODE_SOURCES.md

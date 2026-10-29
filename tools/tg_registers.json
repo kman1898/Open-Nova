@@ -1,0 +1,2212 @@
+{
+"0": {
+"0x00000000": [
+"VendorID",
+2,
+"Manufacturer ID"
+],
+"0x00000002": [
+"ModelID",
+2,
+"Device model (NSCardType enum; e.g. MCTRL4K 0x1103, VX1000 0x620C, Pro UHD Jr 0x6205, H-series 16×RJ45 card \"H9\" 0x7B46, 20×RJ45 \"H_20\" 0x7B48, H 4×fiber …"
+],
+"0x00000004": [
+"ProtocolVersion",
+2,
+"Communication protocol version"
+],
+"0x00000006": [
+"JumboFrameSupport",
+1,
+"0xA8 = supports large packets; anything else = default 256-byte data area"
+],
+"0x00000007": [
+"MaxPacketData",
+2,
+"If 0x06 = 0xA8: max data-area length per packet"
+],
+"0x00000009": [
+"HWLanguagePack",
+1,
+"0xA8 = supports hardware language pack"
+],
+"0x00000016": [
+"ControllerSN",
+8,
+"Controller serial number (LCT formats as 16 hex chars)"
+],
+"0x0000001E": [
+"BootMode",
+1,
+"0x55 = currently in Boot mode, else APP mode (from V900 on)"
+],
+"0x0000001F": [
+"NewUpdateScheme",
+1,
+"0x55 = firmware update uses new scheme"
+],
+"0x00000020": [
+"MCU_UID",
+12,
+"STM32 96-bit hardware ID"
+],
+"0x00000044": [
+"DeviceExtendType",
+0,
+"device table"
+],
+"0x00000045": [
+"SupportDeviceTable",
+0,
+"device table"
+],
+"0x00010000": [
+"DeviceTable",
+0,
+"device table"
+],
+"0x01000000": [
+"SortCommand",
+1,
+"\"Arrange/sort\" (address assignment) command — LCT broadcasts 0x00 here before enumerating cascaded senders"
+],
+"0x01000001": [
+"SaveSender",
+1,
+"Save sending-card parameters to flash"
+],
+"0x01000002": [
+"FactoryReset",
+1,
+"Restore factory values"
+],
+"0x01000003": [
+"TestPoint",
+1,
+"Test-point command"
+],
+"0x01000004": [
+"ReloadProgram",
+1,
+"Reload sending-card firmware"
+],
+"0x01000005": [
+"ChipErase",
+1,
+"Flash chip erase"
+],
+"0x0100000D": [
+"ADV7612Debug",
+1,
+"ADV7612 (HDMI receiver) debug"
+],
+"0x0100000E": [
+"ADV7612Debug +1",
+1,
+"ADV7612 (HDMI receiver) debug"
+],
+"0x0100000F": [
+"ADV7612Debug +2",
+1,
+"ADV7612 (HDMI receiver) debug"
+],
+"0x01000020": [
+"BrightnessGamma",
+0,
+"Brightness adjustment via Gamma table"
+],
+"0x01F00000": [
+"FwTotalSize",
+4,
+"Total size of program files in this update"
+],
+"0x01F00004": [
+"FwSentSize",
+4,
+"Bytes of program files sent so far"
+],
+"0x01F00008": [
+"FwFileCount",
+2,
+"Number of program files"
+],
+"0x01F0000A": [
+"FwFileIndex",
+2,
+"Index of current file"
+],
+"0x01F0000C": [
+"FwFileSize",
+4,
+"Size of current file"
+],
+"0x01F00010": [
+"SoftLoad",
+1,
+"Software-controlled load (reboot into new program)"
+],
+"0x02000000": [
+"PhysicalAddress",
+2,
+"Property register: controller physical address"
+],
+"0x02000002": [
+"Temperature",
+2,
+"Sender temperature"
+],
+"0x02000004": [
+"Humidity",
+2,
+"Sender humidity"
+],
+"0x02000006": [
+"FanState",
+2,
+"Fan status"
+],
+"0x02000008": [
+"FieldRateSource",
+2,
+"For DVI0: 0 = use DVI0 input field rate, 1 = use software-set field rate"
+],
+"0x0200000A": [
+"MultiSourceSync",
+1,
+"Sync state of multi-source"
+],
+"0x0200000B": [
+"AudioControl",
+2,
+"Audio control"
+],
+"0x0200000D": [
+"IOControl",
+2,
+"IO control"
+],
+"0x0200000F": [
+"AmbientLux",
+1,
+"Ambient brightness (lux). Code names 0x0200000F (2 bytes) BrightnessAddr, but it has no caller (§10 q10)"
+],
+"0x02000010": [
+"AmbientLux",
+1,
+"Ambient brightness (lux)"
+],
+"0x02000011": [
+"RTC",
+6,
+"Real-time clock Y-M-D-h-m-s"
+],
+"0x02000017": [
+"DVISignalPresent",
+1,
+"01 = DVI signal present, 00 = none"
+],
+"0x02000018": [
+"MasterSlavePort0",
+1,
+"bit8: redundancy flag, master = 0, slave (backup) = 1"
+],
+"0x02000019": [
+"MasterSlavePort1",
+1,
+"bit8: redundancy flag, master = 0, slave (backup) = 1"
+],
+"0x0200001A": [
+"MasterSlavePort2",
+1,
+"bit8: redundancy flag, master = 0, slave (backup) = 1"
+],
+"0x0200001B": [
+"MasterSlavePort3",
+1,
+"bit8: redundancy flag, master = 0, slave (backup) = 1"
+],
+"0x0200001C": [
+"DVI0FieldRateL",
+1,
+"DVI0 field (frame) rate, low byte"
+],
+"0x0200001D": [
+"DVI0FieldRateH",
+1,
+"DVI0 field rate, high byte"
+],
+"0x0200001E": [
+"RedundantStatus",
+1,
+"bits[1:0] = 0b10: port 1 has a redundant receiving card; bits[3:2] port 2, …"
+],
+"0x0200001F": [
+"PsdTxOnly",
+1,
+"(sync cards: PortLinkStatus) async PSD100: 1 = sender only, 0 = with screen"
+],
+"0x02000020": [
+"GenlockState",
+1,
+"0x00 = no signal, 0x20 = VS genlock valid"
+],
+"0x02000021": [
+"BootLogoHold",
+1,
+"Power-on picture hold time, seconds"
+],
+"0x02000022": [
+"SourceAutoSelect",
+1,
+"Video source auto vs manual"
+],
+"0x02000023": [
+"VideoSource",
+1,
+"DVI / HDMI / … input select"
+],
+"0x02000024": [
+"DVI0Width",
+2,
+"Graphics (DVI0) width"
+],
+"0x02000026": [
+"DVI0Height",
+2,
+"Graphics (DVI0) height"
+],
+"0x02000028": [
+"DVI0OffsetX",
+2,
+"DVI0 capture offset X"
+],
+"0x0200002A": [
+"DVI0OffsetY",
+2,
+"DVI0 capture offset Y"
+],
+"0x0200002C": [
+"RealDVI0Width",
+2,
+"Real DVI0 width (the doc then says \"DVI1 Height\" at 0x2E — map is inconsistent here)"
+],
+"0x0200002E": [
+"DVI1Height",
+2,
+"DVI1 height"
+],
+"0x02000030": [
+"DVI1OffsetX",
+2,
+"DVI1 offset X"
+],
+"0x02000032": [
+"DVI1OffsetY",
+2,
+"DVI1 offset Y"
+],
+"0x02000034": [
+"DVI1RelX",
+2,
+"DVI1 offset X relative to DVI0"
+],
+"0x02000036": [
+"DVI1RelY",
+2,
+"DVI1 offset Y relative to DVI0"
+],
+"0x02000038": [
+"VirtualMap",
+1,
+"Virtual-pixel map"
+],
+"0x02000039": [
+"FrameChange",
+1,
+"Frame change"
+],
+"0x0200003A": [
+"MirrorDisplay",
+1,
+"Mirror display"
+],
+"0x0200003B": [
+"Gamma18BitEn",
+1,
+"18-bit gamma enable"
+],
+"0x0200003C": [
+"EnableDistributor",
+1,
+"Enable distributor"
+],
+"0x0200003D": [
+"DistributorMode",
+1,
+"Distributor mode"
+],
+"0x0200003E": [
+"Weekday",
+1,
+"Day of week (RTC)"
+],
+"0x0200003F": [
+"SerialTimeout",
+1,
+"Serial-disconnect judgement time"
+],
+"0x02000040": [
+"SmartSetMode",
+1,
+"Smart-setting mode"
+],
+"0x02000041": [
+"3DLeftFirst",
+1,
+"3D left-then-right"
+],
+"0x02000042": [
+"3DMode",
+1,
+"3D mode"
+],
+"0x02000043": [
+"SyncTime",
+3,
+"Sync time"
+],
+"0x02000046": [
+"SourceDetCol",
+2,
+"Source detected input column pixels"
+],
+"0x02000048": [
+"SourceDetRow",
+2,
+"Source detected input row pixels"
+],
+"0x0200004A": [
+"ComplexCfgScreenFlag",
+1,
+"Complex-screen configuration flag"
+],
+"0x0200004B": [
+"InterlacedInput",
+1,
+"Interlaced-input flag"
+],
+"0x0200004C": [
+"SerdesNetPortEnable",
+1,
+"SerDes or net-port enable"
+],
+"0x0200004D": [
+"SourceSignalState",
+1,
+"Source signal state"
+],
+"0x0200004E": [
+"BrightnessSync",
+1,
+"Brightness sync-adjust function"
+],
+"0x0200004F": [
+"3DEmitter",
+1,
+"3D emitter on/off"
+],
+"0x02000050": [
+"Port0Enable",
+1,
+"Port 0 enable / master-slave (LCT \"SetPortEnable\")"
+],
+"0x02000051": [
+"Port0Width",
+2,
+"Port 0 load region width"
+],
+"0x02000053": [
+"Port0Height",
+2,
+"Port 0 region height"
+],
+"0x02000055": [
+"Port0OffsetX",
+2,
+"Port 0 region X"
+],
+"0x02000057": [
+"Port0OffsetY",
+2,
+"Port 0 region Y"
+],
+"0x02000059": [
+"Port1 Enable/W/H/X/Y",
+9,
+"same layout, stride 9 bytes"
+],
+"0x02000062": [
+"Port2 Enable/W/H/X/Y",
+9,
+""
+],
+"0x0200006B": [
+"Port3 Enable/W/H/X/Y",
+9,
+"ports 4-7 at 0x020000B0, 8-15 at 0x02000130, ≥16 at 0x02010240 (same 9-byte layout; Appendix B)"
+],
+"0x02000074": [
+"Reserved",
+1,
+""
+],
+"0x02000075": [
+"ScaleEn",
+1,
+"Scaling enable"
+],
+"0x02000076": [
+"ColScalePara",
+2,
+"Column scale parameter"
+],
+"0x02000078": [
+"EndColScalePos",
+2,
+"End column scale position"
+],
+"0x0200007A": [
+"RowScalePara",
+2,
+"Row scale parameter"
+],
+"0x0200007C": [
+"EndRowScalePos",
+2,
+"End row scale position"
+],
+"0x0200007E": [
+"RowDoubleSizeEn",
+1,
+"Row double-size"
+],
+"0x0200007F": [
+"ColDoubleSizeEn",
+1,
+"Column double-size"
+],
+"0x02000080": [
+"DVIDecryptStartX",
+2,
+"DVI decrypt start X"
+],
+"0x02000082": [
+"DVIDecryptStartY",
+2,
+"DVI decrypt start Y"
+],
+"0x02000084": [
+"DVIDecryptWidth",
+1,
+"DVI decrypt width"
+],
+"0x02000085": [
+"DVIDecryptHeight",
+1,
+"DVI decrypt height"
+],
+"0x02000086": [
+"SDIMode",
+1,
+"SDI mode"
+],
+"0x02000087": [
+"SDIFamily",
+1,
+"SDI family"
+],
+"0x02000088": [
+"SDIRate",
+1,
+"SDI rate"
+],
+"0x02000089": [
+"Set3DDVIOffset",
+8,
+"3D per-DVI offsets"
+],
+"0x02000098": [
+"MasterSlavePort4",
+1,
+"as 0x18"
+],
+"0x02000099": [
+"MasterSlavePort5",
+1,
+"as 0x18"
+],
+"0x0200009A": [
+"MasterSlavePort6",
+1,
+"as 0x18"
+],
+"0x0200009B": [
+"MasterSlavePort7",
+1,
+"as 0x18"
+],
+"0x0200009D": [
+"MasterSlaveDevice",
+1,
+"device master/slave"
+],
+"0x0200009E": [
+"RedundantStatus",
+1,
+""
+],
+"0x0200009F": [
+"PortLinkStatus",
+1,
+"Port link status"
+],
+"0x020000A0": [
+"DDRWrDoneFlag",
+1,
+"DDR write-done flag"
+],
+"0x020000A1": [
+"ScaleIpEn",
+1,
+"Scaler IP enable"
+],
+"0x020000B0": [
+"PortEnableNextAddr",
+9,
+"port block {enable, W, H, X, Y}, ports 0-3 / 4-7 / 8-15 / 16+"
+],
+"0x020000D4": [
+"SendVideoSyncData",
+5,
+"{enable, W, H}"
+],
+"0x020000F0": [
+"VirtualMapNew",
+1,
+"0 = real pixel"
+],
+"0x02000100": [
+"MasterOrSlaveNew16Addr",
+1,
+"per-port master (0x00) / slave (0x80), ports 0-3 / 4-7 / 8-15 / 16+"
+],
+"0x02000130": [
+"PortEnableNext16Addr",
+9,
+"port block {enable, W, H, X, Y}, ports 0-3 / 4-7 / 8-15 / 16+"
+],
+"0x02000178": [
+"DVIOf4KInfoAddr",
+45,
+"4 DVI rects + arrangement"
+],
+"0x02000180": [
+"DVIOf1600InfoAddr",
+6,
+"per-DVI W/H/Hz (1600 class)"
+],
+"0x020001A5": [
+"SetSourceTypeAddr",
+1,
+"source type"
+],
+"0x020001A6": [
+"DVIModeSettingAddr",
+1,
+"MCTRL4K DVI mode"
+],
+"0x020001B7": [
+"DVIOfPortInfoAddr",
+1,
+"port → DVI"
+],
+"0x020001DA": [
+"SenderMasterMode",
+1,
+"H 4×fiber card: 0xAA → 32-port mode, else 16"
+],
+"0x020001EC": [
+"SetScreenALLWidth",
+0,
+"total screen width"
+],
+"0x02010000": [
+"Sender_All32DataAddr",
+768,
+"port unit for >16 ports"
+],
+"0x02010040": [
+"MasterOrSlaveNew32Addr",
+1,
+"per-port master (0x00) / slave (0x80), ports 0-3 / 4-7 / 8-15 / 16+"
+],
+"0x02010240": [
+"PortEnableNext32Addr",
+9,
+"port block {enable, W, H, X, Y}, ports 0-3 / 4-7 / 8-15 / 16+"
+],
+"0x02020020": [
+"SenderFunctionAddr",
+64,
+"sender capability bits"
+],
+"0x02030000": [
+"free route",
+2,
+"card count per port, free-route mode"
+],
+"0x02100000": [
+"660ScreenInfo / ScreenConfigSpace",
+15,
+"txt: \"660 screen info read-back\"; code: simple-screen block, and Save writes flag {0x55,0x00} here (§2.2)"
+],
+"0x021F0000": [
+"Sender_NewFrameAddr",
+2,
+"frame rate ×100"
+],
+"0x02200000": [
+"HMIControl",
+0,
+"Human-machine interaction (front panel) control"
+],
+"0x02200116": [
+"LoadModeAddr",
+1,
+"corrected 2026-10-09 from 0x02200016 (NovaLCT uses 0x02200116; LCT_UNSEEN_PLAN.md)"
+],
+"0x0220012A": [
+"Sender_GrayDepthAndBitAddr",
+2,
+"corrected 2026-10-11 from 0x0220002A (NovaLCT uses 0x0220012A, 2 bytes; COLOR_BRIGHTNESS.md)"
+],
+"0x02300000": [
+"ScreenRedundancy",
+0,
+"Screen redundancy backup info"
+],
+"0x02400000": [
+"SmartBrightScreen",
+0,
+"Smart brightness, unified send per screen"
+],
+"0x02500000": [
+"RxFactoryTest",
+0,
+"Receiving-card production auto-test"
+],
+"0x02600000": [
+"ScreenOnOffLog",
+0,
+"LED screen on/off time log (read)"
+],
+"0x02700000": [
+"CabinetRotation",
+0,
+"Cabinet rotation parameters"
+],
+"0x02800000": [
+"ScanCardCountOfSender",
+1,
+"request / read receiving-card counts per port"
+],
+"0x02800010": [
+"ReadScanCardCountOfSender",
+19,
+"request / read receiving-card counts per port"
+],
+"0x02820000": [
+"SubpixelModeNew",
+0,
+"virtual pixel"
+],
+"0x03000000": [
+"ScannerCoordinates",
+0,
+"\"Scan board coordinates\": per port p, 4096 bytes at +p×0x1000 = 1024 × {X u16, Y u16} (§2.1 step 8)"
+],
+"0x03100000": [
+"CardsPerPort",
+0,
+"Number of cards loaded on each net port: u16 at +32p (+2 per card type)"
+],
+"0x03100100": [
+"VirtualEnable",
+1,
+""
+],
+"0x03100101": [
+"DisplayMode",
+1,
+""
+],
+"0x03100109": [
+"HDEnableAddr",
+1,
+"bit depth"
+],
+"0x03100200": [
+"NumberOfCardOrBoardInPort16Addr",
+2,
+"cards per port (t = 0 receiving card)"
+],
+"0x03200000": [
+"SenderPortCardsAddr",
+16,
+"free-route card records"
+],
+"0x04000000": [
+"SenderProgram",
+0,
+"Sending-card program space"
+],
+"0x05000000": [
+"SoftwareSpace",
+0,
+"\"Software space\" — where LCT stores its screen-config blob (see §1/§4)"
+],
+"0x05065000": [
+"software space",
+0,
+"redundancy file / modulation file"
+],
+"0x05066000": [
+"software space",
+0,
+"redundancy file / modulation file"
+],
+"0x06000000": [
+"PictureWebSpace",
+0,
+"Pictures / web pages"
+],
+"0x07000000": [
+"FontSpace",
+0,
+"Font library"
+],
+"0x08000000": [
+"EDIDSpace",
+0,
+"EDID"
+],
+"0x09000000": [
+"AuthorizationSpace",
+0,
+"Authorization (licence/time lock)"
+],
+"0x0A000000": [
+"HWBrightnessSpace",
+0,
+"Hardware brightness adjustment"
+],
+"0x0C000000": [
+"DVIEncryptSpace",
+0,
+"DVI encryption"
+],
+"0x0D000000": [
+"PlutoMCU",
+0,
+"Pluto on-board MCU space"
+],
+"0x0E000000": [
+"Gamma12Bit",
+0,
+"12-bit sender gamma"
+],
+"0x0E100000": [
+"Sender_GreenGammaTableAddr",
+8192,
+"12-bit sender gamma"
+],
+"0x0E200000": [
+"Sender_BlueGammaTableAddr",
+8192,
+"12-bit sender gamma"
+],
+"0x0F000000": [
+"RxConfigFileStore",
+0,
+"\"Sending card stores receiving-card configuration file\". Only the MCTRL660 family uses it (12 288 bytes; §6.4)"
+],
+"0x0F800000": [
+"Sender660Config",
+0,
+"receiving-card config stored in sender (660 / Pro)"
+],
+"0x0FF00000": [
+"Sender660Config",
+0,
+"receiving-card config stored in sender (660 / Pro)"
+],
+"0x10000000": [
+"BootLogo",
+0,
+"Custom power-on logo"
+],
+"0x11000000": [
+"WebCascade",
+0,
+"WEB cascade access"
+],
+"0x12000000": [
+"OnlineCorrection",
+0,
+"Listed in sender.txt, but not used by LCT's online calibration server (it uses 0x12010000 hardware play-screen) — CALIBRATION.md §16"
+],
+"0x12010000": [
+"HWTestPattern",
+0,
+"Hardware test-pattern (\"打屏\") command"
+],
+"0x13000000": [
+"GlobalState",
+0,
+"Global state parameters (new-generation processors)"
+],
+"0x13001000": [
+"DataChangeFlags",
+0,
+"Low-level data-change type flags"
+],
+"0x13010000": [
+"InputResolution",
+0,
+"Input interface resolution parameters"
+],
+"0x13014000": [
+"InputResolutionSet",
+0,
+"Input resolution setting"
+],
+"0x13015000": [
+"EDIDTemplate",
+0,
+"EDID template download"
+],
+"0x13020000": [
+"WindowParams",
+0,
+"Window (layer) parameters"
+],
+"0x13024000": [
+"CropInfo",
+0,
+"Crop/capture info"
+],
+"0x13030000": [
+"ScreenParams",
+0,
+"Screen parameters"
+],
+"0x13040000": [
+"OutputResolution",
+0,
+"Output interface resolution"
+],
+"0x13050000": [
+"PQ input",
+0,
+"Picture-quality adjustment"
+],
+"0x13050200": [
+"PQ output",
+0,
+"Picture-quality adjustment"
+],
+"0x13050400": [
+"PQ window",
+0,
+"Picture-quality adjustment"
+],
+"0x13070000": [
+"Pictures",
+0,
+""
+],
+"0x13080000": [
+"Logo",
+0,
+""
+],
+"0x13090000": [
+"SwitcherSync",
+0,
+"Switcher-mode sync"
+],
+"0x13100000": [
+"Presets",
+0,
+"Scenes and scene time-table"
+],
+"0x13110000": [
+"PresetSchedule",
+0,
+"Scenes and scene time-table"
+],
+"0x13120000": [
+"InputBackup",
+0,
+"Input source backup"
+],
+"0x13140000": [
+"CascadeScreenParams",
+0,
+"Multi-device cascade screen params"
+],
+"0x13200000": [
+"PresetRename",
+0,
+""
+],
+"0x13300000": [
+"InputRename",
+0,
+""
+],
+"0x14000000": [
+"DeviceName",
+88,
+"Byte0 = 0xA8 valid, bytes 16–17 = name length, UTF-8 name from byte 18"
+],
+"0x18000000": [
+"SenderProgramStore",
+0,
+"Sender program storage"
+],
+"0x1A000000": [
+"SetBackUpOrRestore",
+1,
+".pbk backup commands"
+],
+"0x1A000001": [
+"BackUpFinish",
+1,
+".pbk backup commands"
+],
+"0x1A000002": [
+"RestoreFinish",
+1,
+".pbk backup commands"
+],
+"0x1A000003": [
+"HWRestoreFinish",
+1,
+".pbk backup commands"
+],
+"0x1A000100": [
+"BackUpFileHeader",
+256,
+""
+],
+"0x1A000101": [
+"BackUpFile",
+0,
+""
+],
+"0xFFFF0000": [
+"VirtualSender",
+0,
+"Virtual sending-card space"
+]
+},
+"1": {
+"0x00000000": [
+"ScannerModel",
+2,
+"Receiving-card model"
+],
+"0x00000002": [
+"FPGAGoldenVersion",
+4,
+"FPGA golden program version"
+],
+"0x00000006": [
+"MonitorCardPresent",
+1,
+"Attached monitoring card present"
+],
+"0x00000007": [
+"MonitorCardModel",
+2,
+""
+],
+"0x00000009": [
+"MonitorCardVersion",
+0,
+""
+],
+"0x01000000": [
+"ScannerCommand",
+1,
+"Receiving-card operation command (save, reload, ConfigRegisterWrite …)"
+],
+"0x01000002": [
+"HWLock",
+1,
+"Write 0x05: hardware-encrypt/lock card, screen goes black (sent when licence expires)"
+],
+"0x01000010": [
+"ParameterReloadFromSpiFlash",
+1,
+"reload params"
+],
+"0x01000011": [
+"ParameterStore2SpiFlash",
+1,
+"save receiving-card params (0x00; NCP factory 0xFE)"
+],
+"0x01000012": [
+"recalculate",
+1,
+"0xAA screen send / 0x00 param send / 1 NCP"
+],
+"0x01000019": [
+"WriteConfigRegisterAddr",
+11,
+"chip config-register write command"
+],
+"0x01000095": [
+"ScannerSdramToSlaveFlash",
+1,
+""
+],
+"0x01000096": [
+"SlaveFlashToSdram",
+1,
+""
+],
+"0x0100009D": [
+"FlashCabinetAddr",
+1,
+"save cabinet info (0x05)"
+],
+"0x010000A4": [
+"SaveCommonCoefficienceAddr",
+1,
+"save calibration coefficients"
+],
+"0x010000AC": [
+"SendToFlash",
+1,
+"module flash"
+],
+"0x010000AD": [
+"ReadFromFlash",
+1,
+"module flash"
+],
+"0x02000000": [
+"ParameterBlock start: GammaValue",
+0,
+"Gamma value"
+],
+"0x02000001": [
+"GlobalBrightness",
+1,
+"Global brightness"
+],
+"0x02000002": [
+"R brightness",
+1,
+"Per-colour brightness"
+],
+"0x02000003": [
+"G brightness",
+1,
+"Per-colour brightness"
+],
+"0x02000004": [
+"B brightness",
+1,
+"Per-colour brightness"
+],
+"0x02000005": [
+"VRBrightness",
+1,
+"Virtual-red brightness"
+],
+"0x02000006": [
+"MonitorRGBCode",
+1,
+"Colour code used by monitoring / point-check (CALIBRATION.md §16)"
+],
+"0x02000007": [
+"DriveMode",
+1,
+"0x05 = serial drive (raster), else parallel"
+],
+"0x02000008": [
+"DclkDuty",
+1,
+"DCLK duty (software only)"
+],
+"0x02000009": [
+"ModuleDataDir",
+1,
+"Module data direction: 0 horizontal, 1 vertical"
+],
+"0x0200000A": [
+"ModuleWidth",
+1,
+"Module width"
+],
+"0x0200000B": [
+"ModuleHeight",
+1,
+"Module height"
+],
+"0x0200000C": [
+"DriverChip",
+1,
+"Module driver-chip type"
+],
+"0x0200000D": [
+"ScanCount",
+1,
+"Scan type (1/n)"
+],
+"0x0200000E": [
+"OEPolarity",
+1,
+"0 active-high, 1 active-low"
+],
+"0x0200000F": [
+"DecodeType",
+1,
+"Row decoder type"
+],
+"0x02000010": [
+"GroupNumInModule",
+1,
+"Data groups per module"
+],
+"0x02000011": [
+"GroupOrder",
+4,
+"Data-group-to-module order"
+],
+"0x02000015": [
+"ModuleCols",
+1,
+"Module columns loaded by this card"
+],
+"0x02000016": [
+"ModuleRows",
+1,
+"Module rows loaded by this card"
+],
+"0x02000017": [
+"CabinetWidth",
+2,
+"Card load width (pixels)"
+],
+"0x02000019": [
+"CabinetHeight",
+2,
+"Card load height"
+],
+"0x0200001B": [
+"PhysicalDataGroups",
+1,
+"Total physical data groups"
+],
+"0x0200001C": [
+"ModuleCascadeDir",
+1,
+"Module cascade direction"
+],
+"0x0200001D": [
+"ModuleTracePoints",
+2,
+"Module trace-table total points"
+],
+"0x0200001F": [
+"PointsPerGroupScan",
+2,
+"Points per data group per scan"
+],
+"0x02000021": [
+"IrregularLoad",
+1,
+"0 regular, 1 irregular trace"
+],
+"0x02000022": [
+"LogicalDataGroups",
+1,
+"Logical data groups"
+],
+"0x02000023": [
+"DriverFunction",
+1,
+"Driver-chip function"
+],
+"0x02000024": [
+"DExtendMode",
+1,
+"Data-group extend: 0x00 none, 0x01 D as 2nd clock (32 groups), 0x02 24-group, 0x12 28-group"
+],
+"0x02000025": [
+"GrayDepth",
+1,
+"Gray level"
+],
+"0x02000026": [
+"GrayMode",
+1,
+"Low nibble brightness mode (high/normal/low), high nibble gray method"
+],
+"0x02000027": [
+"RefNumPerVs",
+2,
+"Refreshes per frame (refresh ÷ frame rate); LSB of high byte unused"
+],
+"0x02000029": [
+"LineBias",
+1,
+"Reverse-scan offset (0 for static)"
+],
+"0x0200002A": [
+"BlankUnitNumPerScan",
+2,
+"Line-blanking time in units"
+],
+"0x0200002C": [
+"RowChangePoint",
+2,
+"Unit at which the row changes"
+],
+"0x0200002E": [
+"ABCDRollOver",
+1,
+""
+],
+"0x0200002F": [
+"GclkNumPerScan",
+2,
+"PWM chip GCLKs per row"
+],
+"0x02000031": [
+"LightTimeRatio",
+1,
+"Light-time per sub-field ratio"
+],
+"0x02000032": [
+"ShiftUnitNumPerSubField",
+2,
+"Shift units per group per scan"
+],
+"0x02000034": [
+"TotalUnitNumPerSubField",
+2,
+"Units per sub-field"
+],
+"0x02000036": [
+"LightTimePerSubField",
+2,
+"Max light time per sub-field"
+],
+"0x02000038": [
+"Dclk/Gclk cycle, phase, high",
+1,
+"Shift/grayscale clock timing"
+],
+"0x02000039": [
+"Dclk/Gclk cycle, phase, high +1",
+1,
+"Shift/grayscale clock timing"
+],
+"0x0200003A": [
+"Dclk/Gclk cycle, phase, high +2",
+1,
+"Shift/grayscale clock timing"
+],
+"0x0200003B": [
+"Dclk/Gclk cycle, phase, high +3",
+1,
+"Shift/grayscale clock timing"
+],
+"0x0200003C": [
+"Dclk/Gclk cycle, phase, high +4",
+1,
+"Shift/grayscale clock timing"
+],
+"0x0200003D": [
+"Dclk/Gclk cycle, phase, high +5",
+1,
+"Shift/grayscale clock timing"
+],
+"0x0200003E": [
+"PartNumPerRef",
+1,
+"Row-change acceleration factor"
+],
+"0x0200003F": [
+"SubField0",
+1,
+"Sub-fields per part"
+],
+"0x02000040": [
+"SubField1",
+1,
+"Sub-fields per part"
+],
+"0x02000041": [
+"SubField2",
+1,
+"Sub-fields per part"
+],
+"0x02000042": [
+"SubField3",
+1,
+"Sub-fields per part"
+],
+"0x02000043": [
+"SubField4",
+1,
+"Sub-fields per part"
+],
+"0x02000044": [
+"SubField5",
+1,
+"Sub-fields per part"
+],
+"0x02000045": [
+"SubField6",
+1,
+"Sub-fields per part"
+],
+"0x02000046": [
+"SubField7",
+1,
+"Sub-fields per part"
+],
+"0x02000047": [
+"RowsCtrlByDataGroup0",
+1,
+"Rows (cols) driven by each group"
+],
+"0x02000048": [
+"RowsCtrlByDataGroup1",
+1,
+"Rows (cols) driven by each group"
+],
+"0x02000049": [
+"RowsCtrlByDataGroup2",
+1,
+"Rows (cols) driven by each group"
+],
+"0x0200004A": [
+"RowsCtrlByDataGroup3",
+1,
+"Rows (cols) driven by each group"
+],
+"0x0200004B": [
+"RowsCtrlByDataGroup4",
+1,
+"Rows (cols) driven by each group"
+],
+"0x0200004C": [
+"RowsCtrlByDataGroup5",
+1,
+"Rows (cols) driven by each group"
+],
+"0x0200004D": [
+"RowsCtrlByDataGroup6",
+1,
+"Rows (cols) driven by each group"
+],
+"0x0200004E": [
+"RowsCtrlByDataGroup7",
+1,
+"Rows (cols) driven by each group"
+],
+"0x0200004F": [
+"TotalGclkUnitNumPerScan",
+2,
+""
+],
+"0x02000051": [
+"CorrectionOn",
+1,
+"bit0 on; bit1 type (1 brightness / 0 chroma); bit2 low-gray; bit3 bright/dark-line (seam) disable, active low; bits 4/6 multi-layer; bit6 ROELine; bit7 ROE …"
+],
+"0x02000052": [
+"CoefficientSource",
+1,
+"Correction data source at power-up (card flash / module flash)"
+],
+"0x02000053": [
+"NoSignalMode",
+1,
+"bit0: on cable loss show last frame or black"
+],
+"0x02000054": [
+"ABCDCode",
+8,
+"Scan-line (row) mapping"
+],
+"0x0200005C": [
+"RGBCode",
+1,
+"Colour order"
+],
+"0x0200005D": [
+"R gain (legacy name)",
+1,
+"In LCT V5.9.2 this holds MaxGammaValue (u16 at 0x5D–5E), not current gain — confirmed on real files (8192 in the ICN2053 files). Driver-chip current gain lives …"
+],
+"0x0200005E": [
+"G gain (legacy name)",
+1,
+"In LCT V5.9.2 this holds MaxGammaValue (u16 at 0x5D–5E), not current gain — confirmed on real files (8192 in the ICN2053 files). Driver-chip current gain lives …"
+],
+"0x0200005F": [
+"B gain (legacy name)",
+1,
+"In LCT V5.9.2 this holds MaxGammaValue (u16 at 0x5D–5E), not current gain — confirmed on real files (8192 in the ICN2053 files). Driver-chip current gain lives …"
+],
+"0x02000060": [
+"VR gain (legacy name)",
+1,
+"In LCT V5.9.2 this holds MaxGammaValue (u16 at 0x5D–5E), not current gain — confirmed on real files (8192 in the ICN2053 files). Driver-chip current gain lives …"
+],
+"0x02000061": [
+"Threshold",
+1,
+"Listed as point-check threshold in scanner.txt, but not used for point check by LCT V5.9.2 (CALIBRATION.md §16)"
+],
+"0x02000062": [
+"SymmetricOutput",
+1,
+"1 = split (symmetric) output"
+],
+"0x02000063": [
+"50/60/75/120 Hz timing sets & chip config-register initial values",
+0,
+"multi-frame-rate parameter sets (see original for per-byte meaning)"
+],
+"0x0200007F": [
+"GclkExtendEnable",
+1,
+"first-scan dark compensation"
+],
+"0x02000080": [
+"FirstLine",
+1,
+"first-scan dark compensation"
+],
+"0x02000081": [
+"OtherLine",
+1,
+"first-scan dark compensation"
+],
+"0x02000082": [
+"VsFreqValidInfo",
+1,
+"0x02: per-frame-rate params valid"
+],
+"0x02000083": [
+"StartPositionOfDataGroup0",
+1,
+""
+],
+"0x02000084": [
+"StartPositionOfDataGroup1",
+1,
+""
+],
+"0x02000085": [
+"StartPositionOfDataGroup2",
+1,
+""
+],
+"0x02000086": [
+"StartPositionOfDataGroup3",
+1,
+""
+],
+"0x02000087": [
+"StartPositionOfDataGroup4",
+1,
+""
+],
+"0x02000088": [
+"StartPositionOfDataGroup5",
+1,
+""
+],
+"0x02000089": [
+"StartPositionOfDataGroup6",
+1,
+""
+],
+"0x0200008A": [
+"StartPositionOfDataGroup7",
+1,
+""
+],
+"0x0200008B": [
+"CabinetSerialNum",
+2,
+"Cabinet number driven by this card"
+],
+"0x0200008D": [
+"ConfigRegister R",
+2,
+"Chip config registers — must be written via ScannerCommand ConfigRegisterWrite, not directly"
+],
+"0x0200008F": [
+"ConfigRegister G",
+2,
+"Chip config registers — must be written via ScannerCommand ConfigRegisterWrite, not directly"
+],
+"0x02000091": [
+"ConfigRegister B",
+2,
+"Chip config registers — must be written via ScannerCommand ConfigRegisterWrite, not directly"
+],
+"0x02000093": [
+"ConfigRegister VR",
+2,
+"Chip config registers — must be written via ScannerCommand ConfigRegisterWrite, not directly"
+],
+"0x02000095": [
+"HctrlClose",
+1,
+"Ghost-control signal"
+],
+"0x02000096": [
+"SerialDecodeRepeat",
+1,
+""
+],
+"0x02000097": [
+"MBI5041BNewTiming",
+1,
+"0x05 for MBI5041B/42B/45"
+],
+"0x02000098": [
+"DriverDeghost",
+1,
+"0x05 enable (MBI505x)"
+],
+"0x02000099": [
+"MultiFunc",
+1,
+"bit0 = 0 turns receiving-card LED off (default 0xFF)"
+],
+"0x0200009A": [
+"ScalerInfo",
+1,
+"[3:0]=5 enable card scaler, [5:4] X ×2, [7:6] Y ×2"
+],
+"0x0200009B": [
+"RotationDegree",
+1,
+"0x01 = 90°, 0x03 = 270°, else none"
+],
+"0x0200009C": [
+"Mbi5042GrayEnhanced",
+1,
+"0x05 enable"
+],
+"0x0200009D": [
+"No-correction thresholds / attenuations R/G/B/VR",
+2,
+""
+],
+"0x0200009F": [
+"No-correction thresholds / attenuations R/G/B/VR +2",
+2,
+""
+],
+"0x020000A1": [
+"No-correction thresholds / attenuations R/G/B/VR +4",
+2,
+""
+],
+"0x020000A3": [
+"No-correction thresholds / attenuations R/G/B/VR +6",
+2,
+""
+],
+"0x020000A5": [
+"No-correction thresholds / attenuations R/G/B/VR +8",
+2,
+""
+],
+"0x020000A7": [
+"No-correction thresholds / attenuations R/G/B/VR +10",
+2,
+""
+],
+"0x020000A9": [
+"No-correction thresholds / attenuations R/G/B/VR +12",
+2,
+""
+],
+"0x020000AB": [
+"No-correction thresholds / attenuations R/G/B/VR +14",
+2,
+""
+],
+"0x020000AD": [
+"CtrlEndPoint",
+2,
+""
+],
+"0x020000AF": [
+"LocalStartX",
+2,
+"Card's own start X — read-only, \"software must not write\" (card derives it itself)"
+],
+"0x020000B1": [
+"LocalStartY",
+2,
+"Card's own start Y — read-only"
+],
+"0x020000B3": [
+"NewOERamEnable",
+1,
+"0x02 enable"
+],
+"0x020000B4": [
+"LowGrayCompensation",
+1,
+"0–15"
+],
+"0x020000B5": [
+"AddrExtend",
+1,
+"0x05 enable (smart settings)"
+],
+"0x020000B6": [
+"TwentyDataGroup",
+1,
+"0x05 enable"
+],
+"0x020000B7": [
+"GroupSwapEn",
+1,
+"0x05 enable"
+],
+"0x020000B8": [
+"GroupSwapInfo0",
+1,
+"data-group swap targets"
+],
+"0x020000B9": [
+"GroupSwapInfo1",
+1,
+"data-group swap targets"
+],
+"0x020000BA": [
+"GroupSwapInfo2",
+1,
+"data-group swap targets"
+],
+"0x020000BB": [
+"GroupSwapInfo3",
+1,
+"data-group swap targets"
+],
+"0x020000BC": [
+"GroupSwapInfo4",
+1,
+"data-group swap targets"
+],
+"0x020000BD": [
+"GroupSwapInfo5",
+1,
+"data-group swap targets"
+],
+"0x020000BE": [
+"GroupSwapInfo6",
+1,
+"data-group swap targets"
+],
+"0x020000BF": [
+"GroupSwapInfo7",
+1,
+"data-group swap targets"
+],
+"0x020000C0": [
+"GroupSwapInfo8",
+1,
+"data-group swap targets"
+],
+"0x020000C1": [
+"GroupSwapInfo9",
+1,
+"data-group swap targets"
+],
+"0x020000C2": [
+"GroupSwapInfo10",
+1,
+"data-group swap targets"
+],
+"0x020000C3": [
+"GroupSwapInfo11",
+1,
+"data-group swap targets"
+],
+"0x020000C4": [
+"GroupSwapInfo12",
+1,
+"data-group swap targets"
+],
+"0x020000C5": [
+"GroupSwapInfo13",
+1,
+"data-group swap targets"
+],
+"0x020000C6": [
+"GroupSwapInfo14",
+1,
+"data-group swap targets"
+],
+"0x020000C7": [
+"GroupSwapInfo15",
+1,
+"data-group swap targets"
+],
+"0x020000C8": [
+"GroupSwapInfo16",
+1,
+"data-group swap targets"
+],
+"0x020000C9": [
+"GroupSwapInfo17",
+1,
+"data-group swap targets"
+],
+"0x020000CA": [
+"GroupSwapInfo18",
+1,
+"data-group swap targets"
+],
+"0x020000CB": [
+"GroupSwapInfo19",
+1,
+"data-group swap targets"
+],
+"0x020000CC": [
+"GroupSwapInfo20",
+1,
+"data-group swap targets"
+],
+"0x020000CD": [
+"GroupSwapInfo21",
+1,
+"data-group swap targets"
+],
+"0x020000CE": [
+"GroupSwapInfo22",
+1,
+"data-group swap targets"
+],
+"0x020000CF": [
+"GroupSwapInfo23",
+1,
+"data-group swap targets"
+],
+"0x020000D0": [
+"GroupSwapInfo24",
+1,
+"data-group swap targets"
+],
+"0x020000D1": [
+"GroupSwapInfo25",
+1,
+"data-group swap targets"
+],
+"0x020000D2": [
+"GroupSwapInfo26",
+1,
+"data-group swap targets"
+],
+"0x020000D3": [
+"GroupSwapInfo27",
+1,
+"data-group swap targets"
+],
+"0x020000D4": [
+"GroupSwapInfo28",
+1,
+"data-group swap targets"
+],
+"0x020000D5": [
+"GroupSwapInfo29",
+1,
+"data-group swap targets"
+],
+"0x020000D6": [
+"GroupSwapInfo30",
+1,
+"data-group swap targets"
+],
+"0x020000D7": [
+"GroupSwapInfo31",
+1,
+"data-group swap targets"
+],
+"0x020000D8": [
+"LowGrayRamEnable",
+1,
+"0x5 enable"
+],
+"0x020000DA": [
+"OutputMode",
+1,
+"20/24/28-group mode bits"
+],
+"0x020000DB": [
+"MBI515x ΔT/DhT, serial colour params",
+1,
+""
+],
+"0x020000DC": [
+"MBI515x ΔT/DhT, serial colour params +1",
+1,
+""
+],
+"0x020000DD": [
+"MBI515x ΔT/DhT, serial colour params +2",
+1,
+""
+],
+"0x020000DE": [
+"MBI515x ΔT/DhT, serial colour params +3",
+1,
+""
+],
+"0x020000DF": [
+"MBI515x ΔT/DhT, serial colour params +4",
+1,
+""
+],
+"0x020000E0": [
+"TV-card DVI0 W",
+2,
+"only for TV-card software, reserved otherwise"
+],
+"0x020000E2": [
+"TV-card DVI0 H",
+2,
+"only for TV-card software, reserved otherwise"
+],
+"0x020000E4": [
+"TV-card DVI0 X",
+2,
+"only for TV-card software, reserved otherwise"
+],
+"0x020000E6": [
+"TV-card DVI0 Y",
+2,
+"only for TV-card software, reserved otherwise"
+],
+"0x020000E8": [
+"LogicShiftUnitNumPerSubField",
+2,
+""
+],
+"0x020000EA": [
+"ConfigRegister2 R",
+2,
+"via ConfigRegisterWrite"
+],
+"0x020000EC": [
+"ConfigRegister2 G",
+2,
+"via ConfigRegisterWrite"
+],
+"0x020000EE": [
+"ConfigRegister2 B",
+2,
+"via ConfigRegisterWrite"
+],
+"0x020000F0": [
+"ConfigRegister2 VR",
+2,
+"via ConfigRegisterWrite"
+],
+"0x020000F2": [
+"misc chip-specific (MBI5353, MBI5124, temperature warning …)",
+0,
+""
+],
+"0x02000100": [
+"KillMode",
+1,
+"0xFF = screen black, 0x00 = normal"
+],
+"0x02000101": [
+"SelfTestMode",
+1,
+"Built-in test pattern (0x00 normal)"
+],
+"0x02000102": [
+"LockMode",
+1,
+"0xFF = freeze (lock) screen, 0x00 normal"
+],
+"0x02000103": [
+"ScreenEncrypted",
+1,
+"Card locked by licence"
+],
+"0x02000104": [
+"SmartSetMode",
+1,
+"0x01 smart-setting mode, 0x00 normal"
+],
+"0x02000110": [
+"AverMatrix",
+32,
+"Average matrix per region"
+],
+"0x02000130": [
+"ColorAdjustEnable",
+1,
+"0x02 enable at power-up"
+],
+"0x02000131": [
+"ChromaCoefficient",
+0,
+"Colour adjustment coefficients"
+],
+"0x02000149": [
+"ParaForCurrentVsFreq",
+16,
+"Written by the card itself — software must not write"
+],
+"0x0200014A": [
+"CommError en/count",
+0,
+"Bit-error detection"
+],
+"0x02000150": [
+"chip-specific (MY9868, RT5958, SUM2033/2117, ICN2038S, MBI5153 …)",
+0,
+""
+],
+"0x02000170": [
+"ICN2055 registers 9–16",
+0,
+""
+],
+"0x02000193": [
+"DVI encryption enable + PC MAC",
+0,
+""
+],
+"0x0200019A": [
+"SetMoudleNumber (NAND-erase alias)",
+1,
+"scanner.txt calls it ReserveFlashIdEnabled; LCT V5.9.2 uses it as SetMoudleNumber / a NAND-erase alias (CALIBRATION.md §16) ⚠"
+],
+"0x0200019B": [
+"SdramToSlave",
+1,
+"MCU parameter backup writes here; software polls it to know copy finished"
+],
+"0x0200019C": [
+"Gray18BitEn",
+1,
+"low nibble 5 = 18-bit+ on"
+],
+"0x0200019D": [
+"Clearview enable",
+1,
+""
+],
+"0x0200019E": [
+"Clearview master",
+1,
+""
+],
+"0x0200019F": [
+"Clearview slave",
+1,
+""
+],
+"0x020004CE": [
+"NCPOpStateFlag",
+1,
+""
+],
+"0x03000000": [
+"ModuleTraceTable",
+0,
+"Module (light-board) trace table"
+],
+"0x03000680": [
+"ScannerCabinetID",
+67,
+""
+],
+"0x030006E0": [
+"CabinetCorrectLocationSize",
+20,
+""
+],
+"0x03000800": [
+"AutoRefreshRateAddr",
+0,
+"refresh-rate table"
+],
+"0x03002000": [
+"ModuleFlashTopology",
+0,
+"Module flash topology info"
+],
+"0x03003000": [
+"ModuleFlashCheck",
+0,
+"Module flash checksum info"
+],
+"0x04000000": [
+"CardTraceTable",
+0,
+"Receiving-card trace (routing) table"
+],
+"0x05000000": [
+"GammaTables",
+0,
+"Three gamma tables"
+],
+"0x06000000": [
+"OETable",
+0,
+"OE table"
+],
+"0x06000200": [
+"SetNcpInfo",
+1,
+"0x5A NCP / 0x5C classic"
+],
+"0x07000000": [
+"CorrectionData",
+0,
+"Calibration coefficients"
+],
+"0x08000000": [
+"FPGAProgram",
+0,
+"Receiving-card FPGA application"
+],
+"0x09000000": [
+"MCUProgram",
+0,
+"Receiving-card MCU program"
+],
+"0x0A000000": [
+"MonitorStatus",
+0,
+"Monitoring status info"
+],
+"0x0B000000": [
+"PointCheckData",
+0,
+"Pixel check results: a per-shift-clock bitmap, 1 = OK (decoder in CALIBRATION.md)"
+],
+"0x0C000000": [
+"ModuleFlashInfo (label only)",
+0,
+"scanner.txt label; not module-flash info in LCT V5.9.2 code — module flash is in CALIBRATION.md §7 (CALIBRATION.md §16)"
+],
+"0x0D000000": [
+"BootImage",
+0,
+"Power-on picture"
+],
+"0x0E000000": [
+"MultiChipRamA",
+0,
+"Multi-chip RAM tables"
+],
+"0x0F000000": [
+"MultiChipRamB",
+0,
+"Multi-chip RAM tables"
+],
+"0x10000000": [
+"MultiChipRamC",
+0,
+"Multi-chip RAM tables"
+],
+"0x11000000": [
+"NewOETable",
+0,
+""
+],
+"0x12000000": [
+"GeneralBuffer / ColorManageInfo",
+0,
+"General buffer; also colour-management info"
+],
+"0x13000000": [
+"LowGrayCodeTable",
+0,
+""
+],
+"0x14000000": [
+"CardMCU",
+0,
+"Receiving-card MCU space"
+],
+"0x15000000": [
+"SenderAuthTime",
+0,
+"Sender authorization time"
+],
+"0x16000000": [
+"ModuleSpace",
+0,
+"Module space"
+],
+"0x17000000": [
+"SUM6060Monitor",
+0,
+""
+],
+"0x18000000": [
+"MAPInfo",
+0,
+"MAP info storage"
+],
+"0x19000000": [
+"MAPFontLib",
+0,
+"MAP font library"
+],
+"0x1B000000": [
+"WriteConfigRegisterAddrFor2200 / Config2055",
+130,
+"chip register block"
+],
+"0x2D010000": [
+"FlashResult",
+32,
+"module flash result / version (magic 47 63 09 6D)"
+],
+"0x2D010010": [
+"FlashVersion",
+16,
+"module flash result / version (magic 47 63 09 6D)"
+]
+},
+"any": {}
+}

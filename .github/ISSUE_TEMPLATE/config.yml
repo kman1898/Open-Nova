@@ -1,0 +1,13 @@
+# Blank issues are off: a problem report without the Report a Problem zip, the version and the processor model can rarely
+# be acted on. The forms in this folder ask for them.
+blank_issues_enabled: false
+contact_links:
+  - name: How to run Open Nova
+    url: https://github.com/kman1898/Open-Nova/blob/main/docs/RUNNING.md
+    about: Starting it on Windows, macOS and Linux, the options, and what to do when no processor is found.
+  - name: Diagnostics and the Report a Problem zip
+    url: https://github.com/kman1898/Open-Nova/blob/main/docs/DIAGNOSTICS.md
+    about: What Open Nova records, what the report holds and how to check it before you share it.
+  - name: Security problem
+    url: https://github.com/kman1898/Open-Nova/security/advisories/new
+    about: Report it privately, not as a public issue.

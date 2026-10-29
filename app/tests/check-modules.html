@@ -1,0 +1,126 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Split check</title>
+<link rel="icon" href="data:,">
+<script>
+  // Runs before any app script: every name the window already has (own and inherited), so a
+  // top-level app name that would shadow a browser builtin (find, status, name, open, ...) shows up.
+  (function () {
+    var names = {}, o = window;
+    while (o) { Object.getOwnPropertyNames(o).forEach(function (n) { names[n] = 1; }); o = Object.getPrototypeOf(o); }
+    window.__ckPreNames = names;
+  })();
+  // Keep the booted app off the shared-project server while it runs on this test page:
+  // requests to api/ fail, so syncStart falls back to "This browser only" and nothing is pushed.
+  (function () {
+    var realFetch = window.fetch.bind(window);
+    window.fetch = function (url, opts) {
+      if (/(^|\/)api\//.test(String(url))) return Promise.reject(new Error('api disabled on the check page'));
+      return realFetch(url, opts);
+    };
+  })();
+</script>
+<style>
+  body { font: 14px/1.45 system-ui, sans-serif; margin: 16px; background: #fff; color: #111; }
+  h1 { font-size: 18px; margin: 0 0 12px; }
+  .ck-row { margin: 6px 0; padding: 8px 10px; border-radius: 6px; background: #f3f4f6; }
+  .ck-pass { border-left: 4px solid #16a34a; }
+  .ck-fail { border-left: 4px solid #dc2626; }
+  .ck-info { border-left: 4px solid #6b7280; }
+  pre { margin: 4px 0 0; white-space: pre-wrap; font: 12px/1.4 ui-monospace, Consolas, monospace; }
+  #ck-app { display: none; }
+</style>
+</head>
+<body>
+<h1>Open Nova split check</h1>
+<div id="ck-out"></div>
+<div id="ck-app"></div>
+<script>
+(function () {
+  // The app's scripts, in index.html's order (read from it below), except scr.js.
+  var FILES = [];
+  var out = document.getElementById('ck-out');
+  function row(kind, title, lines) {
+    var d = document.createElement('div'); d.className = 'ck-row ck-' + kind;
+    d.textContent = (kind === 'pass' ? 'PASS  ' : kind === 'fail' ? 'FAIL  ' : 'INFO  ') + title;
+    if (lines && lines.length) { var p = document.createElement('pre'); p.textContent = lines.join('\n'); d.appendChild(p); }
+    out.appendChild(d);
+  }
+  var loadErrors = [];
+  window.addEventListener('error', function (e) {
+    loadErrors.push((e.filename ? e.filename.split('/').pop() : '?') + ':' + (e.lineno || '?') + '  ' + e.message);
+  });
+  function getText(url) { return fetch(url, { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.text(); }); }
+  function loadScript(src) {
+    return new Promise(function (resolve) {
+      var s = document.createElement('script'); s.src = src; s.async = false;
+      s.onload = function () { resolve(true); };
+      s.onerror = function () { loadErrors.push(src + ': could not be loaded'); resolve(false); };
+      document.body.appendChild(s);
+    });
+  }
+  // Top-level declarations: column 0 after the de-indent.
+  var DECL = /^(?:async\s+)?(?:function\*?\s+|var\s+|let\s+|const\s+|class\s+)([A-Za-z_$][\w$]*)/gm;
+  function declared(text) { var m, out = []; DECL.lastIndex = 0; while ((m = DECL.exec(text))) out.push(m[1]); return out; }
+
+  var httpOk = /^https?:$/.test(location.protocol);
+  var texts = {}, pageGlobals = {}, domNote = '';
+  // index.html gives the script list, and its body is borrowed (hidden, scripts removed) so the
+  // app can look its elements up by id and boot.
+  var prep = !httpOk ? Promise.resolve() : getText('../index.html').then(function (html) {
+    var doc = new DOMParser().parseFromString(html, 'text/html');
+    Array.prototype.forEach.call(doc.querySelectorAll('script'), function (s) {
+      var src = s.getAttribute('src');
+      if (!src) declared(s.textContent.replace(/^[ \t]+/gm, '')).forEach(function (n) { pageGlobals[n] = 1; });
+      else if (src !== 'scr.js') FILES.push('../' + src);
+      s.remove();
+    });
+    var box = document.getElementById('ck-app');
+    Array.prototype.forEach.call(doc.body.childNodes, function (n) { box.appendChild(document.importNode(n, true)); });
+    domNote = 'index.html body borrowed (hidden) so the app can boot; ' + FILES.length + ' app scripts listed there';
+    return Promise.all(FILES.map(function (f) { return getText(f).then(function (t) { texts[f] = t; }); }));
+  }).catch(function (e) { texts = null; row('fail', 'Could not read index.html or the app scripts: ' + e.message); });
+
+  prep.then(function () {
+    var chain = loadScript('../scr.js');
+    FILES.forEach(function (f) { chain = chain.then(function () { return loadScript(f); }); });
+    return chain;
+  }).then(function () {
+    if (!httpOk) row('info', 'Opened from ' + location.protocol + ' - the file texts cannot be fetched here: run serve.ps1 and open http://localhost:<port>/tests/check-modules.html');
+    if (domNote) row('info', domNote);
+    row(loadErrors.length ? 'fail' : 'pass', 'Scripts loaded in order without errors (' + (FILES.length + 1) + ' files)', loadErrors);
+
+    if (httpOk && texts) {
+      // (a) a name declared in more than one file
+      var where = {}, total = 0;
+      FILES.forEach(function (f) { declared(texts[f]).forEach(function (n) { (where[n] = where[n] || []).push(f); total++; }); });
+      var dups = Object.keys(where).filter(function (n) { return where[n].length > 1; }).sort();
+      row(dups.length ? 'fail' : 'pass', '(a) Top-level names declared in more than one place: ' + dups.length + ' (of ' + Object.keys(where).length + ' names)',
+        dups.map(function (n) { return n + ': ' + where[n].join(', '); }));
+
+      // (b) a name that shadows something the window already had (own or inherited), or a global of index.html's inline script
+      var pre = window.__ckPreNames, hits = [];
+      Object.keys(where).sort().forEach(function (n) {
+        if (pre[n]) hits.push(n + '  (window builtin, declared in ' + where[n].join(', ') + ')');
+        if (pageGlobals[n]) hits.push(n + '  (also a global of index.html\'s inline script)');
+      });
+      row(hits.length ? 'fail' : 'pass', '(b) Top-level names that shadow a pre-existing window property: ' + hits.length, hits);
+      if (Object.keys(pageGlobals).length) row('info', 'Globals from index.html\'s inline script(s): ' + Object.keys(pageGlobals).join(', '));
+
+      // every declared name really became a global (i.e. every file ran to its end)
+      var absent = Object.keys(where).filter(function (n) { return !(n in window); });
+      row(absent.length ? 'fail' : 'pass', 'Every top-level name is a global after load: ' + (Object.keys(where).length - absent.length) + ' of ' + Object.keys(where).length, absent);
+    }
+
+    // (c) the test hook main.js publishes at the very end
+    var lm = window.OpenNova;
+    row(lm && lm.project && lm.project.lct ? 'pass' : 'fail', '(c) window.OpenNova exists after load' +
+      (lm && lm.project ? ' (project "' + lm.project.name + '", ' + lm.project.lct.length + ' screen tab(s), ' + lm.project.screens.length + ' section(s))' : ''));
+    document.title = (document.querySelector('.ck-fail') ? 'FAIL' : 'PASS') + ' split check';   // tools/browser_tests.py waits for it
+  });
+})();
+</script>
+</body>
+</html>

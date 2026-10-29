@@ -1,0 +1,136 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>.scfg check</title>
+<link rel="icon" href="data:,">
+<script>
+  // Boots the app on this page without touching the shared project: requests to api/ fail (no
+  // server sync) and localStorage writes are dropped (other tabs on this origin keep their project).
+  (function () {
+    var realFetch = window.fetch.bind(window);
+    window.fetch = function (url, opts) {
+      if (/(^|\/)api\//.test(String(url))) return Promise.reject(new Error('api disabled on the test page'));
+      return realFetch(url, opts);
+    };
+    Storage.prototype.setItem = function () {};
+    Storage.prototype.removeItem = function () {};
+  })();
+</script>
+<style>
+  body { font: 14px/1.45 system-ui, sans-serif; margin: 16px; background: #fff; color: #111; }
+  h1 { font-size: 18px; margin: 0 0 12px; }
+  .ck-row { margin: 6px 0; padding: 8px 10px; border-radius: 6px; background: #f3f4f6; }
+  .ck-pass { border-left: 4px solid #16a34a; } .ck-fail { border-left: 4px solid #dc2626; } .ck-info { border-left: 4px solid #6b7280; }
+  pre { margin: 4px 0 0; white-space: pre-wrap; font: 12px/1.4 ui-monospace, Consolas, monospace; }
+  #ck-app { display: none; }
+</style>
+</head>
+<body>
+<h1>Open Nova .scfg check</h1>
+<p>Needs serve.ps1 and the fixtures in <code>app/out/scfg/</code>: <code>sample.scfg</code> (a copy of
+Samples\SCR\System Config Test.scfg), <code>rx*.rcfgx</code> (copies of real receiving-card files) and <code>shows.json</code>
+(names of .scr files in <code>app/samples/</code>). Without them (a checkout) only the refusals run; the rest is SKIPPED.
+Writes what it builds to <code>app/out/scfg/gen/</code> (for the NovaLCT harness).</p>
+<div id="ck-out"></div>
+<div id="ck-app"></div>
+<script>
+(function () {
+  var out = document.getElementById('ck-out'), fails = 0;
+  function row(kind, title, lines) {
+    if (kind === 'fail') fails++;
+    var d = document.createElement('div'); d.className = 'ck-row ck-' + kind;
+    d.textContent = (kind === 'pass' ? 'PASS  ' : kind === 'fail' ? 'FAIL  ' : kind === 'skip' ? 'SKIP  ' : 'INFO  ') + title;
+    if (lines && lines.length) { var p = document.createElement('pre'); p.textContent = lines.join('\n'); d.appendChild(p); }
+    out.appendChild(d);
+  }
+  function check(ok, title, lines) { row(ok ? 'pass' : 'fail', title, lines); return ok; }
+  function get(url) { return fetch(url, { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error(url + ': HTTP ' + r.status); return r.arrayBuffer(); }); }
+  function put(name, bytes) { return fetch('../out/scfg/gen/' + encodeURIComponent(name), { method: 'PUT', body: bytes }).catch(function () {}); }
+  function loadScript(src) {
+    return new Promise(function (res, rej) { var s = document.createElement('script'); s.src = src; s.async = false; s.onload = res; s.onerror = function () { rej(new Error(src)); }; document.body.appendChild(s); });
+  }
+  function sameBytes(a, b) { if (a.length !== b.length) return false; for (var i = 0; i < a.length; i++) if (a[i] !== b[i]) return false; return true; }
+  function firstDiff(a, b) { var n = Math.min(a.length, b.length); for (var i = 0; i < n; i++) if (a[i] !== b[i]) return i; return a.length === b.length ? -1 : n; }
+  // cells of every screen, as SCR.parse returns them (screens array + dvi), for deep compare
+  function cellsJson(bytes) { var m = SCR.parse(bytes); return JSON.stringify({ dvi: m.dvi, screens: m.screens, warnings: m.warnings }); }
+
+  window.__scfgTest = fetch('../index.html', { cache: 'no-store' }).then(function (r) { return r.text(); }).then(function (html) {
+    var doc = new DOMParser().parseFromString(html, 'text/html'), files = [];
+    Array.prototype.forEach.call(doc.querySelectorAll('script'), function (s) { if (s.getAttribute('src')) files.push('../' + s.getAttribute('src')); s.remove(); });
+    var box = document.getElementById('ck-app');
+    Array.prototype.forEach.call(doc.body.childNodes, function (n) { box.appendChild(document.importNode(n, true)); });
+    return files.reduce(function (p, f) { return p.then(function () { return loadScript(f); }); }, Promise.resolve());
+  }).then(function () {
+    check(typeof SCFG === 'object' && typeof buildScfg === 'function' && typeof importScfg === 'function', 'scfg.js and app-scfg.js loaded');
+    // the fixtures are private (a real NovaLCT file, real receiving-card files, real shows): not in the repository, so a
+    // checkout skips (1)-(3) and runs (4)
+    return get('../out/scfg/sample.scfg').catch(function () { row('skip', '(1)-(2) sample.scfg not here (private fixture in app/out/scfg/)'); return null; });
+  }).then(function (sampleBuf) {
+    if (!sampleBuf) return null;
+    var sample = new Uint8Array(sampleBuf), s = SCFG.parse(sample);
+    // ---- (1) decode the real LCT file
+    var sum = SCFG.rxSummary(s.rx);
+    check(s.scr && String.fromCharCode.apply(null, s.scr.subarray(0, 4)) === 'DSCI' && s.redundancy && s.rx, 'sample.scfg parses: .scr ' + (s.scr && s.scr.length) + ' B, ' +
+      (s.redundancy || []).length + ' redundancy pair(s), captureFrame ' + s.captureFrame + ', syncVideo ' + (s.syncVideo ? s.syncVideo.length + ' B' : 'none'),
+      [JSON.stringify(s.redundancy), JSON.stringify(sum), 'warnings: ' + JSON.stringify(s.warnings)]);
+    // ---- (2) byte compare: import the sample, export it again with the same receiving-card part / settings
+    importScfg(sampleBuf, 'System Config Test.scfg');
+    var embedded = s.scr, scrExport = SCR.build(toScrModel());
+    check(sameBytes(scrExport, embedded), 'Export .scr of the imported sample == the .scr embedded in it (' + scrExport.length + ' B)');
+    var again = buildScfg({ redundancy: s.redundancy, captureFrame: s.captureFrame, syncVideo: s.syncVideo });
+    var d = firstDiff(again.bytes, sample);
+    check(d < 0, 'buildScfg(imported sample) == sample.scfg byte for byte (' + again.bytes.length + ' vs ' + sample.length + ' B)',
+      d < 0 ? [] : ['first difference at byte ' + d, 'ours:   ' + again.text.substr(Math.max(0, d - 60), 160), 'sample: ' + new TextDecoder().decode(sample.subarray(Math.max(0, d - 60), d + 100))]);
+    // defaults only (what Export .scfg writes without "keep"): no redundancy, capture frame 30
+    var plain = buildScfg({}), pd = firstDiff(plain.bytes, sample);
+    row('info', 'Without the sample\'s redundancy pair: ' + plain.bytes.length + ' B; differs from the sample only in ReduInfoList: ' +
+      (plain.text.replace('<ReduInfoList />', '') === again.text.replace(/<ReduInfoList>[\s\S]*?<\/ReduInfoList>/, '') ? 'yes' : 'NO (first diff ' + pd + ')'));
+    return put('sample_reexport.scfg', again.bytes).then(function () { return put('sample_noredu.scfg', plain.bytes); }).then(function () { return s; });
+  }).then(function () {
+    // ---- (3) real show files x real receiving-card files: build, read back, compare with Export .scr. The show names are
+    // in app/out/scfg/shows.json (["name", ...] of .scr files in app/samples/), private like the files themselves.
+    return fetch('../out/scfg/shows.json', { cache: 'no-store' }).then(function (r) { if (!r.ok) throw new Error('HTTP ' + r.status); return r.json(); })
+      .then(function (shows) { return get('../out/scfg/rx1.rcfgx').then(function () { return shows; }); })
+      .catch(function () { row('skip', '(3) real shows × receiving-card files: app/out/scfg/shows.json or rx*.rcfgx not here (private fixtures)'); return null; });
+  }).then(function (shows) {
+    if (!shows) return null;
+    var rxs = ['rx1', 'rx3', 'rx60'], rxCache = {};
+    return rxs.reduce(function (p, r) {
+      return p.then(function () { return get('../out/scfg/' + r + '.rcfgx'); }).then(SCFG.rxFromRcfgx).then(function (rx) {
+        rxCache[r] = rx;
+        check(rx.inner.indexOf('<StandardLedModuleProp') >= 0, r + '.rcfgx → receiving-card XML ' + rx.inner.length + ' chars', [JSON.stringify(SCFG.rxSummary(rx))]);
+      });
+    }, Promise.resolve()).then(function () {
+      return shows.reduce(function (p, name, i) {
+        return p.then(function () { return get('../samples/' + encodeURIComponent(name) + '.scr'); }).then(function (buf) {
+          importScr(buf, name + '.scr');
+          var r = rxs[i % rxs.length], redu = i === 0 ? [{ masterSender: 0, masterPort: 0, slaveSender: 0, slavePort: 15 }] : [];
+          var scrBytes = SCR.build(toScrModel());
+          var o = buildScfg({ rx: rxCache[r], redundancy: redu });
+          var back = SCFG.parse(o.bytes);
+          var ok = sameBytes(back.scr, scrBytes) && cellsJson(back.scr) === cellsJson(scrBytes) && back.rx.inner.length >= rxCache[r].inner.length &&
+            JSON.stringify(back.redundancy) === JSON.stringify(redu) && back.captureFrame === 30 && !back.syncVideo && !back.warnings.length;
+          var orig = new Uint8Array(buf);
+          check(ok, name + ' + ' + r + ': .scfg ' + o.bytes.length + ' B read back — ScreenCfgInfo == Export .scr (' + scrBytes.length + ' B), cells identical' +
+            (sameBytes(scrBytes, orig) ? ', and == the original .scr file' : ' (original .scr differs: ' + orig.length + ' B)'));
+          return put(name + ' + ' + r + '.scfg', o.bytes);
+        });
+      }, Promise.resolve());
+    });
+  }).then(function () {
+    // ---- (4) refusals
+    var errs = [];
+    try { SCFG.build({ scr: new Uint8Array([68, 83, 67, 73]), rx: null }); errs.push('no rx accepted'); } catch (e) { /* expected */ }
+    try { SCFG.build({ scr: new Uint8Array([68, 83, 67, 73]), rx: { attrs: '', inner: '<Width>1</Width>' } }); errs.push('rx without module accepted'); } catch (e) { /* expected */ }
+    try { SCFG.build({ scr: new Uint8Array([1, 2, 3, 4]), rx: { attrs: '', inner: '<StandardLedModuleProp/>' } }); errs.push('non-DSCI accepted'); } catch (e) { /* expected */ }
+    check(!errs.length, 'Refuses a .scfg without receiving-card parameters or without a .scr', errs);
+    // old text-form DriverChipType lands alone on its line (NovaLCT reads it back line by line)
+    var t = SCFG.build({ scr: new Uint8Array([68, 83, 67, 73]), rx: { attrs: '', inner: '<StandardLedModuleProp><DriverChipType>Chip_ICN2053</DriverChipType></StandardLedModuleProp>' } });
+    check(t.split(/\r?\n/).some(function (ln) { return ln.trim() === '<DriverChipType>Chip_ICN2053</DriverChipType>'; }), 'Old text-form <DriverChipType> is put on its own line');
+  }).catch(function (e) { row('fail', 'Error: ' + e.message, [String(e.stack || '')]); })
+    .then(function () { row(fails ? 'fail' : 'pass', fails ? fails + ' check(s) failed' : 'All checks passed'); document.title = fails ? 'FAIL .scfg' : 'PASS .scfg'; });
+})();
+</script>
+</body>
+</html>

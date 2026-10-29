@@ -1,0 +1,809 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Open Nova</title>
+<link rel="icon" type="image/svg+xml" href="icon.svg">
+<link rel="stylesheet" href="app.css">
+<link rel="stylesheet" href="polish.css">
+<script>
+  // The app was called LED Mapper: copy its browser settings and saved project to the Open Nova keys once
+  // (old keys are left in place, so nothing is lost if this runs twice or an old copy is opened).
+  (function () {
+    try {
+      for (var i = 0; i < localStorage.length; i++) {
+        var k = localStorage.key(i);
+        if (k && k.indexOf('ledmapper.') === 0) {
+          var nk = 'opennova.' + k.slice(10);
+          if (localStorage.getItem(nk) === null) localStorage.setItem(nk, localStorage.getItem(k));
+        }
+      }
+    } catch (e) {}
+  })();
+  // Apply the saved theme before first paint so there's no light flash.
+  var t = 'dark';
+  try { t = localStorage.getItem('opennova.theme') || 'dark'; } catch (e) {}
+  if (t === 'light' || t === 'dark') document.documentElement.dataset.theme = t;
+  // Corners of the pro look (Settings ▸ Preferences ▸ Corners, app-forms.js): rounded unless square was picked
+  try { document.documentElement.dataset.corners = localStorage.getItem('opennova.corners') === 'square' ? 'square' : 'round'; } catch (e) { document.documentElement.dataset.corners = 'round'; }
+  // Interface size (View ▸ Interface Size, Settings ▸ Preferences, app-forms.js), before first paint too. First run on a Retina laptop (devicePixelRatio 2,
+  // window under 1600 px) starts at 85 % (user, 2026-10-11: on the Mac the interface is huge); the pick is remembered.
+  (function () {
+    var z = null;
+    try { z = parseFloat(localStorage.getItem('opennova.uisize')); } catch (e) {}
+    if (!(z >= 0.5 && z <= 2)) {
+      z = (window.devicePixelRatio || 1) >= 2 && window.innerWidth < 1600 ? 0.85 : 1;
+      try { localStorage.setItem('opennova.uisize', String(z)); } catch (e) {}
+    }
+    if (z !== 1) { document.documentElement.style.zoom = String(z); document.documentElement.style.setProperty('--uiz', String(z)); }   // --uiz: vh / vw ÷ zoom (app.css)
+    // Text size (View ▸ Text Size): the --fs multiplier on the font sizes in app.css / polish.css
+    var f = null;
+    try { f = parseFloat(localStorage.getItem('opennova.textsize')); } catch (e) {}
+    if (f >= 0.5 && f <= 2 && f !== 1) document.documentElement.style.setProperty('--fs', String(f));
+  })();
+  // Looks (docs/PRO_LOOK_PLAN.md; View ▸ Look ›): pro, the default, or classic (app.css + polish.css alone: the look before
+  // 2026-10-28). ?look=pro | classic picks one and remembers it in this browser, ?look=default forgets it (= pro). Before
+  // first paint; unknown names (the retired try-on looks studio / console / precision) give the default.
+  (function () {
+    var L = { pro: 1, classic: 1 }, q = /[?&]look=([a-z-]+)/.exec(location.search), n = q ? q[1] : null;
+    try {
+      if (q) { if (L[n]) localStorage.setItem('opennova.look', n); else localStorage.removeItem('opennova.look'); }
+      n = localStorage.getItem('opennova.look');
+    } catch (e) {}
+    if (!L[n]) n = 'pro';
+    document.documentElement.dataset.look = n; document.write('<link rel="stylesheet" id="lookCss" href="looks/' + n + '.css">');
+    // The pro look's area sheets, each owned by one part of the app (docs/DESIGN_SYSTEM.md): header tiles, side panels,
+    // the Layout canvas, the module pages.
+    if (n === 'pro') ['looks/pro-tiles.css', 'looks/pro-panels.css', 'looks/pro-canvas.css', 'looks/pro-pages.css'].forEach(function (f) { document.write('<link rel="stylesheet" class="lookArea" href="' + f + '">'); });
+  })();
+</script>
+</head>
+<body>
+<!-- Menu bar (app-menubar.js): the top line of the window, as Unico / VMP — File · Edit · View · Tools · Settings · Help,
+     the project's name centred. Every item is an action that exists elsewhere; the elements moved here keep their ids. -->
+<nav id="menuBar" class="menubar" aria-label="Menu">
+  <span class="mb-logo" aria-hidden="true"><svg width="15" height="15" viewBox="0 0 16 16"><circle cx="8" cy="8" r="6.6" fill="none" stroke="currentColor" stroke-width="1.3"/><path d="M8 2.5v11M2.5 8h11" stroke="currentColor" stroke-width="1.1" opacity=".7"/><circle cx="8" cy="8" r="2.3" fill="currentColor"/></svg>Open Nova</span>
+  <button id="mbBurger" class="mb-burger" aria-haspopup="menu" aria-expanded="false" aria-label="Menu" title="Menu (F10)">☰</button>
+  <div class="mb-tops" role="menubar">
+    <div class="mb-item"><button class="mb-top" id="mbFile" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-mb="projMenu">File</button>
+      <div id="projMenu" class="dropmenu mb-menu mb-file" role="menu" hidden>
+        <div id="projList" class="proj-list" role="group" aria-label="Projects" hidden></div>
+        <button id="btnNew" role="menuitem" title="Start a new project (the others stay in the list)">New Project</button>
+        <button id="btnProjDup" role="menuitem" title="A copy of this project, opened at once (the same processors linked)" hidden>Duplicate</button>
+        <button id="btnProjRename" role="menuitem" title="Rename this project">Rename…</button>
+        <button id="btnProjRemove" role="menuitem" hidden>Remove…</button>
+        <button id="btnProjRemoved" role="menuitem" title="Projects removed from the list (kept in the server’s projects/removed folder) — restore one" hidden>Removed</button>
+        <hr>
+        <label class="btn" role="menuitem" title="Open a file as a new project in the list, named after the file: NovaLCT .scr / .scfg, an Open Nova project (.json), a Unico screen export (.uscr) or a VMP project (.nprj)" data-off="Open a NovaLCT .scr / .scfg, an Open Nova project (.json), a Unico screen export (.uscr) or a VMP project (.nprj) into this project (Ctrl+Z undoes it)">Import Project File…<input type="file" id="fileOpen" accept=".scr,.scfg,.json,.uscr,.nprj" hidden></label>
+        <label class="btn" id="fileIntoRow" role="menuitem" title="Into this project instead: a Unico screen file (.uscr) adds a screen; .scr / .scfg / .json / .nprj replace its content (Ctrl+Z undoes it)" hidden>Import Screen Config File…<input type="file" id="fileInto" accept=".scr,.scfg,.json,.uscr,.nprj" hidden></label>
+        <button id="mbLut" role="menuitem" title="See a 3-D LUT (.cube / .3dl) as a small 3-D picture. View only: nothing is sent to a processor (app-lut3d.js)">Open LUT…</button>
+        <button id="btnSaveProject" role="menuitem" title="Download this project as an editable Open Nova file (.json)">Export Project File (.json)</button>
+        <button id="mbExport" role="menuitem" title="The screens for NovaLCT (.scr): each screen as Standard or Complex — the same as the Export button">Export Screen Config File (.scr)<span class="menu-k" data-keys="Ctrl+E">Ctrl+E</span></button>
+        <button id="btnExportScfg" role="menuitem" title="A NovaLCT system config (.scfg): the screens plus the show's receiving-card file, to load a whole show in LCT">Export System Config File (.scfg)</button>
+        <hr>
+        <button id="btnReadLayout" role="menuitem" title="Replace what the project has on the linked processors with the layout they hold (screens, cabinets, cable order, backup pairs). Ctrl+Z undoes it.">Read Layout from Processors</button>
+      </div></div>
+    <div class="mb-item"><button class="mb-top" id="mbEdit" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-mb="editMenu">Edit</button>
+      <div id="editMenu" class="dropmenu mb-menu" role="menu" hidden></div></div>
+    <div class="mb-item"><button class="mb-top" id="mbView" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-mb="viewMbMenu">View</button>
+      <div id="viewMbMenu" class="dropmenu mb-menu" role="menu" hidden></div></div>
+    <div class="mb-item"><button class="mb-top" id="mbTools" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-mb="toolsMenu">Tools</button>
+      <div id="toolsMenu" class="dropmenu mb-menu" role="menu" hidden>
+        <button role="menuitem" data-goto="dashboard" title="The project at a glance (also: click the project in the tree)">Project Dashboard</button>
+        <button role="menuitem" data-goto="maintain" title="The cabinets: firmware, receiving cards, configuration check, show report">Maintain</button>
+        <button role="menuitem" data-goto="library" title="The receiving-card files (.rcfgx / NCP) kept on this computer">Cabinet Library</button>
+        <button role="menuitem" id="mbDiscover" title="Find the processors on the network and add them (Device ▸ Add processor)">Device Discovery</button>
+        <button role="menuitem" id="mbTestTool" title="Test patterns, Identify and Mapping on the wall (Layout ▸ Test ▾)">Test Tool</button>
+        <hr>
+        <button role="menuitem" data-goto="diag" title="Every byte Open Nova exchanges with the processors: live, recorded, Wireshark export / import">Diagnostics</button>
+        <button role="menuitem" id="mbVendor" title="NovaLCT, VMP and Unico on this computer: versions, their logs, Wireshark captures of what they send, and an experimental relay — so Open Nova can learn what it hasn’t seen yet">Vendor Apps…</button>
+        <button role="menuitem" id="mbPreshow" title="Run the pre-show check on every linked processor (results on the project dashboard)">Pre-show Check</button>
+        <button role="menuitem" id="btnSupport" title="One .zip with the project, the logs and a read-only read-back of every linked processor — for troubleshooting">Support Bundle…</button>
+        <hr>
+        <div class="mb-sub"><button class="mb-subbtn" role="menuitem" aria-haspopup="menu" aria-expanded="false">Offline Mode<span class="menu-k">›</span></button>
+          <div class="dropmenu mb-menu mb-subm" role="menu" hidden>
+            <button role="menuitem" id="btnOfflineMode" title="Offline: Add processor lists the model catalogue and nothing is searched (designing without hardware). Online: Add processor lists the processors found on the network. As VMP’s Tools ▸ Offline Mode.">Enter offline mode</button>
+          </div></div>
+      </div></div>
+    <div class="mb-item"><button class="mb-top" id="mbSettings" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-mb="settingsMenu">Settings</button>
+      <div id="settingsMenu" class="dropmenu mb-menu" role="menu" hidden>
+        <button role="menuitem" id="btnLogs" title="The troubleshooting log: what happened, on this computer and the others — search, copy, download">Export Log…</button>
+        <div class="mb-sub"><button class="mb-subbtn" role="menuitem" aria-haspopup="menu" aria-expanded="false">Preferences<span class="menu-k">›</span></button>
+          <div class="dropmenu mb-menu mb-subm" role="menu" hidden>
+            <button role="menuitem" id="btnTheme" title="Theme: dark, light, or follow system (Auto) — click to change">Theme: Dark</button>
+            <div class="menu-size" role="group" aria-label="Interface size" title="Interface size: how big the whole app is drawn (this browser only; also View ▸ Interface Size)">
+              <span>Interface size</span><span id="uiSizeBtns" class="seg"></span></div>
+            <div class="menu-size" role="group" aria-label="Text size" title="Text size: only the text gets bigger or smaller, not the canvas (this browser only)">
+              <span>Text size</span><span id="textSizeBtns" class="seg"></span></div>
+            <div class="menu-size" id="cornerRow" role="group" aria-label="Corners" title="Corners of buttons, tiles and panels: rounded or square (this browser only)">
+              <span>Corners</span><span id="cornerBtns" class="seg"><button type="button" data-corners="round">Rounded</button><button type="button" data-corners="square">Square</button></span></div>
+            <div class="menu-size" role="group" aria-label="Temperature unit" title="Temperatures in °C or °F (Monitor, the Live view, alarms)">
+              <span>Temperature</span><span id="mbUnit" class="seg"><button type="button" data-wtu="C">°C</button><button type="button" data-wtu="F">°F</button></span></div>
+            <button role="menuitem" id="mbAlarms" title="Monitor ▸ Alarms: temperature and voltage limits, beep, desktop notifications">Alarm Limits…</button>
+          </div></div>
+        <button role="menuitem" id="mbNetwork" title="The networks Open Nova searches for processors (all at once by default) and which ones can open the app — this computer only">Network…</button>
+        <div class="mb-sub"><button class="mb-subbtn" role="menuitem" aria-haspopup="menu" aria-expanded="false" title="The H series web login, per processor (kept on this computer only)">H Logins<span class="menu-k">›</span></button>
+          <div id="mbHLogins" class="dropmenu mb-menu mb-subm" role="menu" hidden></div></div>
+        <div class="mb-sub" id="mbAlphaSub" hidden><button class="mb-subbtn" role="menuitem" aria-haspopup="menu" aria-expanded="false" title="This alpha build: sending to processors, the intro">Alpha<span class="menu-k">›</span></button>
+          <div class="dropmenu mb-menu mb-subm" role="menu" hidden>
+            <button role="menuitem" id="mbAllowSend" title="Switch sending to processors on (asks for the unlock code)">Allow sending…</button>
+            <button role="menuitem" id="mbAlphaIntro" title="What this alpha records; your name and contact for reports">Intro and your details…</button>
+          </div></div>
+      </div></div>
+    <div class="mb-item"><button class="mb-top" id="mbHelp" role="menuitem" aria-haspopup="menu" aria-expanded="false" data-mb="helpMenu">Help</button>
+      <div id="helpMenu" class="dropmenu mb-menu" role="menu" hidden>
+        <button role="menuitem" id="btnKeys" title="Keyboard shortcuts (?)">Keyboard Shortcuts<span class="menu-k">?</span></button>
+        <button role="menuitem" id="mbManual" title="What each tab and menu is for, and where the guides are">User Manual</button>
+        <button role="menuitem" id="mbReportItem" title="One .zip with what you write, the logs and recordings, for the Open Nova team (nothing is uploaded)">Report a Problem…</button>
+        <hr>
+        <button role="menuitem" id="mbAbout">About Open Nova</button>
+      </div></div>
+  </div>
+  <button id="mbProject" class="mb-proj" title="This project — click for the project list (File)"></button>
+  <span class="mb-right"><button id="mbRO" class="mb-ro" hidden title="Writing to processors is off in this alpha — click to allow sending (unlock code)">Read-only</button><button id="mbReport" class="mb-report" hidden title="Report a problem: one .zip for the Open Nova team (Help ▸ Report a Problem…)">Report</button></span>
+</nav>
+<header class="bar">
+  <div class="brand" title="Open Nova: open-source LED processor control">Open Nova</div>
+  <nav class="modtabs" role="tablist" aria-label="Workflow">
+    <button role="tab" data-tab="devices" id="tabDevices" title="Device (Alt+1): the processors in this project, in cascade order, their sending / output cards, the hardware link">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="6.5" width="19" height="11" rx="1.5"/><path class="fill" d="M5.5 9.5h2.2v3H5.5zM9.1 9.5h2.2v3H9.1zM12.7 9.5h2.2v3h-2.2zM16.3 9.5h2.2v3h-2.2z"/><path d="M5.5 15h13"/></svg><span>Device</span><span class="tab-st"></span></button>
+    <button role="tab" data-tab="layout" id="tabLayout" title="Layout (Alt+2): screens, cabinets and wiring">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="1.5"/><path d="M3 9.5h18M3 14.5h18M9 4.5v15M15 4.5v15"/></svg><span>Layout</span><span class="tab-st"></span></button>
+    <button role="tab" data-tab="correction" id="tabCorrection" title="Correction (Alt+3): calibration on / off per screen, coefficient reset and module flash (coefficient upload stays out)">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4.5" width="18" height="15" rx="1.5"/><path class="fill" d="M3 4.5h9v7.5H3zM12 12h9v7.5h-9z"/></svg><span>Correction</span><span class="tab-st"></span></button>
+    <button role="tab" data-tab="screen" id="tabScreen" title="Screen Settings (Alt+4): brightness, gamma, colour temperature, gamut, bit depth, low latency per screen">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5v17M12 7.5a4.5 4.5 0 0 1 0 9"/></svg><span>Screen Settings</span><span class="tab-st"></span></button>
+    <button role="tab" data-tab="source" id="tabSource" title="Source (Alt+5): inputs and layers, where the processor has them">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2.5" y="7" width="13" height="10" rx="1.2"/><path d="M15.5 12h6M18.5 9l3 3-3 3"/></svg><span>Source</span><span class="tab-st"></span></button>
+    <button role="tab" data-tab="backup" id="tabBackup" title="Backup (Alt+6): port, card and processor redundancy, verify">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="4" width="18" height="6" rx="1.2"/><rect x="3" y="14" width="18" height="6" rx="1.2"/><path d="M7 10v4M17 10v4"/></svg><span>Backup</span><span class="tab-st"></span></button>
+    <button role="tab" data-tab="presets" id="tabPresets" title="Preset (Alt+7): scenes and device presets">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 6h14M5 12h14M5 18h14"/><circle class="fill" cx="9" cy="6" r="1.8"/><circle class="fill" cx="15" cy="12" r="1.8"/><circle class="fill" cx="11" cy="18" r="1.8"/></svg><span>Preset</span><span class="tab-st"></span></button>
+    <button role="tab" data-tab="health" id="tabHealth" title="Monitor (Alt+8): the linked processors live — cabinets on backup, data breaks, dark cabinets, temperatures, events">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 12h4l2-5 4 10 2-5h6"/></svg><span>Monitor</span><span class="tab-st"></span></button>
+    <button role="tab" data-tab="schedule" id="tabSchedule" title="Schedule (Alt+9): brightness by time or light sensor, preset changes, diagnostics">
+      <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3.5" y="5" width="17" height="15" rx="1.5"/><path d="M3.5 9.5h17M8 3v4M16 3v4M8 13h2M12 13h2M16 13h1M8 16.5h2M12 16.5h2"/></svg><span>Schedule</span><span class="tab-st"></span></button>
+  </nav>
+  <!-- The action row (app-pipeline.js): Override (Pattern ▾, Blackout, Freeze, Normal: global) and System (Send ▾, Save ▾),
+       then Export. Classic shows only the buttons (the groups are display: contents, the rest hidden, polish.css); the pro
+       look draws them as tiles beside the tab tiles, whose status lines (.tab-st) it fills. The safety buttons, Save and
+       Send never fold or scroll away (UI_STREAMLINE_PROPOSAL §2). Ids and handlers unchanged. -->
+  <div class="bar-actions pipe" id="pipe" role="group" aria-label="Show status and actions">
+    <span id="syncState" class="sync" hidden></span>
+    <section class="pg pg-pin" data-pg="override" aria-label="Override"><h6>Override</h6><div class="pg-tiles">
+      <button id="btnTestHdr" class="tile" aria-haspopup="menu" title="Test patterns on the wall, Identify, Mapping (the same menu as Layout ▸ Test ▾)"><span class="t">Pattern <span class="car">▾</span></span><span class="pic" aria-hidden="true"><svg width="44" height="26" viewBox="0 0 44 26"><rect x="1" y="1" width="6" height="18" fill="#e9e9e9"/><rect x="7" y="1" width="6" height="18" fill="#e3d33a"/><rect x="13" y="1" width="6" height="18" fill="#3ad0e3"/><rect x="19" y="1" width="6" height="18" fill="#3ad35a"/><rect x="25" y="1" width="6" height="18" fill="#d33ad8"/><rect x="31" y="1" width="6" height="18" fill="#e03a3a"/><rect x="37" y="1" width="6" height="18" fill="#3a4ee3"/><rect x="1" y="19" width="42" height="6" fill="#111"/><rect x="1" y="19" width="10" height="6" fill="#2a2a2a"/><rect x="17" y="19" width="8" height="6" fill="#d9d9d9"/><rect x=".5" y=".5" width="43" height="25" fill="none" stroke="#000"/></svg></span><span class="v"></span><i class="led"></i></button>
+      <button id="btnBlackout" class="disp-btn tile" title="Blackout every linked processor — all of them, not only the one shown in the strip (Alt+B); click again or Normal to bring the picture back"><span class="t">Blackout</span><span class="pic" aria-hidden="true"><svg width="40" height="26" viewBox="0 0 40 26"><rect x=".5" y=".5" width="39" height="25" rx="1" fill="#000" stroke="#59606b"/><path d="M4 4h32v18H4z" fill="none" stroke="#15171a"/></svg></span><span class="v"></span><i class="led"></i></button>
+      <button id="btnFreeze" class="disp-btn tile" title="Freeze the picture on every linked processor — all of them, not only the one shown in the strip (Alt+F)"><span class="t">Freeze</span><span class="pic" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 26 26"><rect x="6" y="4" width="5" height="18" rx="1" fill="currentColor"/><rect x="15" y="4" width="5" height="18" rx="1" fill="currentColor"/></svg></span><span class="v"></span><i class="led"></i></button>
+      <button id="btnNormalHdr" class="tile" title="Normal on every linked processor: picture back, test patterns and freeze off (Alt+N)"><span class="t">Normal</span><span class="pic" aria-hidden="true"><svg width="40" height="26" viewBox="0 0 40 26"><defs><linearGradient id="pgNormalG" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#3a1f7a"/><stop offset=".6" stop-color="#c83c8c"/><stop offset="1" stop-color="#ff9a3c"/></linearGradient></defs><rect x=".5" y=".5" width="39" height="25" rx="1" fill="url(#pgNormalG)" stroke="#000"/><path d="M16 7.5v11l9-5.5z" fill="#fff"/></svg></span><span class="v"></span><i class="led"></i></button>
+    </div></section>
+    <section class="pg pg-pin" data-pg="system" aria-label="System"><h6>System</h6><div class="pg-tiles">
+      <button id="btnSendHdr" class="tile" title="Send the layout to every linked processor or to one (asks first), or compare one with the project"><span class="t">Send <span class="car">▾</span></span><span class="pic" aria-hidden="true"><svg width="30" height="26" viewBox="0 0 30 26"><path d="M3 13h17M14 6.5l7 6.5-7 6.5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/><rect x="23" y="4" width="4" height="18" rx="1" fill="currentColor"/></svg></span><span class="v"></span><i class="led"></i></button>
+      <button id="btnSaveHw" class="tile" title="Save: store the settings in the processors’ flash — all of them, or one (asks first). Never part of Send."><span class="t">Save <span class="car">▾</span></span><span class="pic" aria-hidden="true"><svg width="26" height="26" viewBox="0 0 26 26"><path d="M4 3h15l4 4v16H4z" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linejoin="round"/><rect x="8" y="3" width="9" height="6" fill="none" stroke="currentColor" stroke-width="1.3"/><rect x="8" y="14" width="11" height="9" fill="currentColor" opacity=".35"/></svg></span><span class="v"></span><i class="led"></i></button>
+    </div></section>
+    <button id="btnExport" title="Export the screens for NovaLCT (.scr): each screen as Standard or Complex (Ctrl+E)">Export</button>
+  </div>
+</header>
+<div id="displayBar" class="display-bar" role="alert" hidden><span id="displayText"></span><button id="btnNormalBar">Normal</button></div>
+<div id="wtBanner" class="wt-banner" role="alert" hidden title="Open the Monitor tab (clears the alert)"><b>Alarm</b> <span id="wtBannerText"></span><span class="grow"></span><span class="hint">click to see it</span></div>
+<div id="rbBar" class="unsaved-bar rb-bar" role="status" hidden><span id="rbText"></span><button id="rbUse" class="primary" title="Replace the project's layout on this processor with what it holds (Ctrl+Z undoes it)">Use the processor’s layout</button><button id="rbKeep" title="Leave the project as it is (Send puts the project's layout on the processor)">Keep the project’s</button></div>
+<div id="unsavedBar" class="unsaved-bar" role="status" hidden><span id="unsavedText"></span><button id="btnSaveBar" class="primary">Save…</button></div>
+
+<!-- Dashboard (app-dashboard.js): the project at a glance — click the project in the tree, as in VMP -->
+<main class="layout db-view" id="modDashboard" hidden>
+  <!-- left column: the shared project tree (#navTree), moved in by app-shell.js -->
+  <section class="stage db-stage">
+    <div class="stage-tools"><b class="dv-h" id="dbTitle">Project</b><span class="grow"></span>
+      <button id="dbPre" title="Run the pre-show check (Monitor)">Pre-show check</button></div>
+    <div class="db-scroll"><div id="dbBody"></div></div>
+  </section>
+</main>
+<!-- Screen Settings tab (app-screen.js): colour, output and latency per screen, applied with Apply -->
+<main class="layout sc-view" id="modScreen" hidden>
+  <!-- left column: the shared project tree (#navTree), moved in by app-shell.js -->
+  <section class="stage sc-stage">
+    <div class="stage-tools">
+      <b class="dv-h">Screen Settings</b>
+      <button type="button" class="itip" id="scHint" aria-label="More info" title="Pick a screen in the tree. Image Quality goes to every processor driving it as you move the sliders; Output and Latency ask first (Apply)." data-itip="Pick a screen in the tree. Image Quality goes to every processor driving it as you move the sliders; Output and Latency ask first (Apply).">ⓘ</button>
+      <span class="grow"></span>
+    </div>
+    <div class="sc-scroll"><div id="scBody"></div></div>
+  </section>
+  <aside class="panel right sc-panel" aria-label="Screen settings">
+    <div class="seg sc-seg" id="scSeg" role="tablist" aria-label="Settings group">
+      <button data-sc="iq" role="tab">Image Quality <span class="sc-live" title="Live: changes go out as you move them, no Apply. Not saved on the processors until Save. Effects (18-bit, grayscale, HDR) and custom gamuts come once they are captured on each processor.">Live</span></button><button data-sc="out" role="tab">Output</button><button data-sc="lat" role="tab">Latency</button>
+    </div>
+    <div id="scForm" class="sc-form"></div>
+    <div class="sc-foot">
+      <button id="scRevert" title="Put the controls back to what was last applied to the processors">Revert</button>
+      <span class="grow"></span>
+      <button id="scApply" class="primary" title="Send the changed settings to every processor driving this screen (asks first)">Apply…</button>
+    </div>
+  </aside>
+</main>
+<!-- Backup tab (app-redundancy.js + app-backup.js): what backs up what, per processor, and verify -->
+<main class="layout bk-view" id="modBackup" hidden>
+  <!-- left column: the shared project tree (#navTree), moved in by app-shell.js -->
+  <section class="stage bk-stage">
+    <div class="stage-tools">
+      <b class="dv-h">Backup</b>
+      <button type="button" class="itip" aria-label="More info" title="Plan the backup on the right. Send backup puts it on a processor (Unico / VMP-type processors take it with the layout, live); a layout Send keeps it in step. Verify switches a processor to its backup ports so you can look at the wall; press it again to go back." data-itip="Plan the backup on the right. Send backup puts it on a processor (Unico / VMP-type processors take it with the layout, live); a layout Send keeps it in step. Verify switches a processor to its backup ports so you can look at the wall; press it again to go back.">ⓘ</button>
+      <span class="grow"></span>
+    </div>
+    <div class="bk-scroll"><div id="rdBody"></div></div>
+  </section>
+  <aside class="panel right" aria-label="Backup plan">
+    <section class="card" data-card="backup" id="cardBackup">
+      <div class="card-h"><button class="card-t" aria-expanded="true"><span class="chev"></span>Backup <span id="bkSub" class="card-sub"></span></button></div>
+      <div class="card-b" id="bkBody"></div>
+    </section>
+  </aside>
+</main>
+<!-- Preset tab (app-presets.js): scenes (every processor) and the presets processors store themselves -->
+<main class="layout ps-view" id="modPresets" hidden>
+  <!-- left column: the shared project tree (#navTree), moved in by app-shell.js -->
+  <section class="stage ps-stage">
+    <div class="stage-tools">
+      <b class="dv-h">Scenes</b>
+      <button type="button" class="itip" aria-label="More info" title="A scene keeps each screen’s brightness, gamma, colour temperature and gamut. Recall applies them to every processor at once, after a confirmation." data-itip="A scene keeps each screen’s brightness, gamma, colour temperature and gamut. Recall applies them to every processor at once, after a confirmation.">ⓘ</button>
+      <span class="grow"></span>
+      <button id="psNew" class="primary" title="Save the current Screen Settings of every screen as a new scene">New scene</button>
+    </div>
+    <div class="ps-scroll"><div id="psBody"></div></div>
+  </section>
+  <aside class="panel right ps-panel" aria-label="Processor presets">
+    <div class="dv-ptabs"><span class="on">On the processors</span></div>
+    <div id="psDev" class="ps-dev"></div>
+  </aside>
+</main>
+<!-- Maintain tab (app-maintain.js; Tools ▸ Maintain, as in Unico / VMP): the cabinets themselves, read-only for now -->
+<!-- Tools ▸ Cabinet library (app-library.js): the receiving-card files kept by the helper, matched to the panels -->
+<main class="layout lb-view" id="modLibrary" hidden>
+  <section class="stage mt-stage">
+    <div class="stage-tools">
+      <b class="dv-h">Cabinet library</b>
+      <span class="hint" id="lbFolder"></span>
+      <span class="grow"></span>
+      <select id="lbFor" title="Read a linked processor’s receiving cards and show only the files that fit them"></select>
+      <label class="chk" title="Also show the files that don’t fit (marked red) — sending one needs the check’s typed override"><input type="checkbox" id="lbAll"> Show all (override)</label>
+      <input id="lbFilter" type="search" placeholder="Filter: name, maker, cabinet, card, chip…" aria-label="Filter the library">
+      <button id="lbReload" title="Read the library again">↻</button>
+      <button id="lbAddDir" title="Add every .rcfgx / .ncp in a folder (and its subfolders)">Add folder…</button>
+      <button id="lbAdd" class="primary" title="Add .rcfgx / .ncp files (several at once)">Add files…</button>
+      <input type="file" id="lbFiles" accept=".rcfgx,.ncp,.bin" multiple hidden>
+      <input type="file" id="lbDir" webkitdirectory multiple hidden>
+    </div>
+    <div class="mt-scroll"><div id="lbBody"></div></div>
+  </section>
+  <aside class="panel right mt-panel" aria-label="Firmware conflicts">
+    <div class="dv-ptabs"><span class="on">Firmware conflicts</span></div>
+    <div id="lbConf" class="mt-check"></div>
+  </aside>
+</main>
+<!-- Tools ▸ Diagnostics (app-diag.js): the helper's flight recorder (tools/wirelog.py) -->
+<main class="layout dg-view" id="modDiag" hidden>
+  <section class="stage mt-stage">
+    <div class="stage-tools">
+      <b class="dv-h">Diagnostics</b>
+      <label class="chk" title="Write every frame, REST call and discovery packet to Nova/diagnostics (on by default)"><input type="checkbox" id="dgRec"> Record</label>
+      <span class="hint" id="dgState"></span>
+      <span class="grow"></span>
+      <button id="dgNote" title="Put a note in the recording: what you are about to do, or what you see on the wall">Note…</button>
+      <button id="dgPause" title="Stop the live list moving (recording carries on)">Pause</button>
+      <button id="dgLive" hidden>Back to live</button>
+      <select id="dgFiles" title="Open an earlier recording or an imported capture"><option value="">Open a recording…</option></select>
+      <button id="dgImportBtn" title="Open a Wireshark / tcpdump capture (.pcap / .pcapng): NovaStar frames are decoded the same way">Import capture…</button>
+      <input type="file" id="dgImportFile" accept=".pcap,.pcapng,.cap" hidden>
+    </div>
+    <div class="stage-tools dg-filters">
+      <input id="dgFilter" type="search" placeholder="Filter: address, register, value, URL, error…" aria-label="Filter the records">
+      <select id="dgLink" title="One processor link only"></select>
+      <select id="dgAct" title="One app action only: a click or menu and everything it sent and got back"></select>
+      <span id="dgKinds" class="dg-kinds"></span>
+    </div>
+    <div class="mt-scroll" id="dgBody"></div>
+  </section>
+  <aside class="panel right mt-panel" aria-label="Diagnostics details">
+    <div class="dv-ptabs"><span class="on">Details</span></div>
+    <div class="dg-side-tools">
+      <button class="mini" id="dgDlNwl" title="This recording as JSON lines (.nwl): everything, exactly as recorded">Download</button>
+      <button class="mini" id="dgDlPcap" title="This recording for Wireshark (.pcap)">Wireshark .pcap</button>
+      <button class="mini" id="dgDlLua" title="The Wireshark plug-in that decodes NovaStar frames (copy into Wireshark’s personal plugins folder)">Wireshark plug-in</button>
+      <button class="mini" id="dgFolder" title="Open the diagnostics folder on the computer running Open Nova">Folder</button>
+    </div>
+    <div id="dgSide" class="mt-check"></div>
+  </aside>
+</main>
+<main class="layout mt-view" id="modMaintain" hidden>
+  <section class="stage mt-stage">
+    <div class="stage-tools">
+      <b class="dv-h">Maintain</b>
+      <input id="mtFilter" type="search" placeholder="Filter: processor, port, cabinet, firmware…" aria-label="Filter cabinets">
+      <span class="grow"></span>
+      <button id="mtRcv" title="Send an .rcfgx or NCP to the receiving cards — checked against what the cabinets are first, so the wrong file can’t go out by accident">Send receiving-card file…</button>
+      <button id="mtCsv" title="Download the cabinet table as CSV">CSV</button>
+      <button id="mtReport" class="primary" title="Download a printable show report: cabinets per type, processors, ports and load, backup">Show report</button>
+    </div>
+    <div class="mt-scroll"><div id="mtBody"></div></div>
+  </section>
+  <aside class="panel right mt-panel" aria-label="Configuration check">
+    <div class="dv-ptabs"><span class="on">Configuration check</span></div>
+    <div id="mtCheck" class="mt-check"></div>
+  </aside>
+</main>
+
+<!-- Correction tab (app-correction.js): calibration as the processors report it, the on / off switch, coefficient reset and
+     module flash (NovaLCT); coefficient upload / editing stay out (docs/OPEN_NOVA_DESIGN.md §0) -->
+<main class="layout sc-view" id="modCorrection" hidden>
+  <!-- left column: the shared project tree (#navTree), moved in by app-shell.js -->
+  <section class="stage sc-stage">
+    <div class="stage-tools">
+      <b class="dv-h">Correction</b>
+      <button type="button" class="itip" aria-label="More info" title="Pick a screen in the tree. Calibration as the processors report it." data-itip="Pick a screen in the tree. Calibration as the processors report it.">ⓘ</button>
+      <span class="grow"></span>
+      <button id="coRead" title="Read the calibration state from the processors again (nothing is written)">Read</button>
+    </div>
+    <div class="sc-scroll"><div id="coBody"></div></div>
+  </section>
+  <aside class="panel right sc-panel" aria-label="Correction">
+    <div id="coForm" class="sc-form"></div>
+  </aside>
+</main>
+<!-- Source tab: preview placeholder (docs/OPEN_NOVA_DESIGN.md, phase 14); its tab button is hidden until then (app-shell.js TABS hide) -->
+<main class="layout ph-view" id="modSource" hidden>
+  <section class="stage ph-stage">
+    <div class="stage-tools"><b class="dv-h">Source</b><span class="badge ph-badge">Preview · coming in phase 14</span><span class="grow"></span></div>
+    <div class="ph-scroll">
+      <p class="ph-lead">Inputs and layers, on processors that have them (VX Pro, MX) — hidden where a processor can’t.</p>
+      <div class="ph-wire">
+        <div class="ph-col ph-left"><div class="ph-box">inputs</div></div>
+        <div class="ph-col ph-mid"><div class="ph-box ph-canvas">canvas</div><div class="ph-box ph-strip"></div></div>
+        <div class="ph-col ph-right"><div class="ph-box">layer</div><div class="ph-box">input settings</div></div>
+      </div>
+      <ul class="ph-list"><li>Inputs: resolution, EDID, colour space / range, test patterns</li><li>Layers / windows: position, size, crop, source, z-order</li><li>Multiviewer (MVR) where the processor has an MVR card</li></ul>
+    </div>
+  </section>
+</main>
+<!-- Schedule tab (app-schedule.js): timed changes that run on the processors themselves -->
+<main class="layout sh-view" id="modSchedule" hidden>
+  <section class="stage sh-stage">
+    <div class="stage-tools">
+      <b class="dv-h">Schedule</b>
+      <button type="button" class="itip" aria-label="More info" title="Brightness by time of day, stored and run by the processor (the app doesn’t need to be open). NovaLCT processors have no scheduler of their own." data-itip="Brightness by time of day, stored and run by the processor (the app doesn’t need to be open). NovaLCT processors have no scheduler of their own.">ⓘ</button>
+      <span class="grow"></span>
+    </div>
+    <div class="sh-scroll"><div id="shBody"></div></div>
+  </section>
+</main>
+<!-- Processors tab (app-devices.js): processor list | processor cards + rear panel | properties -->
+<main class="layout dv-view" id="modDevices" hidden>
+  <!-- left column: the shared project tree (#navTree), moved in by app-shell.js -->
+
+  <section class="stage dv-stage">
+    <div class="stage-tools">
+      <b class="dv-h">Processors</b>
+      <button type="button" class="itip" aria-label="More info" title="Cascade order: the processors’ cards are numbered through them, first to last. Drag a card or use ← → to change it (right-click a card: Earlier / Later); the cards renumber and the wiring moves with them." data-itip="Cascade order: the processors’ cards are numbered through them, first to last. Drag a card or use ← → to change it (right-click a card: Earlier / Later); the cards renumber and the wiring moves with them.">ⓘ</button><span class="grow"></span>
+      <button id="btnDevAdd2" class="primary" title="Add a processor: it cascades after the last one">+ Add processor</button>
+    </div>
+    <div class="dv-scroll">
+      <div id="devCards" class="dv-cards" role="listbox" aria-label="Processors"></div>
+      <div class="dv-rear-h" id="devRearTitle"></div>
+      <div id="devRear" class="dv-rear"></div>
+      <div id="devPorts" class="dv-ports pro-only"></div>
+    </div>
+  </section>
+
+  <aside class="panel right" aria-label="Processor properties">
+    <div class="dv-ptabs"><span class="on">Processor properties</span></div>
+    <p id="dvNone" class="hint dv-none" hidden>No processor in this project yet.<br><button id="btnDevAdd3" class="primary">+ Add processor</button></p>
+    <section class="card" data-card="dvInfo">
+      <div class="card-h"><button class="card-t" aria-expanded="true"><span class="chev"></span>Processor <span id="dvTitle" class="card-sub"></span></button></div>
+      <div class="card-b">
+        <p id="dvNudge" class="dv-nudge" hidden><b>Pick the model.</b> This processor came from an imported file, so its model isn’t known and nothing is sent to it. Pick the real model below, or link it (Hardware): the processor names its model.</p>
+        <div class="grid2">
+          <label class="span2">Name<input id="dvName" type="text"></label>
+          <label class="span2" title="Its cards and port counts follow the model">Model<select id="dvModel"></select></label>
+        </div>
+        <dl id="dvFacts" class="dv-facts"></dl>
+        <div class="dv-ft"><label class="chk" id="dvFreeTopoWrap" title="Count a port's load as its cabinets' own pixels, so gaps cost nothing"><input type="checkbox" id="dvFreeTopo"> Free topology</label><span id="dvFreeTopoNote"></span></div>
+      </div>
+    </section>
+    <section class="card" data-card="dvCards">
+      <div class="card-h"><button class="card-t" aria-expanded="true"><span class="chev"></span><span id="dvCardsTitle">Cards</span></button></div>
+      <div class="card-b" id="dvCardsBody"></div>
+    </section>
+    <section class="card" data-card="dvHw">
+      <div class="card-h"><button class="card-t" aria-expanded="true"><span class="chev"></span>Hardware</button></div>
+      <div class="card-b" id="dvHwBody"></div>
+    </section>
+    <!-- Service: restart / factory reset / restart panels and Remove, folded away (closed on every start; app-devices.js) -->
+    <section class="card collapsed dv-svc" id="dvService">
+      <div class="card-h"><button class="card-t" id="dvSvcHead" aria-expanded="false"><span class="chev"></span>Service</button></div>
+      <div class="card-b">
+        <div id="dvSvcBody"></div>
+        <div class="row dv-rm"><button id="dvRemove" class="wide danger">Remove processor</button><span id="dvRemoveNote"></span></div>
+      </div>
+    </section>
+  </aside>
+</main>
+
+<!-- Monitor tab (app-health.js): linked processors live -->
+<main class="layout hl-view" id="modHealth" hidden>
+  <!-- left column: the shared project tree (#navTree), moved in by app-shell.js -->
+  <section class="stage hl-stage">
+    <div class="stage-tools">
+      <b class="dv-h">Monitor</b>
+      <span class="grow"></span>
+      <span class="wt-wrap"><button id="wtBtn" title="Alarm limits, °C / °F, beep and desktop notifications">Alarms ▾</button><div id="wtPop" class="wt-pop" hidden></div></span>
+      <button id="hlShowCanvas" title="Colour the cabinets on the Layout canvas by their live status">Show on canvas</button>
+      <button id="hlPre" class="primary" title="Check everything before the show: links, detected vs placed, layout on the processors, unsaved, backup, cabinet health, project problems (read-only)">Pre-show check</button>
+    </div>
+    <div class="hl-scroll"><div id="hmBody"></div><div id="hlBody"></div></div>
+  </section>
+  <aside class="panel right hl-log-panel" aria-label="Events">
+    <div class="dv-ptabs"><span class="on">Events</span><span><button class="mini" id="hlCsv" title="Download the events, with cause and suggestion, as CSV">CSV</button> <button class="mini" id="hlClear" title="Clear every error: the list, the marks on the map and the bit-error counters on the processors (NovaLCT-protocol and COEX; Unico: Open Nova’s record only, its clear hasn’t been seen live yet). Errors stay until you clear them; doesn’t save.">Clear all</button></span></div>
+    <ol id="hlLog" class="hl-log"></ol>
+  </aside>
+</main>
+<main class="layout" id="modLayout">
+  <aside class="panel left" id="navTree" aria-label="Project tree">
+    <div class="tree-top">
+      <span class="tree-title">Project</span><button type="button" class="itip" aria-label="More info" title="Screens: click a port to draw on it; groups of cabinets are listed under their screen.&#10;Processors: in cascade order, first to last, as NovaLCT numbers them.&#10;Double-click a name to rename it." data-itip="Screens: click a port to draw on it; groups of cabinets are listed under their screen.&#10;Processors: in cascade order, first to last, as NovaLCT numbers them.&#10;Double-click a name to rename it.">ⓘ</button>
+      <button class="mini" id="btnTreeAdd" title="Add a screen or a processor">+</button>
+    </div>
+    <div class="seg tree-seg" id="treeSeg" role="group" aria-label="Tree view">
+      <button data-tv="screens" title="Screens, with the processors and ports that drive them">Screens</button><button data-tv="procs" title="Processors in cascade order">Processors</button>
+    </div>
+    <div id="treeScreens" class="tree-pane">
+      <input id="treeSearch" class="tree-search" type="search" placeholder="Search screens…" aria-label="Search the tree">
+      <div id="tree" class="tree" role="tree" aria-label="Screens, processors and ports"></div>
+    </div>
+    <div id="treeProcs" class="tree-pane" hidden>
+      <div class="dv-proj"><b id="dvProj"></b><span id="dvProjSub" class="hint"></span><button class="mini" id="btnDevAdd" title="Add a processor">+</button></div>
+      <input id="devSearch" class="tree-search" type="search" placeholder="Search processors…" aria-label="Search processors">
+      <div id="devList" class="tree" role="listbox" aria-label="Processors in cascade order"></div>
+    </div>
+  </aside>
+
+  <section class="stage">
+    <div class="stage-tools">
+      <button id="btnAddScreen" class="primary" title="Add cabinets to this screen">+ Cabinets</button>
+      <div class="seg tool-seg" id="modeSeg" role="group" aria-label="Wiring mode">
+        <button data-mode="auto" title="Auto wiring for the selected cabinets">Auto</button><button data-mode="manual" title="Manual wiring for the selected cabinets: click cabinets onto the active port">Manual</button><button data-mode="draw" title="Self draw: place cabinets on the canvas, of the type picked in Cabinet types">Self draw</button>
+      </div>
+      <button id="btnQuickAdd" title="Quick add (Q): drop one cabinet, then drag its handles to grow a wall — one port per column (or row), from the active port" aria-pressed="false">Quick add</button>
+      <span class="sep"></span>
+      <button id="btnUndo" class="icon-btn" title="Undo (Ctrl+Z)" aria-label="Undo">↶</button>
+      <button id="btnRedo" class="icon-btn" title="Redo (Ctrl+Y)" aria-label="Redo">↷</button>
+      <span class="sep"></span>
+      <button id="btnZoomFit" class="icon-btn" title="Fit the screen in the view" aria-label="Fit">⤢</button>
+      <button id="btnZoomIn" class="icon-btn" title="Zoom in" aria-label="Zoom in">+</button>
+      <button id="btnZoomOut" class="icon-btn" title="Zoom out" aria-label="Zoom out">−</button>
+      <span class="sep"></span>
+      <button id="btnTest" title="Test patterns on the selected cabinets (or everything), Identify a cabinet, Mapping">Test ▾</button>
+      <button id="btnArrange" title="Align, distribute, lock and group the selected cabinets (Ctrl+click to select more, Ctrl+A for all, Ctrl+G to group)">Arrange ▾</button>
+      <div class="menu-wrap">
+        <button id="btnView" aria-haspopup="menu" aria-expanded="false" title="What the canvas shows: wires, labels, coordinates, grid, rulers, live status">View ▾</button>
+        <div id="viewMenu" class="dropmenu view-menu" role="menu" hidden>
+          <label class="chk"><input type="checkbox" id="showWires" checked> Wires</label>
+          <label class="chk"><input type="checkbox" id="showLabels" checked> Labels</label>
+          <label class="chk" title="Show x,y (canvas pixels) at the top-left corner of the cabinet under the pointer, and of the cabinets you drag"><input type="checkbox" id="showCoords" checked> Coords</label>
+          <label class="chk" title="Snap moving cabinets to other cabinets and the canvas edges (hold Alt to override)"><input type="checkbox" id="magnet" checked> Magnet</label>
+          <hr>
+          <div class="vm-row"><label class="chk" title="Show a grid on the canvas"><input type="checkbox" id="showGrid"> Grid</label>
+            <label class="chk" title="Moved cabinets snap to the grid (hold Alt to override); the magnet is off while this is on"><input type="checkbox" id="snapGrid"> Snap</label>
+            <select id="gridStep" title="Grid step (canvas pixels)" aria-label="Grid step"></select></div>
+          <label class="chk" title="Rulers along the canvas edges (canvas pixels)"><input type="checkbox" id="showRulers"> Rulers</label>
+          <label class="chk" title="A small map at the canvas’s bottom right: drag its box to pan"><input type="checkbox" id="showNav" checked> Navigator</label>
+          <label class="vm-live" title="A picture under the cabinets (only here: never sent to a processor); the cabinets show as port bands over it">Content
+            <select id="pvMode" aria-label="Content preview"><option value="ports">Port colours</option><option value="gradient">Gradient</option><option value="bars">Colour bars</option><option value="grid">Alignment grid</option><option value="image">Picture…</option></select></label>
+          <hr>
+          <label class="vm-live" title="Colour the cabinets by what the linked processor reports right now (Monitor)">Live
+            <select id="liveView" aria-label="Live view"><option value="off">Off</option><option value="status">Status</option><option value="temp">Temperature</option><option value="volt">Voltage</option><option value="ber">Bit errors</option></select></label>
+        </div>
+      </div>
+      <span class="grow"></span>
+      <span id="modeBadge" class="badge" hidden></span>
+    </div>
+    <div id="viewport" class="viewport"><svg id="svg" xmlns="http://www.w3.org/2000/svg"></svg></div>
+    <div id="status" class="status"></div>
+    <section id="portList" class="portlist" aria-label="Port list">
+      <div class="pl-head">
+        <b id="plTitle">Port List</b>
+        <span id="plCount" class="pl-count"></span>
+        <span class="grow"></span>
+        <span id="plCap" class="pl-cap" title="Port capacity for this bit depth and frame rate"></span>
+        <select id="plCard" title="Processor / card whose ports are listed (and drawn on)" aria-label="Card"></select>
+      </div>
+      <div id="portTiles" class="pl-tiles" role="listbox" aria-label="Ports"></div>
+    </section>
+  </section>
+
+  <aside class="panel right">
+    <section class="card" data-card="screen" id="cardScreen">
+      <div class="card-h"><button class="card-t" aria-expanded="true"><span class="chev"></span>Screen</button></div>
+      <div class="card-b">
+        <div class="grid2">
+          <div class="span2 lbl-row"><label for="lctName">Screen name</label><button type="button" class="itip" id="lctType" aria-label="More info" title="" data-itip=""></button></div>
+          <input class="span2" id="lctName" type="text" title="NovaLCT keeps the first 10 characters" aria-label="Screen name">
+          <label>Canvas W<input id="canvasW" type="number" min="1"></label>
+          <label>Canvas H<input id="canvasH" type="number" min="1"></label>
+          <div class="span2"><button id="btnMatchScreen" class="wide">Match Screen</button><div class="hint" id="matchNote" hidden></div></div>
+        </div>
+        <details id="outGroup" class="out-group" open>
+          <summary title="Bit depth, frame rate, receiving card and low latency: they set the port capacity">Output <span id="outSum" class="card-sub"></span></summary>
+          <div class="grid2">
+            <label>Bit depth<select id="bitDepth"><option>8</option><option>10</option><option>12</option></select></label>
+            <label>Frame rate (fps)<input id="refresh" type="number" min="1" max="120" step="0.001"></label>
+            <label class="span2">Receiving card<input id="rxCard" list="rxCards" placeholder="e.g. A8s Plus"></label>
+            <label class="chk span2"><input type="checkbox" id="lowLatency"> Low latency</label>
+          </div>
+        </details>
+        <datalist id="rxCards"><option value="A5s Plus"><option value="A7s Plus"><option value="A8s Plus"><option value="A10s Plus"><option value="MRV328"><option value="MRV336"></datalist>
+        <div class="cap">Port capacity <b id="capOut"></b> px<button type="button" class="itip" id="capNote" aria-label="More info" hidden></button></div>
+      </div>
+    </section>
+
+    <section class="card" data-card="card" id="cardSend">
+      <div class="card-h"><button class="card-t" aria-expanded="true"><span class="chev"></span><span id="cardHead">Sending card</span> <span id="cardName" class="card-sub"></span></button></div>
+      <div class="card-b">
+        <div id="cardProc" class="card-proc"></div>
+        <div id="cardInfo" class="hint"></div>
+        <label id="cardPortsWrap" class="blk" title="Ports on this card of a “Pick a model” processor (not below the highest port wired)">Ports (1–40)<input id="cardPorts" type="number" min="1" max="40"></label>
+        <div class="row"><button id="btnEditProc" class="wide" title="Model, output cards and cascade order of this card’s processor">Edit in Processors</button></div>
+      </div>
+    </section>
+
+    <section class="card" data-card="section" id="screenEditor">
+      <div class="card-h"><button class="card-t" aria-expanded="true"><span class="chev"></span><span id="secHead">Cabinets</span></button></div>
+      <div class="card-b">
+      <div id="screenEmpty" class="hint">Select cabinets on the canvas, or add some with + Cabinets.</div>
+      <div id="screenForm" hidden>
+        <div class="grid2">
+          <label class="span2" id="sNameWrap" title="Ctrl+G groups the selected cabinets; Ctrl+Shift+G ungroups them">Group name<input id="sName" type="text"></label>
+          <label>X<input id="sX" type="number" min="0"></label>
+          <label>Y<input id="sY" type="number" min="0"></label>
+          <label>Columns<input id="sCols" type="number" min="1" max="255"></label>
+          <label>Rows<input id="sRows" type="number" min="1" max="255"></label>
+          <label class="span2">Cabinet<select id="sPanel"></select></label>
+        </div>
+        <div class="row" style="align-items:center"><span class="hint" style="flex:none;margin:0">Rotation</span>
+          <div class="seg" id="rotSeg" role="group" aria-label="Rotation" style="margin:0"><button data-rot="0">0°</button><button data-rot="90">90°</button><button data-rot="180">180°</button><button data-rot="270">270°</button></div>
+          <button type="button" class="itip" id="rotNote" aria-label="More info" title="" data-itip="">ⓘ</button>
+        </div>
+        <div class="dims" id="sDims"></div>
+
+        <h3>Wiring</h3>
+        <div id="autoOpts">
+          <div class="grid2">
+            <label>Start corner<select id="wCorner">
+              <option value="TL">Top-left</option><option value="TR">Top-right</option>
+              <option value="BL">Bottom-left</option><option value="BR">Bottom-right</option></select></label>
+            <label>Direction<select id="wDir"><option value="V">Columns (vertical)</option><option value="H">Rows (horizontal)</option></select></label>
+            <label>Pattern<select id="wPattern"><option value="serpentine">Serpentine</option><option value="zigzag">Zig-zag (return)</option></select></label>
+            <label>Port split<select id="wSplit">
+              <option value="lines">Organized (whole lines)</option>
+              <option value="fill">Max capacity</option></select></label>
+            <label>Max cabinets/port<input id="wMax" type="number" min="0" placeholder="no limit"></label>
+            <label>Start card<select id="wSender"></select></label>
+            <label>Start port<input id="wPort" type="number" min="1"></label>
+          </div>
+          <button id="btnNextFree" class="wide">Use next free port</button>
+        </div>
+        <div id="manualOpts" hidden>
+          <div class="pattern-head">
+            <span>Fill selection<button type="button" class="itip" aria-label="More info" title="Click cabinets to wire them onto the current port, then use the arrow keys to keep going (cabinets already on a port are left alone). Drag to select cabinets and pick a pattern to fill them — patterns overwrite. Ctrl-click / Ctrl-drag adds to the selection; Delete unwires the selection. Alt-click toggles a blank. Shift-drag moves the cabinets. Self-drawn cabinets: drag one to move its whole port (or the selection it's in). Hold Space and drag to pan. Tab / Shift+Tab: next / previous port. (All on the ? sheet.)" data-itip="Click cabinets to wire them onto the current port, then use the arrow keys to keep going (cabinets already on a port are left alone). Drag to select cabinets and pick a pattern to fill them — patterns overwrite. Ctrl-click / Ctrl-drag adds to the selection; Delete unwires the selection. Alt-click toggles a blank. Shift-drag moves the cabinets. Self-drawn cabinets: drag one to move its whole port (or the selection it's in). Hold Space and drag to pan. Tab / Shift+Tab: next / previous port. (All on the ? sheet.)">ⓘ</button></span>
+            <select id="mSplit" title="How the selection is cut into ports">
+              <option value="lines">Organized (whole lines)</option>
+              <option value="fill">Max capacity</option>
+            </select>
+          </div>
+          <div id="patternPad" class="pattern-pad"></div>
+          <div class="hint" id="selInfo"></div>
+          <div class="grid2">
+            <label><span id="mSenderLbl">Sending card</span><select id="mSender"></select></label>
+            <label>Port<input id="mPort" type="number" min="1"></label>
+          </div>
+          <div class="row">
+            <button id="btnClearPort">Clear port</button>
+            <button id="btnReverse">Reverse port</button>
+          </div>
+          <div class="row"><button id="btnToAuto" class="wide">Re-seed from auto</button></div>
+        </div>
+
+        <div class="row" style="align-items:center"><button id="btnHoleMode" class="wide" title="Set blank (B)">Set blank</button><button type="button" class="itip" aria-label="More info" title="Blanks: Alt-click a position (or turn on Set blank and click / drag) to mark it as having no cabinet. Click a blank again to put the cabinet back. Shortcut: B — with cabinets selected it blanks them, otherwise it turns Set blank on / off." data-itip="Blanks: Alt-click a position (or turn on Set blank and click / drag) to mark it as having no cabinet. Click a blank again to put the cabinet back. Shortcut: B — with cabinets selected it blanks them, otherwise it turns Set blank on / off.">ⓘ</button></div>
+
+        <div class="row danger-row" style="align-items:center">
+          <button id="btnDelScreen" class="danger" title="Delete these cabinets (Del; Ctrl+Z brings them back)">Delete</button><button type="button" class="itip" aria-label="More info" title="Move to another screen or processor, Duplicate, Clear all ports, Group / Ungroup: right-click the cabinets." data-itip="Move to another screen or processor, Duplicate, Clear all ports, Group / Ungroup: right-click the cabinets.">ⓘ</button>
+        </div>
+      </div>
+      </div>
+    </section>
+
+    <section class="card" data-card="panelxy" id="cardPanelXY" hidden>
+      <div class="card-h"><button class="card-t" aria-expanded="true"><span class="chev"></span>Cabinet <span id="pxTitle" class="card-sub"></span></button></div>
+      <div class="card-b">
+        <div class="grid2"><label>X<input id="pxX" type="number" min="0"></label><label>Y<input id="pxY" type="number" min="0"></label></div>
+        <div class="hint">Size <span id="pxSize"></span> · canvas pixels, top-left corner</div>
+      </div>
+    </section>
+
+    <section class="card" data-card="panels" id="cardPanels">
+      <div class="card-h"><button class="card-t" aria-expanded="true"><span class="chev"></span>Cabinet types</button><button type="button" class="itip" aria-label="More info" title="Click a cabinet type to use it for Self draw; edit the selected one in place. Opens by itself in Self draw." data-itip="Click a cabinet type to use it for Self draw; edit the selected one in place. Opens by itself in Self draw.">ⓘ</button><button class="mini" id="btnAddPanel" title="Add a cabinet type">+</button></div>
+      <div class="card-b">
+        <input id="panelSearch" type="search" placeholder="Search cabinet types…" aria-label="Search cabinet types">
+        <div id="panelList" class="plib"></div>
+      </div>
+    </section>
+  </aside>
+</main>
+
+<div id="toast" class="toast" hidden></div>
+<!-- An unexpected error caught (app-alpha.js): offer a report; never takes focus -->
+<div id="errNote" class="toast err-note" role="status" aria-live="polite" hidden><span id="errNoteText">Something went wrong</span><button id="errNoteGo" class="mini" title="Help ▸ Report a Problem with this error at the top">Make a report</button><button id="errNoteNo" class="mini" title="Hide this; it’s still in the log">Dismiss</button></div>
+<div id="ctxMenu" class="ctx" role="menu" hidden></div>
+
+<!-- Send receiving-card file (app-rcvguard.js): the file guard -->
+<input type="file" id="rcvFile" accept=".rcfgx,.ncp,.bin" hidden>
+<div id="rcvDlg" class="logdlg rcv-dlg" role="dialog" aria-label="Send receiving-card file" hidden>
+  <div class="logbox keysbox rcv-box">
+    <div class="loghead"><b id="rcvTitle">Send receiving-card file</b><span class="grow"></span><button id="rcvClose" title="Close">×</button></div>
+    <div id="rcvBody" class="keysbody"></div>
+    <div id="rcvFoot" class="rcv-foot"></div>
+  </div>
+</div>
+
+<!-- Processors ▸ Hardware ▸ Service (app-service.js): restart / factory reset, always asked first -->
+<div id="svcDlg" class="logdlg rcv-dlg" role="dialog" aria-label="Service" hidden>
+  <div class="logbox keysbox svc-box">
+    <div class="loghead"><b id="svcTitle">Service</b><span class="grow"></span><button id="svcClose" title="Close">×</button></div>
+    <div id="svcBody" class="keysbody"></div>
+    <div id="svcFoot" class="rcv-foot"></div>
+  </div>
+</div>
+
+<!-- Processors ▸ Hardware ▸ H login… (app-online.js): the H's web login, kept by the helper on this computer only -->
+<div id="hlDlg" class="logdlg" role="dialog" aria-label="H login" hidden>
+  <div class="logbox keysbox hl-box">
+    <div class="loghead"><b id="hlTitle">H login</b><span class="grow"></span><button id="hlClose" title="Close">×</button></div>
+    <form id="hlForm" class="keysbody hl-form" autocomplete="off">
+      <p id="hlHint" class="hint"></p>
+      <label>User <input id="hlUser" type="text" value="admin" autocomplete="off" spellcheck="false"></label>
+      <label>Password <input id="hlPass" type="password" autocomplete="off"></label>
+      <p id="hlMsg" class="hint" role="status"></p>
+      <div class="rcv-foot"><button type="button" id="hlForget" title="Remove the saved login for this H from this computer">Forget</button><span class="grow"></span><button type="submit" id="hlGo" class="primary">Log in</button></div>
+    </form>
+  </div>
+</div>
+
+<div id="cmpDlg" class="logdlg" role="dialog" aria-label="Compare" hidden>
+  <div class="logbox keysbox">
+    <div class="loghead"><b id="cmpTitle">Compare</b><span class="grow"></span><button id="cmpClose" title="Close">×</button></div>
+    <div id="cmpBody" class="keysbody"></div>
+  </div>
+</div>
+
+<div id="keysDlg" class="logdlg keysdlg" role="dialog" aria-label="Keyboard shortcuts" hidden>
+  <div class="logbox keysbox">
+    <div class="loghead"><b>Keyboard shortcuts</b><span class="grow"></span><button id="keysClose" title="Close (Esc)">×</button></div>
+    <div id="keysBody" class="keysbody"></div>
+  </div>
+</div>
+
+<!-- Help ▸ User Manual / About Open Nova (app-menubar.js) -->
+<div id="helpDlg" class="logdlg keysdlg" role="dialog" aria-label="Help" hidden>
+  <div class="logbox keysbox">
+    <div class="loghead"><b id="helpTitle">Help</b><span class="grow"></span><button id="helpClose" title="Close (Esc)">×</button></div>
+    <div id="helpBody" class="keysbody"></div>
+  </div>
+</div>
+
+<!-- The alpha (app-alpha.js): intro, Allow sending, Report a problem -->
+<div id="alDlg" class="logdlg" role="dialog" aria-label="Open Nova alpha" hidden>
+  <div class="logbox keysbox al-box">
+    <div class="loghead"><b id="alTitle">Open Nova</b><span class="grow"></span><button id="alClose" title="Close (Esc)">×</button></div>
+    <div id="alBody" class="keysbody"></div>
+    <div id="alFoot" class="rcv-foot"></div>
+  </div>
+</div>
+
+<div id="logDlg" class="logdlg" role="dialog" aria-label="Logs" hidden>
+  <div class="logbox">
+    <div class="loghead">
+      <b>Logs</b>
+      <label>Show<select id="logSource"><option value="server">Server log (all computers)</option><option value="local">This browser</option></select></label>
+      <label>Lines<select id="logLines"><option>250</option><option selected>500</option><option>1000</option><option>5000</option><option>20000</option></select></label>
+      <label>From<select id="logSpan"><option value="0">All</option><option value="5">Last 5 min</option><option value="15">Last 15 min</option><option value="60">Last hour</option><option value="1440">Last 24 h</option></select></label>
+      <input id="logSearch" type="search" placeholder="Search…">
+      <span class="grow"></span>
+      <button id="logClose" title="Close">×</button>
+    </div>
+    <div class="loghead">
+      <label class="chk"><input type="checkbox" id="logAuto"> Auto-refresh</label>
+      <label class="chk"><input type="checkbox" id="logWrap"> Wrap</label>
+      <label class="chk" title="Log every function call with its arguments (skips the ones that run on every redraw). Stays on after a reload until you turn it off."><input type="checkbox" id="logTrace"> Trace every function call</label>
+      <span class="grow"></span>
+      <button id="logRefresh">Refresh</button>
+      <button id="logCopy">Copy</button>
+      <button id="logDownload">Download</button>
+      <button id="logFolder" title="Open the log folder (on the computer running the server)">Open folder</button>
+      <button id="logClear" class="danger">Clear</button>
+    </div>
+    <div id="logMeta" class="hint"></div>
+    <pre id="logText" class="logtext"></pre>
+  </div>
+</div>
+
+<!-- Plain scripts (not ES modules) so the app also runs from a double-clicked index.html.
+     Core first, main.js last; each js/ file says at its top what it owns. The files share
+     one scope, so a name may be defined in only one file: tests/check-modules.html checks. -->
+<script src="scr.js"></script>
+<script src="scfg.js"></script>
+<script src="js/app-core.js"></script>
+<script src="js/app-log.js"></script>
+<script src="js/app-tips.js"></script>
+<script src="js/app-sync.js"></script>
+<script src="js/app-capacity.js"></script>
+<script src="js/app-geometry.js"></script>
+<script src="js/app-autowire.js"></script>
+<script src="js/app-scr-io.js"></script>
+<script src="js/app-sections.js"></script>
+<script src="js/app-processors.js"></script>
+<script src="js/app-manual-wiring.js"></script>
+<script src="js/app-render.js"></script>
+<script src="js/app-tree.js"></script>
+<script src="js/app-portlist.js"></script>
+<script src="js/app-selfdraw.js"></script>
+<script src="js/app-canvas-input.js"></script>
+<script src="js/app-context-menu.js"></script>
+<script src="js/app-forms.js"></script>
+<script src="js/app-screenfit.js"></script>
+<script src="js/app-backup.js"></script>
+<script src="js/app-redundancy.js"></script>
+<script src="js/app-presets.js"></script>
+<script src="js/app-maintain.js"></script>
+<script src="js/app-dashboard.js"></script>
+<script src="js/app-interchange.js"></script>
+<script src="js/app-schedule.js"></script>
+<script src="js/app-scfg.js"></script>
+<script src="js/app-quickadd.js"></script>
+<script src="js/app-arrange.js"></script>
+<script src="hwsend.js"></script>
+<script src="unicosend.js"></script>
+<script src="js/drv-core.js"></script>
+<script src="js/drv-unico.js"></script>
+<script src="js/drv-lct.js"></script>
+<script src="js/drv-coex.js"></script>
+<script src="js/drv-offline.js"></script>
+<script src="js/app-devices.js"></script>
+<script src="js/app-hardware.js"></script>
+<script src="js/app-adopt.js"></script>
+<script src="js/app-online.js"></script>
+<script src="js/app-network.js"></script>
+<script src="js/app-rcvguard.js"></script>
+<script src="js/app-library.js"></script>
+<script src="js/app-support.js"></script>
+<script src="js/app-service.js"></script>
+<script src="js/app-diag.js"></script>
+<script src="js/app-readback.js"></script>
+<script src="js/app-save.js"></script>
+<script src="js/app-display.js"></script>
+<script src="js/app-health.js"></script>
+<script src="js/app-heat.js"></script>
+<script src="js/app-alarms.js"></script>
+<script src="js/app-watch.js"></script>
+<script src="js/app-preshow.js"></script>
+<script src="js/app-screen.js"></script>
+<script src="js/app-correction.js"></script>
+<script src="js/app-pipeline.js"></script>
+<script src="js/app-controls.js"></script>
+<script src="js/app-preview.js"></script>
+<script src="js/app-navigator.js"></script>
+<script src="js/app-menubar.js"></script>
+<script src="js/app-lut3d.js"></script>
+<script src="js/app-alpha.js"></script>
+<script src="js/app-vendor.js"></script>
+<script src="js/app-shell.js"></script>
+<script src="js/main.js"></script>
+</body>
+</html>

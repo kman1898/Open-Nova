@@ -1,0 +1,195 @@
+/* looks/pro-tiles.css - the pro look, tiles area (docs/DESIGN_SYSTEM.md). Loaded after looks/pro.css, pro look only.
+   The header drawn as the gallery's pipeline strip (app/out/pro/pro.css .pipe / .grp / .tile): every group in a frame with a
+   caps title (WORKFLOW = the module tabs, OVERRIDE, SYSTEM), every tile = caps label, pictogram, value, lit bar; top-lit
+   gradient, 1 px inner highlight, black outline; the open tab blue with a glow. The tabs' pictograms are drawn from the
+   project and the processors (app-pipeline.js .tpic, classes .pk-*). Overrides the header rules of looks/pro.css (the full
+   tiles only: header.bar:not(.compact); the one-line compact tiles of a phone / short window stay pro.css's).
+   Widths: one row from 1280 px (tiles sized from the header's width, cqw); narrower, the action groups wrap under the tabs
+   and both rows fill the width (header.bar.wrap, fitPipe). */
+
+:root[data-look="pro"] header.bar { container-type: inline-size; gap: 6px 8px; padding: 6px 8px 7px; }
+:root[data-look="pro"] header.bar.compact { padding: 4px 8px; }
+
+/* ------------------------------------------------------------------ group frames + caps titles */
+:root[data-look="pro"] header.bar:not(.compact) > .modtabs, :root[data-look="pro"] .pipe > .pg {
+  position: relative; border: 1px solid var(--edge); border-radius: var(--r-panel); background: var(--grp-bg);
+  box-shadow: inset 0 0 0 1px var(--hair-2), 0 1px 0 rgba(255, 255, 255, .035); }
+:root[data-look="pro"] header.bar:not(.compact) > .modtabs { flex: 0 1 auto; min-width: 0; display: flex; align-items: stretch; gap: 4px; padding: 20px 4px 4px; overflow: hidden; }
+:root[data-look="pro"] header.bar:not(.compact) > .modtabs::before, :root[data-look="pro"] .pipe > .pg > h6 {
+  height: 16px; display: flex; align-items: center; padding: 0 8px; margin: 0; border-bottom: 1px solid var(--edge); border-radius: var(--r-panel) var(--r-panel) 0 0;
+  background: var(--grp-h); color: var(--muted); font: 600 calc(10px * var(--fs, 1))/1 var(--f-cond); letter-spacing: .16em; text-transform: uppercase; white-space: nowrap; }
+:root[data-look="pro"] header.bar:not(.compact) > .modtabs::before { content: 'Workflow'; position: absolute; left: 0; right: 0; top: 0; }
+:root[data-look="pro"] .pipe > .pg { flex: 0 0 auto; overflow: hidden; }
+:root[data-look="pro"] .pipe .pg-tiles { gap: 4px; padding: 4px; }
+:root[data-look="pro"][data-theme="light"] header.bar:not(.compact) > .modtabs, :root[data-look="pro"][data-theme="light"] .pipe > .pg { box-shadow: inset 0 0 0 1px rgba(255, 255, 255, .6), 0 1px 0 rgba(255, 255, 255, .7); }
+
+/* the action row: Override, then (pushed right, as the gallery's gap before SYSTEM) System and Export */
+:root[data-look="pro"] #pipe { flex: 1 1 auto; justify-content: flex-start; gap: 6px 8px; }
+:root[data-look="pro"] #pipe > .pg[data-pg="system"] { margin-left: auto; }
+
+/* ------------------------------------------------------------------ the tiles (tabs and actions alike) */
+:root[data-look="pro"] header.bar:not(.compact) .modtabs button, :root[data-look="pro"] header.bar:not(.compact) #pipe .tile {
+  position: relative; display: flex; flex-direction: column; align-items: stretch; justify-content: flex-start; gap: 0;
+  min-height: calc(44px + 2em); height: auto; padding: 0 3px 8px; margin: 0; overflow: hidden; text-align: center;
+  border: 1px solid var(--edge); border-radius: var(--r-tile); background: var(--g-tile); color: var(--tile-ink);
+  box-shadow: inset 0 1px 0 var(--hi), 0 1px 2px rgba(0, 0, 0, .55); transform: none; transition: background .12s, box-shadow .12s;
+  font: 600 calc(10px * var(--fs, 1))/1 var(--f-cond); letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; }
+:root[data-look="pro"] header.bar .modtabs button[hidden] { display: none; }
+/* widths: tabs from the header's width (6.8 % of it, 66 … 124 px; a long name makes its tile wider), actions 62 … 92 px */
+:root[data-look="pro"] header.bar:not(.compact) .modtabs button { flex: 0 1 auto; width: clamp(66px, 6.8cqw, 124px); min-width: max-content; max-width: none; }
+:root[data-look="pro"] header.bar:not(.compact) #pipe .tile { flex: 0 0 auto; width: clamp(62px, 4.6cqw, 92px); min-width: 0; max-width: none; }
+:root[data-look="pro"] header.bar:not(.compact) .modtabs button:hover, :root[data-look="pro"] header.bar:not(.compact) #pipe .tile:hover:not(:disabled) {
+  background: var(--g-tile-hov); color: var(--tile-ink); border-color: var(--edge); transform: none;
+  box-shadow: inset 0 1px 0 var(--hi), 0 1px 2px rgba(0, 0, 0, .55), 0 0 0 1px rgba(91, 155, 255, .3); }
+:root[data-look="pro"][data-theme="light"] header.bar:not(.compact) .modtabs button, :root[data-look="pro"][data-theme="light"] header.bar:not(.compact) #pipe .tile { box-shadow: inset 0 1px 0 #fff, 0 1px 2px rgba(20, 30, 50, .18); }
+:root[data-look="pro"][data-theme="light"] header.bar:not(.compact) .modtabs button:hover, :root[data-look="pro"][data-theme="light"] header.bar:not(.compact) #pipe .tile:hover:not(:disabled) {
+  box-shadow: inset 0 1px 0 #fff, 0 1px 2px rgba(20, 30, 50, .18), 0 0 0 1px rgba(31, 111, 229, .35); }
+
+/* anatomy of a tab tile: label (the tab's name), pictogram (.tpic; the line icon only where no pictogram is drawn), value
+   (the status line), lit bar (::after) */
+:root[data-look="pro"] header.bar:not(.compact) .modtabs button > span:not(.tab-st):not(.tpic) { order: 0; padding: 5px 3px 0; max-width: 100%; overflow: hidden; text-overflow: clip; color: inherit; }
+:root[data-look="pro"] header.bar:not(.compact) .modtabs button:has(> .tpic) > svg { display: none; }
+:root[data-look="pro"] header.bar:not(.compact) .modtabs button > svg { order: 1; flex: 1 1 auto; align-self: center; width: 26px; height: 22px; margin: 3px 0; }
+:root[data-look="pro"] header.bar .modtabs .tpic { display: none; }
+:root[data-look="pro"] header.bar:not(.compact) .modtabs .tpic { order: 1; flex: 1 1 auto; display: flex; align-items: center; justify-content: center; min-height: 26px; padding: 0; }
+:root[data-look="pro"] header.bar:not(.compact) .modtabs .tpic svg { display: block; flex: none; max-width: 100%; fill: none; stroke: none; stroke-width: 1; filter: none; overflow: visible; }
+:root[data-look="pro"] header.bar:not(.compact) .modtabs .tab-st, :root[data-look="pro"] header.bar:not(.compact) .modtabs .tab-st[hidden] {
+  order: 2; display: block; width: 0; min-width: 100%; min-height: 13px; padding: 0 2px 3px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font: 600 calc(10px * var(--fs, 1))/1 var(--f-cond); letter-spacing: .05em; text-transform: uppercase; color: var(--ink); }
+:root[data-look="pro"] header.bar:not(.compact) .modtabs .tab-st[hidden] { visibility: hidden; }
+:root[data-look="pro"] header.bar:not(.compact) .modtabs .tab-st::before { content: none; }
+:root[data-look="pro"] header.bar:not(.compact) .modtabs .tab-st.ok { color: var(--ink); }
+:root[data-look="pro"] header.bar:not(.compact) .modtabs .tab-st.dim { color: var(--ink-4); }
+:root[data-look="pro"] header.bar:not(.compact) .modtabs .tab-st.warn { color: var(--warn-ink); }
+:root[data-look="pro"] header.bar:not(.compact) .modtabs .tab-st.bad { color: var(--bad-ink); font-weight: 700; }
+/* the lit bar: status colour; dark = nothing to report; white on the open tab when there's no status */
+:root[data-look="pro"] header.bar:not(.compact) .modtabs button::after { left: 16px; right: 16px; bottom: 4px; height: 3px; border-radius: var(--r-xs); }
+:root[data-look="pro"] header.bar .modtabs button.on::after { background: #eef1f5; box-shadow: 0 0 6px rgba(238, 241, 245, .55); }
+:root[data-look="pro"] header.bar .modtabs button.on[data-st="ok"]::after { background: var(--ok); box-shadow: 0 0 6px var(--ok-glow); }
+:root[data-look="pro"] header.bar .modtabs button.on[data-st="warn"]::after { background: var(--warn); box-shadow: 0 0 6px var(--warn-glow); }
+:root[data-look="pro"] header.bar .modtabs button.on[data-st="bad"]::after { background: var(--danger); box-shadow: 0 0 8px var(--bad-glow); }
+:root[data-look="pro"][data-theme="light"] header.bar .modtabs button.on::after { background: var(--acc); box-shadow: 0 0 6px var(--acc-glow); }
+/* an error (Monitor): the gallery's red tile */
+:root[data-look="pro"] header.bar .modtabs button[data-st="bad"]:not(.on) { background: var(--g-bad-tile); box-shadow: inset 0 1px 0 rgba(255, 170, 170, .16), 0 0 0 1px #b8363a, 0 0 10px rgba(240, 72, 77, .3); }
+:root[data-look="pro"] header.bar .modtabs button[data-st="bad"]:not(.on) > span:not(.tab-st) { color: #ffb3b5; }
+:root[data-look="pro"][data-theme="light"] header.bar .modtabs button[data-st="bad"]:not(.on) > span:not(.tab-st) { color: var(--bad-ink); }
+/* the open tab: the gallery's selected tile (blue, lit outline, glow) */
+:root[data-look="pro"] header.bar .modtabs button.on, :root[data-look="pro"] header.bar .modtabs button.on:hover {
+  background: var(--g-acc-tile); color: #fff; border-color: var(--edge); transform: none;
+  box-shadow: inset 0 1px 0 var(--hi-acc), 0 0 0 1px var(--acc), 0 0 12px var(--acc-glow); }
+:root[data-look="pro"] header.bar:not(.compact) .modtabs button.on .tab-st:not(.bad):not(.warn) { color: #fff; }
+:root[data-look="pro"][data-theme="light"] header.bar .modtabs button.on, :root[data-look="pro"][data-theme="light"] header.bar .modtabs button.on:hover { color: #0f3f8f; }
+:root[data-look="pro"][data-theme="light"] header.bar:not(.compact) .modtabs button.on .tab-st:not(.bad):not(.warn) { color: #0f3f8f; }
+
+/* anatomy of an action tile (Override / System): the gallery's sizes */
+:root[data-look="pro"] header.bar:not(.compact) #pipe .tile > .t { padding: 5px 3px 0; overflow: hidden; color: var(--tile-ink); }
+:root[data-look="pro"] header.bar:not(.compact) #pipe .tile > .t .car { font-size: 8px; margin-left: 2px; color: var(--muted); }
+:root[data-look="pro"] header.bar:not(.compact) #pipe #btnTestHdr > .t { padding: 5px 1px 0; letter-spacing: .04em; }   /* "Pattern ▾" fits the 1280 px tile (panels pass) */
+:root[data-look="pro"] header.bar:not(.compact) #pipe .tile > .pic { flex: 1 1 auto; min-height: 26px; padding: 0; }
+:root[data-look="pro"] header.bar:not(.compact) #pipe .tile > .pic svg { height: 26px; width: auto; max-width: 100%; }
+:root[data-look="pro"] header.bar:not(.compact) #pipe .tile > .v, :root[data-look="pro"] header.bar:not(.compact) #pipe .tile > .v:empty {
+  min-height: 13px; padding: 0 2px 3px; overflow: hidden; text-overflow: ellipsis; font: 600 calc(10px * var(--fs, 1))/1 var(--f-cond); letter-spacing: .05em; }
+:root[data-look="pro"] header.bar:not(.compact) #pipe .tile > .led { position: absolute; left: 16px; right: 16px; bottom: 4px; height: 3px; margin: 0; }
+:root[data-look="pro"] #btnFreeze > .pic { color: #eef1f5; }
+:root[data-look="pro"][data-theme="light"] #btnFreeze > .pic { color: var(--ink); }
+:root[data-look="pro"] #pipe .tile.warn, :root[data-look="pro"] #pipe #btnSaveHw.warn { background: var(--g-warn-tile); }
+
+/* Export: a tile of its own beside System (label, file-out pictogram), level with the tiles in the frames */
+:root[data-look="pro"] header.bar:not(.compact) #pipe > #btnExport { flex: 0 0 auto; align-self: stretch; display: flex; flex-direction: column-reverse; align-items: center; justify-content: flex-end;
+  width: clamp(62px, 4.6cqw, 92px); min-height: 0; margin: 21px 0 5px; padding: 5px 3px 8px; border: 1px solid var(--edge); border-radius: var(--r-tile);
+  background: var(--g-tile); color: var(--tile-ink); box-shadow: inset 0 1px 0 var(--hi), 0 1px 2px rgba(0, 0, 0, .55);
+  font: 600 calc(10px * var(--fs, 1))/1 var(--f-cond); letter-spacing: .07em; text-transform: uppercase; white-space: nowrap; }
+:root[data-look="pro"] header.bar:not(.compact) #pipe > #btnExport:hover { background: var(--g-tile-hov); box-shadow: inset 0 1px 0 var(--hi), 0 1px 2px rgba(0, 0, 0, .55), 0 0 0 1px rgba(91, 155, 255, .3); }
+:root[data-look="pro"] header.bar:not(.compact) #pipe > #btnExport::before { content: ''; display: block; flex: 1 1 0; width: 30px; height: auto; min-height: 0; margin: 2px 0 11px; -webkit-mask: none; mask: none;
+  background: center / 30px 26px no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 26'%3E%3Cpath d='M3.5 1.5h10l4 4v19h-14z' fill='%2314161a' stroke='%239aa3ae' stroke-width='1.2' stroke-linejoin='round'/%3E%3Cpath d='M13.5 1.5v4h4' fill='none' stroke='%239aa3ae' stroke-width='1.2'/%3E%3Cpath d='M6 10h7M6 13h7M6 16h5' stroke='%235a626e'/%3E%3Cpath d='M12 19.5h14M22 15.5l4 4-4 4' fill='none' stroke='%238ab9ff' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+:root[data-look="pro"][data-theme="light"] header.bar:not(.compact) #pipe > #btnExport::before {
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 30 26'%3E%3Cpath d='M3.5 1.5h10l4 4v19h-14z' fill='%23fff' stroke='%23535c69' stroke-width='1.2' stroke-linejoin='round'/%3E%3Cpath d='M13.5 1.5v4h4' fill='none' stroke='%23535c69' stroke-width='1.2'/%3E%3Cpath d='M6 10h7M6 13h7M6 16h5' stroke='%23aeb5bf'/%3E%3Cpath d='M12 19.5h14M22 15.5l4 4-4 4' fill='none' stroke='%231f6fe5' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E"); }
+:root[data-look="pro"][data-theme="light"] header.bar:not(.compact) #pipe > #btnExport { box-shadow: inset 0 1px 0 #fff, 0 1px 2px rgba(20, 30, 50, .18); }
+
+/* ------------------------------------------------------------------ wrapped (the action groups under the tabs): both rows fill */
+:root[data-look="pro"] header.bar.wrap > .modtabs { flex: 1 1 100%; }
+:root[data-look="pro"] header.bar.wrap .modtabs button { flex: 1 1 0; width: auto; min-width: max-content; }
+:root[data-look="pro"] header.bar.wrap #pipe { flex: 1 1 100%; }
+:root[data-look="pro"] header.bar.wrap #pipe > .pg { flex: 1 1 auto; }
+:root[data-look="pro"] header.bar.wrap #pipe > .pg[data-pg="system"] { margin-left: 0; }
+:root[data-look="pro"] header.bar.wrap #pipe .tile { flex: 1 1 0; width: auto; }
+
+/* ------------------------------------------------------------------ pictograms (app-pipeline.js; the gallery's colours) */
+:root[data-look="pro"] .tpic .pk-well { fill: #0a0b0d; stroke: #3a3f47; }
+:root[data-look="pro"] .tpic .pk-wallbg { fill: #08090b; }
+:root[data-look="pro"] .tpic .pk-edge { fill: none; stroke: #000; }
+:root[data-look="pro"] .tpic .pk-grid { fill: none; stroke: #1c2026; }
+:root[data-look="pro"] .tpic .pk-dim { opacity: .45; }
+/* Device: the rear panel */
+:root[data-look="pro"] .tpic .pk-chassis { fill: #0c0e11; stroke: #5a626e; }
+:root[data-look="pro"] .tpic .pk-bezel { fill: none; stroke: #1d2127; }
+:root[data-look="pro"] .tpic .pk-lcd { fill: #14243f; stroke: #5d97f5; stroke-width: .8; }
+:root[data-look="pro"] .tpic .pk-wave { fill: none; stroke: #8ab9ff; stroke-width: .8; }
+:root[data-look="pro"] .tpic .pk-groove { stroke: #272b32; }
+:root[data-look="pro"] .tpic .pk-ok { fill: #3fd07a; }
+:root[data-look="pro"] .tpic .pk-bad { fill: #f0484d; }
+:root[data-look="pro"] .tpic .pk-bk { fill: #8ab9ff; }
+:root[data-look="pro"] .tpic .pk-off { fill: #353a42; }
+/* Layout / Correction / Monitor: the mini wall */
+:root[data-look="pro"] .tpic .pk-cab { fill-opacity: .85; }
+:root[data-look="pro"] .tpic .pk-free { fill: #2a2e35; }
+:root[data-look="pro"] .tpic .pk-cell { fill: #181b20; }
+:root[data-look="pro"] .tpic .pk-con { fill: #3fd07a; fill-opacity: .75; }
+:root[data-look="pro"] .tpic .pk-coff { fill: #4a515c; }
+:root[data-look="pro"] .tpic .pk-cmix { fill: #f2b23e; }
+:root[data-look="pro"] .tpic .pk-cbad { fill: #f0484d; }
+/* Screen Settings: gamma */
+:root[data-look="pro"] .tpic .pk-gfill { fill: rgba(238, 241, 245, .1); }
+:root[data-look="pro"] .tpic .pk-level { fill: none; stroke: #8ab9ff; stroke-width: .8; stroke-dasharray: 2 1.5; }
+:root[data-look="pro"] .tpic .pk-curve { fill: none; stroke: #eef1f5; stroke-width: 1.7; stroke-linecap: round; stroke-linejoin: round; }
+/* Backup */
+:root[data-look="pro"] .tpic .pk-prim { fill: #1a2a44; stroke: #5d97f5; }
+:root[data-look="pro"] .tpic .pk-sec { fill: #14161a; stroke: #5a626e; }
+:root[data-look="pro"] .tpic .pk-wire { fill: none; stroke: #c3c9d1; stroke-width: 1.2; }
+:root[data-look="pro"] .tpic .pk-box { fill: #0a0b0d; stroke: #5a626e; }
+:root[data-look="pro"] .tpic .pk-check { fill: none; stroke: #3fd07a; stroke-width: 1.8; stroke-linecap: round; stroke-linejoin: round; }
+:root[data-look="pro"] .tpic .pk-check.warn { stroke: #f2b23e; }
+/* Preset */
+:root[data-look="pro"] .tpic .pk-plate2 { fill: #1b1e23; stroke: #3a3f47; }
+:root[data-look="pro"] .tpic .pk-plate { fill: #23262b; stroke: #5a626e; }
+:root[data-look="pro"] .tpic .pk-plate.on { fill: #24509a; stroke: #8ab9ff; }
+:root[data-look="pro"] .tpic .pk-num { fill: #eef1f5; font: 700 14px/1 var(--f-mono); letter-spacing: 0; }
+:root[data-look="pro"] .tpic .pk-num.none { fill: #7b848f; }
+/* Monitor */
+:root[data-look="pro"] .tpic .pk-pulse { fill: none; stroke: #7b848f; stroke-width: 1.7; stroke-linejoin: round; stroke-linecap: round; }
+:root[data-look="pro"] .tpic .pk-pulse.ok { stroke: #3fd07a; }
+:root[data-look="pro"] .tpic .pk-pulse.warn { stroke: #f2b23e; }
+:root[data-look="pro"] .tpic .pk-pulse.bad { stroke: #ff8487; }
+:root[data-look="pro"] .tpic .pk-over .pk-pulse { stroke: #ff5a5f; stroke-width: 1.6; filter: drop-shadow(0 0 1px #000); }
+/* Schedule */
+:root[data-look="pro"] .tpic .pk-face { fill: #0a0b0d; stroke: #5a626e; stroke-width: 1.2; }
+:root[data-look="pro"] .tpic .pk-tick { stroke: #7b848f; }
+:root[data-look="pro"] .tpic .pk-hand { fill: none; stroke: #eef1f5; stroke-width: 1.6; stroke-linecap: round; }
+:root[data-look="pro"] .tpic .pk-pin { fill: #8ab9ff; }
+:root[data-look="pro"] .tpic .pk-lv { fill: #ffd27a; }
+/* light: wells, plates and lines on white; hardware (rear panel) and the walls stay dark, as the real things */
+:root[data-look="pro"][data-theme="light"] .tpic .pk-well, :root[data-look="pro"][data-theme="light"] .tpic .pk-face, :root[data-look="pro"][data-theme="light"] .tpic .pk-box { fill: #fff; stroke: #aeb5bf; }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-grid { stroke: #e3e7ec; }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-gfill { fill: rgba(31, 111, 229, .1); }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-level { stroke: #1f6fe5; }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-curve, :root[data-look="pro"][data-theme="light"] .tpic .pk-hand { stroke: #161a20; }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-tick { stroke: #8a94a3; }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-pin { fill: #1f6fe5; }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-lv { fill: #e0a020; }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-wire { stroke: #535c69; }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-sec { fill: #eef1f4; stroke: #8a94a3; }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-prim { fill: #dce9ff; stroke: #1f6fe5; }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-check { stroke: #1b8a4f; }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-check.warn { stroke: #c27a00; }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-plate2 { fill: #e6e9ee; stroke: #aeb5bf; }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-plate { fill: #fff; stroke: #8a94a3; }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-plate.on { fill: #1f6fe5; stroke: #0f3f8f; }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-num { fill: #161a20; }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-plate.on + .pk-num { fill: #fff; }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-num.none { fill: #6b7380; }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-pulse { stroke: #8a94a3; }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-pulse.ok { stroke: #1b8a4f; }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-pulse.warn { stroke: #c27a00; }
+:root[data-look="pro"][data-theme="light"] .tpic .pk-pulse.bad { stroke: #c62f33; }
+/* the open tab: the picture's lines lift on the blue */
+:root[data-look="pro"] header.bar .modtabs button.on .tpic .pk-well, :root[data-look="pro"] header.bar .modtabs button.on .tpic .pk-face { stroke: #5d97f5; }

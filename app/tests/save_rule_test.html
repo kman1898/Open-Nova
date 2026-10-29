@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Save rule check</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 20px; background: #15181c; color: #e6e9ed; }
+  .r { padding: 6px 10px; margin: 4px 0; border-left: 4px solid #58c08a; background: #1d2126; }
+  .r.fail { border-color: #ef6b6b; }
+</style>
+</head>
+<body>
+<h1>Open Nova Save rule check</h1>
+<p>User rule: Save is separate. A Send (or a live apply) must never store in flash; only the Save button does.</p>
+<div id="out"></div>
+<script src="../scr.js"></script>
+<script src="../hwsend.js"></script>
+<script>
+  var out = document.getElementById('out'), fails = 0;
+  function row(ok, text) { var d = document.createElement('div'); d.className = 'r' + (ok ? '' : ' fail'); d.textContent = (ok ? 'PASS ' : 'FAIL ') + text; out.appendChild(d); if (!ok) fails++; }
+  var isRxStore = function (o) { return o.op === 'w' && o.dev === 1 && o.addr === 0x01000011; };
+  // 1. every verified sender model, with and without port backup: no receiving-card store in the Send plan
+  Object.keys(HWSEND.MODELS).map(Number).forEach(function (id) {
+    var model = { screens: [{ type: 1, cells: [0, 1, 2, 3].map(function (i) { return { sender: 0, port: 0, connect: i, x: i * 128, y: 0, width: 128, height: 128 }; }) }] };
+    [[], [{ ps: 0, pp: 0, bs: 1, bp: 0 }]].forEach(function (pairs) {   // backup pairs keep the port number (card 1 → card 2)
+      var plan = HWSEND.buildSendPlan(model, { modelId: id, senders: pairs.length ? 2 : 1, backup: pairs });
+      row(!plan.ops.some(isRxStore), HWSEND.MODELS[id].name + ' Send' + (pairs.length ? ' + port backup' : '') + ': no receiving-card store (dev 1, 0x01000011) among ' + plan.ops.length + ' ops');
+    });
+  });
+  // 2. the Save plan is the one that stores, and it waits for the receiving cards
+  var sp = HWSEND.buildSavePlan({ pixels: 1920 * 1080, senders: 2 });
+  row(sp.ops.some(isRxStore), 'Save plan stores the receiving cards (dev 1, 0x01000011, full broadcast)');
+  row(sp.ops.some(function (o) { return o.op === 'sleep' && o.ms >= 1000; }), 'Save plan waits for the receiving cards (' + sp.waitMs + ' ms for 1920×1080)');
+  // 3. the Unico, LCT and COEX drivers: send never calls save routes (source check)
+  Promise.all(['../js/drv-unico.js', '../js/drv-lct.js', '../js/app-save.js', '../js/drv-coex.js'].map(function (u) { return fetch(u).then(function (r) { return r.text(); }); })).then(function (src) {
+    var sendOf = function (s) { var a = s.indexOf('  send: function'), b = s.indexOf('\n  },', a); return a < 0 ? '' : s.slice(a, b); };
+    row(!/save|solid/.test(sendOf(src[0])), 'drv-unico.js send() calls no save route (cabinet/solid only in save())');
+    row(!/buildSavePlan|0x01000011/.test(sendOf(src[1])), 'drv-lct.js send() runs no Save plan');
+    row(!/save|solid/.test(sendOf(src[3])), 'drv-coex.js send() calls no save route (device/cabinet/solid only in save())');
+    var la = src[2].slice(src[2].indexOf('function liveApplyNow'), src[2].indexOf('// ------------------------------------------------------------------ compare'));
+    row(!/\.save\(|hwSaveDevices/.test(la), 'live apply never saves (it only marks the processor unsaved)');
+    var h = document.createElement('h2'); h.textContent = fails ? fails + ' failed' : 'All passed'; out.prepend(h);
+    document.title = (fails ? 'FAIL' : 'PASS') + ' save rule';   // tools/browser_tests.py waits for it
+  }, function (e) { row(false, 'driver sources could not be read: ' + e.message); document.title = 'FAIL save rule'; });
+</script>
+</body>
+</html>

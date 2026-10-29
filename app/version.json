@@ -1,0 +1,11 @@
+{
+ "name": "Open Nova",
+ "version": "0.1.0-alpha.1",
+ "build": "dev",
+ "channel": "dev",
+ "readOnly": true,
+ "unlock": null,
+ "reportContact": "(contact address to be filled in)",
+ "keepDays": 14,
+ "keepMB": 2048
+}

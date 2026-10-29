@@ -1,0 +1,21 @@
+Open Nova
+Copyright (c) 2026 The Open Nova contributors.
+Licensed under the MIT License or the Apache License, Version 2.0, at your option
+(LICENSE-MIT, LICENSE-APACHE).
+
+Third-party material
+
+Fonts bundled in app/fonts/ (latin subsets, unmodified):
+- Barlow and Barlow Semi Condensed, Copyright 2017 The Barlow Project Authors
+  (https://github.com/jpt/barlow), SIL Open Font License 1.1 — app/fonts/OFL-Barlow.txt,
+  app/fonts/OFL-BarlowSemiCondensed.txt
+- JetBrains Mono, Copyright 2020 The JetBrains Mono Project Authors
+  (https://github.com/JetBrains/JetBrainsMono), SIL Open Font License 1.1 — app/fonts/OFL-JetBrainsMono.txt
+
+Open Nova runs on the Python standard library and the browser; it has no other runtime dependencies.
+
+Trademarks
+
+Open Nova is an independent project. It is not affiliated with, endorsed by or sponsored by NovaStar or any other
+manufacturer. NovaStar, NovaLCT, VMP, Unico, COEX and other product names are trademarks of their respective owners and
+are used only to describe compatibility.

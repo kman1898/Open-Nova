@@ -1,0 +1,153 @@
+/* looks/pro-canvas.css - the pro look, canvas area (docs/DESIGN_SYSTEM.md). Loaded after looks/pro.css, pro look only.
+   The Layout tab's centre as the gallery draws it (app/out/pro/layout.html + pro.css): toolbar, stage with a faint grid,
+   rulers, a dashed canvas boundary, the wall as dark cabinets tinted by their port (--pc, from portColor in
+   app-capacity.js: the muted --p1 … --p4 family), port outlines, thin cables with a hollow start circle and a filled end
+   square, small mono cable numbers, rounded port plates, selection handles, the navigator plate and the port tiles.
+   The SVG markup is app-render.js (renderPortsPro), the tiles app-portlist.js. Colours are the gallery's; the --cv-* names
+   below only collect them for the two themes. */
+
+/* ===================================================================================================== canvas colours */
+:root[data-look="pro"] {
+  --cv-cab: #14161a; --cv-sep: rgba(0, 0, 0, .72); --cv-tint: 15%; --cv-tint-on: 25%; --cv-edge-op: .8;
+  --cv-wire: #fff; --cv-wire-dim: rgba(255, 255, 255, .6); --cv-start: #0b0c0e;
+  --cv-num: rgba(255, 255, 255, .85); --cv-halo: rgba(0, 0, 0, .6); --cv-plate-ink: #06080b; --cv-plate-bd: rgba(0, 0, 0, .6);
+  --cv-bound: #4a515c; --cv-label: #8a929d; --cv-grid: rgba(255, 255, 255, .028);
+  --cv-rul: #17191c; --cv-rul-tick: #4b525c; --cv-rul-ink: #8a929d;
+}
+:root[data-look="pro"][data-theme="light"] {
+  --cv-cab: #f6f7f9; --cv-sep: rgba(20, 30, 50, .22); --cv-tint: 22%; --cv-tint-on: 34%; --cv-edge-op: 1;
+  --cv-wire: #161a20; --cv-wire-dim: rgba(22, 26, 32, .55); --cv-start: #ffffff;
+  --cv-num: #2b323c; --cv-halo: rgba(255, 255, 255, .85); --cv-plate-ink: #06080b; --cv-plate-bd: rgba(20, 30, 50, .45);
+  --cv-bound: #8a94a3; --cv-label: #535c69; --cv-grid: rgba(20, 30, 50, .05);
+  --cv-rul: #eef1f4; --cv-rul-tick: #aeb5bf; --cv-rul-ink: #535c69;
+}
+
+/* ===================================================================================================== toolbar */
+:root[data-look="pro"] #modLayout .stage-tools { min-height: 32px; align-items: center; }
+:root[data-look="pro"] #modLayout .stage-tools > button, :root[data-look="pro"] #modLayout .stage-tools .menu-wrap > button,
+:root[data-look="pro"] #modLayout .stage-tools .tool-seg button { height: 22px; min-height: 22px; line-height: 20px; white-space: nowrap; letter-spacing: .03em; }
+:root[data-look="pro"] #modLayout .stage-tools .tool-seg { height: 22px; }
+:root[data-look="pro"] #modLayout .stage-tools .sep { margin: 0 6px; }
+:root[data-look="pro"] #btnTest, :root[data-look="pro"] #btnArrange, :root[data-look="pro"] #btnView { font-weight: 500; }
+:root[data-look="pro"] #btnView[aria-expanded="true"] { box-shadow: inset 0 1px 0 var(--hi), 0 0 0 1px var(--acc); }
+:root[data-look="pro"] #modeBadge { max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: calc(10.5px * var(--fs, 1)); }
+
+/* ===================================================================================================== stage */
+:root[data-look="pro"] #modLayout .viewport {
+  background-color: var(--stage);
+  background-image: linear-gradient(var(--cv-grid) 1px, transparent 1px), linear-gradient(90deg, var(--cv-grid) 1px, transparent 1px);
+  background-size: 32px 32px; background-position: -1px -1px;
+}
+:root[data-look="pro"] svg .canvas-bg { fill: rgba(255, 255, 255, .012); stroke: var(--cv-bound); stroke-dasharray: 4 3; filter: none; }
+:root[data-look="pro"][data-theme="light"] svg .canvas-bg { fill: rgba(255, 255, 255, .45); filter: none; }
+:root[data-look="pro"] svg .cv-label { fill: var(--cv-label); font-family: var(--f-mono); font-weight: 400; letter-spacing: 0; text-transform: uppercase; }
+:root[data-look="pro"] svg .grid-lines { stroke: var(--cv-grid); stroke-opacity: 1; }
+:root[data-look="pro"] svg .wall-sh { fill: var(--cv-cab); filter: drop-shadow(0 0 1px #000) drop-shadow(0 10px 28px rgba(0, 0, 0, .55)); }
+:root[data-look="pro"][data-theme="light"] svg .wall-sh { filter: drop-shadow(0 4px 14px rgba(20, 30, 50, .18)); }
+:root[data-look="pro"] svg.pv-on .wall-sh { fill: none; }
+
+/* cabinets: dark, tinted by the port; the active port a little brighter; over a picture only a trace of the tint */
+:root[data-look="pro"] svg .cab { stroke: var(--cv-sep); }
+:root[data-look="pro"] svg .cab.pc { fill: color-mix(in srgb, var(--pc) var(--cv-tint), var(--cv-cab)); }
+:root[data-look="pro"] svg .cab.pc.on { fill: color-mix(in srgb, var(--pc) var(--cv-tint-on), var(--cv-cab)); }
+:root[data-look="pro"] svg.pv-on .cab.pc { fill: var(--pc); fill-opacity: .05; stroke: rgba(0, 0, 0, .5); }
+:root[data-look="pro"] svg.pv-on .cab.pc.on { fill-opacity: .12; }
+:root[data-look="pro"] svg .cab.live { stroke: rgba(0, 0, 0, .55); }
+:root[data-look="pro"] svg .cab.hole { fill: var(--hole); opacity: .35; }
+:root[data-look="pro"] svg .cab.unassigned { fill: var(--cv-cab); stroke: var(--danger); }
+
+/* port outlines, cables, start / end marks, cable numbers, plates (app-render.js renderPortsPro) */
+:root[data-look="pro"] svg .pw-edge { fill: none; stroke: var(--pc); stroke-opacity: var(--cv-edge-op); stroke-linecap: square; }
+:root[data-look="pro"][data-theme="light"] svg .pw-edge { stroke: color-mix(in srgb, var(--pc) 72%, #000); }
+:root[data-look="pro"] svg .pw-edge.on { stroke-opacity: 1; }
+:root[data-look="pro"] svg .pw-line { fill: none; stroke: var(--cv-wire-dim); stroke-linejoin: round; stroke-linecap: round; }
+:root[data-look="pro"] svg .pw-arrow, :root[data-look="pro"] svg .pw-end { fill: var(--cv-wire-dim); }
+:root[data-look="pro"] svg .pw-start { fill: var(--cv-start); stroke: var(--cv-wire-dim); }
+:root[data-look="pro"] svg .pw-line.on { stroke: var(--cv-wire); }
+:root[data-look="pro"] svg .pw-arrow.on, :root[data-look="pro"] svg .pw-end.on { fill: var(--cv-wire); }
+:root[data-look="pro"] svg .pw-start.on { stroke: var(--cv-wire); }
+:root[data-look="pro"] svg .wire-jump { stroke: var(--warn); stroke-opacity: .95; }
+:root[data-look="pro"] svg .pw-num { font-family: var(--f-mono); font-weight: 400; fill: var(--cv-num); stroke: var(--cv-halo); paint-order: stroke; stroke-linejoin: round; letter-spacing: 0; }
+:root[data-look="pro"] svg .pw-plate rect { fill: var(--pc); stroke: var(--cv-plate-bd); }
+:root[data-look="pro"] svg .pw-plate text { font-family: var(--f-cond); font-weight: 700; fill: var(--cv-plate-ink); letter-spacing: .03em; }
+:root[data-look="pro"] svg.pv-on .pw-line, :root[data-look="pro"] svg.pv-on .pw-start { stroke: rgba(255, 255, 255, .7); }
+:root[data-look="pro"] svg.pv-on .pw-arrow, :root[data-look="pro"] svg.pv-on .pw-end { fill: rgba(255, 255, 255, .7); }
+:root[data-look="pro"] svg.pv-on .pw-line.on, :root[data-look="pro"] svg.pv-on .pw-start.on { stroke: #fff; }
+:root[data-look="pro"] svg.pv-on .pw-arrow.on, :root[data-look="pro"] svg.pv-on .pw-end.on { fill: #fff; }
+:root[data-look="pro"] svg.pv-on .pw-start { fill: #0b0c0e; }
+:root[data-look="pro"] svg.pv-on .pw-num { fill: rgba(255, 255, 255, .85); stroke: rgba(0, 0, 0, .6); }
+
+/* selection: the section's outline in the accent with the gallery's handles, picked cabinets, marquee, groups, snapping */
+:root[data-look="pro"] svg .scr-outline { stroke: rgba(255, 255, 255, .16); stroke-dasharray: 4 3; }
+:root[data-look="pro"][data-theme="light"] svg .scr-outline { stroke: rgba(20, 30, 50, .3); }
+:root[data-look="pro"] svg .scr-outline.sel { stroke: var(--acc-hi); stroke-dasharray: none; }
+:root[data-look="pro"] svg .scr-outline.msel { stroke: var(--acc-hi); stroke-dasharray: 6 4; }
+:root[data-look="pro"] svg .sel-hnd { fill: #fff; stroke: #1f4e9c; filter: drop-shadow(0 1px 1px rgba(0, 0, 0, .6)); }
+:root[data-look="pro"] svg .cab-sel { fill: var(--acc); fill-opacity: .24; stroke: var(--acc-hi); }
+:root[data-look="pro"] svg .marquee { fill: var(--acc); fill-opacity: .08; stroke: var(--acc-hi); }
+:root[data-look="pro"] svg .grp-outline { stroke: var(--acc-hi); stroke-opacity: .8; }
+:root[data-look="pro"] svg .cab-overlap { stroke: var(--danger); }
+
+/* rulers (app-arrange.js renderRulers) */
+:root[data-look="pro"] svg .ruler-bg { fill: var(--cv-rul); opacity: .97; }
+:root[data-look="pro"] svg .ruler-bg.corner { opacity: 1; stroke: none; }
+:root[data-look="pro"] svg .ruler-tick { stroke: var(--cv-rul-tick); }
+:root[data-look="pro"] svg .ruler-tick.minor { stroke-opacity: .7; }
+:root[data-look="pro"] svg .ruler-edge { stroke: var(--edge); }
+:root[data-look="pro"] svg .ruler-t { fill: var(--cv-rul-ink); font-family: var(--f-mono); font-weight: 400; letter-spacing: 0; }
+
+/* ===================================================================================================== navigator plate */
+:root[data-look="pro"] .nav-box { width: 184px; border: 1px solid var(--edge); border-radius: var(--r-panel); }
+:root[data-look="pro"] .nav-box .nav-h { padding: 0 2px 0 9px; color: var(--muted); }
+:root[data-look="pro"] .nav-box .nav-z { color: var(--ink-2); font-size: calc(10px * var(--fs, 1)); }
+:root[data-look="pro"] .nav-box .nav-fold { color: var(--muted); }
+:root[data-look="pro"] .viewport .nav-map { height: 100px; }
+:root[data-look="pro"] .nav-map .nav-cv { fill: transparent; stroke: #3a3f47; }
+:root[data-look="pro"][data-theme="light"] .nav-map .nav-cv { fill: rgba(255, 255, 255, .6); stroke: var(--cv-bound); }
+:root[data-look="pro"] .nav-map .nav-cabs rect { fill-opacity: .75; }
+:root[data-look="pro"] .nav-map .nav-view { fill: rgba(61, 139, 253, .1); stroke: #3d8bfd; }
+
+/* ===================================================================================================== the status line under the canvas */
+:root[data-look="pro"] #modLayout .status { display: flex; align-items: center; gap: 7px; min-height: 22px; padding: 2px 10px; font-size: calc(11.5px * var(--fs, 1)); color: var(--ink-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+:root[data-look="pro"] #modLayout .status::before { content: ''; flex: none; width: 6px; height: 6px; border-radius: 50%; background: var(--idle); }
+:root[data-look="pro"] #modLayout .status.ok::before { background: var(--ok); box-shadow: 0 0 5px var(--ok-glow); }
+:root[data-look="pro"] #modLayout .status.bad::before { background: var(--danger); box-shadow: 0 0 5px var(--bad-glow); }
+:root[data-look="pro"] #modLayout .status.bad { color: var(--bad-ink) !important; }
+
+/* ===================================================================================================== port tiles (app-portlist.js) */
+:root[data-look="pro"] .portlist { height: auto; padding: 6px 8px 8px; }
+:root[data-look="pro"] .pl-head { min-height: 18px; padding: 0 0 0 2px; gap: 8px; }
+:root[data-look="pro"] .pl-head b { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+:root[data-look="pro"] .pl-count { flex: none; padding: 2px 6px; border-radius: var(--r-xs); background: rgba(63, 208, 122, .12); color: var(--ok-ink); box-shadow: inset 0 0 0 1px rgba(63, 208, 122, .35);
+  font: 600 calc(9.5px * var(--fs, 1))/1 var(--f-cond); letter-spacing: .08em; text-transform: uppercase; white-space: nowrap; }
+:root[data-look="pro"] .pl-cap { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+:root[data-look="pro"] .pl-head select { height: 22px; min-height: 22px; padding-top: 0; padding-bottom: 0; font-size: calc(11.5px * var(--fs, 1)); }
+:root[data-look="pro"] .pl-tiles { --tile-min: 74px; flex: none; grid-template-rows: repeat(2, 30px); gap: 4px; margin-top: 6px; padding: 1px; overflow-x: auto; overflow-y: hidden; }
+:root[data-look="pro"] .pt { height: 30px; min-width: 0; padding: 0 7px 3px 8px; gap: 5px; overflow: hidden; container-type: inline-size; }
+:root[data-look="pro"] .pt-n { flex: none; min-width: 16px; font: 600 calc(13.5px * var(--fs, 1))/1 var(--f-cond); color: var(--ink); text-align: left; }
+:root[data-look="pro"] .pt-u { margin-left: auto; min-width: 0; overflow: hidden; text-overflow: ellipsis; font: 500 calc(11px * var(--fs, 1))/1 var(--f-cond); color: var(--ink-2); white-space: nowrap; letter-spacing: .02em; }
+:root[data-look="pro"] .pt-u b { font-weight: 600; color: var(--ink); }
+:root[data-look="pro"] .pt-u.over, :root[data-look="pro"] .pt-u.over b { color: var(--bad-ink); }
+@container (max-width: 80px) { :root[data-look="pro"] .pt-cab { display: none; } }
+:root[data-look="pro"] .pt-tag { flex: none; padding: 2px 4px; border-radius: var(--r-xs); background: #24406e; color: #cfe0ff; font: 700 calc(9px * var(--fs, 1))/1 var(--f-cond); letter-spacing: .04em; }
+:root[data-look="pro"][data-theme="light"] .pt-tag { background: #dce9ff; color: #1a4a9c; }
+:root[data-look="pro"] .pt-warn { position: static; flex: none; font-size: calc(10px * var(--fs, 1)); }
+:root[data-look="pro"] .pt-meter { left: 0; right: 0; bottom: 0; height: 3px; background: #2a2d33; }
+:root[data-look="pro"][data-theme="light"] .pt-meter { background: #d3d8df; }
+:root[data-look="pro"] .pt-meter > i { background: var(--pc); }
+:root[data-look="pro"] .pt-meter > i.standby { background: #3a5c94; }
+:root[data-look="pro"] .pt-meter > i.live { background: var(--warn); }
+:root[data-look="pro"] .pt:not(.used):not(.bk) .pt-n, :root[data-look="pro"] .pt:not(.used):not(.bk) .pt-u { color: var(--ink-4); }
+:root[data-look="pro"] .pt.used:not(.here) .pt-n { color: var(--ink-2); }
+:root[data-look="pro"] .pt.on .pt-n { color: var(--ink); }
+:root[data-look="pro"] .pt.bad { box-shadow: inset 0 1px 0 var(--hi), 0 0 0 1px #b8363a; }
+:root[data-look="pro"] .pt.bad .pt-u { color: var(--bad-ink); }
+:root[data-look="pro"] .pt.warn { box-shadow: inset 0 1px 0 var(--hi), 0 0 0 1px #b57d1c; }
+:root[data-look="pro"] .pt.warn .pt-u { color: var(--warn-ink); }
+:root[data-look="pro"] .pt.on.bad, :root[data-look="pro"] .pt.on.warn { box-shadow: inset 0 1px 0 var(--hi-acc), 0 0 0 1px var(--acc), 0 0 8px var(--acc-glow); }
+:root[data-look="pro"] .pt.opt-start { box-shadow: inset 2px 0 0 var(--acc), inset 0 1px 0 var(--hi); }
+:root[data-look="pro"] .pt.opt-start::before { top: 2px; right: 4px; font: 700 calc(8.5px * var(--fs, 1))/1 var(--f-cond); letter-spacing: .06em; }
+
+/* ===================================================================================================== Live view and Content over the canvas */
+:root[data-look="pro"] #modLayout .heat-plate { border-radius: var(--r-panel); }
+:root[data-look="pro"] svg .heat-num .heat-v { font-family: var(--f-mono); font-weight: 500; letter-spacing: 0; }

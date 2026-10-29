@@ -1,0 +1,1402 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>App checks</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 20px; background: #15181c; color: #e6e9ed; }
+  .r { padding: 6px 10px; margin: 4px 0; border-left: 4px solid #58c08a; background: #1d2126; }
+  .r.fail { border-color: #ef6b6b; }
+  iframe { width: 1280px; height: 800px; border: 0; position: absolute; left: -3000px; }
+</style>
+</head>
+<body>
+<h1>Open Nova app checks</h1>
+<p>Shell, drivers, card / port naming, live-apply fingerprint, guard locations, library levels, .uscr import, Arrange.
+The app runs in a hidden frame with saving and sync switched off: nothing is stored and no processor is contacted.</p>
+<div id="sum"></div><div id="out"></div>
+<iframe id="app" src="../index.html"></iframe>
+<script>
+var out = document.getElementById('out'), fails = 0, passes = 0, pending = 0;
+function row(ok, text) { var d = document.createElement('div'); d.className = 'r' + (ok ? '' : ' fail'); d.textContent = (ok ? 'PASS ' : 'FAIL ') + text; out.appendChild(d); if (ok) passes++; else fails++; }
+// a check passes only on an explicit true; anything else (false, a failure message, undefined, a truthy object) fails and is shown
+function t(name, fn) { try { var r = fn(); row(r === true, name + (r === true ? '' : ' — ' + (typeof r === 'string' ? r : 'returned ' + (r === undefined ? 'nothing' : JSON.stringify(r))))); } catch (e) { row(false, name + ' — threw ' + e.message); } }
+// Checks that need the frame to themselves (they stub DRV.post / swap the project): queued, run one after another once the
+// other async checks are done; fn(done) calls done() when finished.
+var lastQ = [], realMark = null;   // realMark: the app's hltErrMark (stubbed in the frame, used by heldSyncTest)
+function atEnd(fn) {
+  pending++; lastQ.push(fn);
+  if (lastQ.length === 1) (function go() { if (pending > lastQ.length) return setTimeout(go, 50); lastQ[0](function () { lastQ.shift(); pending--; if (lastQ.length) go(); }); })();
+}
+var f = document.getElementById('app');
+f.onload = function () {
+  var w = f.contentWindow, tries = 0;
+  (function wait() {
+    if (!(w.OpenNova && typeof w.setTab === 'function') && tries++ < 100) return setTimeout(wait, 100);
+    // no storing, no sync, no live apply, no helper calls from this test
+    w.saveLocal = function () {}; w.schedulePush = function () {}; w.liveApplySchedule = function () {};
+    w.toast = function () {};
+    // no network search from this frame (app-online.js): no Add processor / background search, no read-back, no H web
+    w.olSearch = function () {}; w.rbAuto = function () {}; w.olWebRefresh = function () {}; w.hw.bgAt = Date.now() + 1e9;
+    // projects here without a workspace count as offline: no automatic simulated processors (offline_test.html checks those)
+    w.simEnsure = function () {};
+    // the kept monitor errors stay in this frame (not sent to / read from the server's list); background readings don't latch
+    realMark = w.hltErrMark; w.hltErrMark = function () {}; w.hltErrLoad = function () { return Promise.resolve(); };
+    run(w);
+    (function done(n) { if (pending && n < 50) return setTimeout(function () { done(n + 1); }, 100);
+    document.getElementById('sum').innerHTML = '<p class="r' + (fails ? ' fail' : '') + '">' + (fails ? fails + ' failed, ' + passes + ' passed' : 'All passed (' + passes + ')') + '</p>';
+    document.title = (fails ? 'FAIL ' : 'PASS ') + 'app checks'; })(0);
+  })();
+};
+function run(w) {
+  var P = function () { return w.P; };
+  // ---------------------------------------------------------------- shell
+  t('every tab has a unique id and its main view exists', function () {
+    var ids = w.TABS.map(function (x) { return x.id; });
+    if (new Set(ids).size !== ids.length) return false;
+    var miss = w.TABS.filter(function (x) { return !w.document.getElementById(x.main); }).map(function (x) { return x.id; });
+    return miss.length ? 'missing ' + miss.join(', ') : true;
+  });
+  t('UI cleanup: opens on the dashboard; Source hidden; the menu bar holds File / Tools / Settings / Help; Export its own button; no Send on Device', function () {
+    var d = w.document, $ = function (id) { return d.getElementById(id); }, bad = [];
+    if (w.ui.tab !== 'dashboard') bad.push('started on ' + w.ui.tab);
+    if (!$('tabSource').hidden) bad.push('Source tab shown');
+    if ($('btnProjMenu') || $('btnToolsMenu')) bad.push('old Project ▾ / Tools ▾ still in the header');
+    var mbar = $('menuBar'), tops = Array.prototype.map.call(d.querySelectorAll('#menuBar .mb-top'), function (b) { return b.textContent.trim(); }).join(' ');
+    if (!mbar || mbar.nextElementSibling !== d.querySelector('header.bar')) bad.push('menu bar not above the tabs');
+    if (tops !== 'File Edit View Tools Settings Help') bad.push('menu titles: ' + tops);
+    [['projMenu', 'btnNew projList btnSaveProject btnReadLayout btnExportScfg fileOpen fileInto'], ['toolsMenu', 'btnSupport btnOfflineMode mbDiscover mbTestTool mbPreshow'],
+      ['settingsMenu', 'btnLogs btnTheme uiSizeBtns mbAlarms'], ['helpMenu', 'btnKeys mbManual mbAbout']].forEach(function (g) {
+      g[1].split(' ').forEach(function (id) { if (!$(id) || !$(id).closest('#' + g[0])) bad.push(id + ' not in #' + g[0]); });
+    });
+    if ($('btnExport').closest('.dropmenu') || $('btnExport').textContent.trim() !== 'Export' || $('btnExport').classList.contains('primary')) bad.push('Export button');
+    ['btnBlackout', 'btnFreeze', 'btnNormalHdr', 'btnSendHdr', 'btnSaveHw'].forEach(function (id) { if ($(id).closest('.dropmenu')) bad.push(id + ' in a menu'); });
+    w.setTab('source'); if (w.ui.tab === 'source') bad.push('setTab(source) opened it');
+    w.setTab('devices');
+    if (w.P.devices.length && d.querySelector('#dvHwBody [data-hw="send"]')) bad.push('Send button on the Hardware card');
+    if (w.P.devices.length && !$('dvService').classList.contains('collapsed')) bad.push('Service open');
+    if ($('dvEarlier') || $('dvLater') || $('bkMiniText')) bad.push('removed controls still in the page');
+    w.setTab('layout');
+    return bad.length ? bad.join('; ') : true;
+  });
+  // ---------------------------------------------------------------- Settings ▸ Network… (app-network.js; the helper is stubbed)
+  var NW_DEMO = { ok: true, platform: 'win32', saved: true, settings: { disabled: ['Wi-Fi'], bind: 'all' }, plan: { choice: 'all', hosts: null, note: '' },
+    applied: { choice: 'all', hosts: null, note: '' }, state: { seq: 3, events: [] }, interfaces: [
+      { name: 'Ethernet 2', label: 'Intel(R) Ethernet', type: 'ethernet', up: true, search: true, ipv4: [{ ip: '192.168.0.10', prefix: 24, broadcast: '192.168.0.255' }], found: [{ ip: '192.168.0.11', kind: 'lct' }] },
+      { name: 'Ethernet 3', label: 'Realtek USB GbE Family Controller', type: 'ethernet', up: true, search: true, ipv4: [{ ip: '192.168.0.20', prefix: 24, broadcast: '192.168.0.255' }], found: [] },
+      { name: 'Wi-Fi', label: 'Intel(R) Wi-Fi 6', type: 'wifi', up: false, search: false, ipv4: [], found: [] },
+      { name: 'Tailscale', label: 'Tailscale Tunnel', type: 'vpn', up: true, search: true, ipv4: [{ ip: '100.101.102.103', prefix: 32, broadcast: '' }], found: [] },
+      { name: 'Loopback Pseudo-Interface 1', label: 'this computer', type: 'loopback', up: true, search: false, ipv4: [{ ip: '127.0.0.1', prefix: 8, broadcast: '' }], found: [] }] };
+  t('Settings ▸ Network…: in the Settings menu; the dialog lists each interface (tick, type, address, processors found), Loopback without a tick, App reachable from', function () {
+    var d = w.document, bad = [], keepFound = w.hw.found, keepHelper = w.hw.helper;
+    if (!d.getElementById('mbNetwork') || !d.getElementById('mbNetwork').closest('#settingsMenu')) return 'Network… not in the Settings menu';
+    w.hw.found = [{ kind: 'lct', ip: '192.168.0.11%Ethernet 2', addr: '192.168.0.11', port: 5200, iface: 'Ethernet 2', deviceName: 'H5', senders: [], conflict: 'Two networks each have a processor at 192.168.0.11 (Ethernet 2, Ethernet 3) — Open Nova reaches each through its own network' },
+      { kind: 'lct', ip: '192.168.0.11%Ethernet 3', addr: '192.168.0.11', port: 5200, iface: 'Ethernet 3', deviceName: 'H2', senders: [] }];
+    try {
+      w.nwOpen(JSON.parse(JSON.stringify(NW_DEMO)));
+      var rows = d.querySelectorAll('#nwBody .nw-row');
+      if (rows.length !== 5) bad.push(rows.length + ' rows');
+      var ticks = Array.prototype.map.call(d.querySelectorAll('#nwBody [data-nw="search"]'), function (b) { return b.dataset.n + (b.checked ? '+' : '-'); }).join(' ');
+      if (ticks !== 'Ethernet 2+ Ethernet 3+ Wi-Fi- Tailscale+') bad.push('ticks ' + ticks);
+      if (!/H5 · 192\.168\.0\.11:5200/.test(rows[0].textContent) || /%/.test(rows[0].textContent)) bad.push('found on Ethernet 2: ' + rows[0].textContent);
+      if (!/H2/.test(rows[1].textContent)) bad.push('found on Ethernet 3: ' + rows[1].textContent);
+      if (!/not connected/.test(rows[2].textContent)) bad.push('Wi-Fi not shown as not connected');
+      var opts = Array.prototype.map.call(d.querySelectorAll('#nwBind option'), function (o) { return o.value; }).join('|');
+      if (opts !== 'all|localhost|Ethernet 2|Ethernet 3|Tailscale') bad.push('bind options ' + opts);
+      if (!/Now: every network/.test(d.getElementById('nwBody').textContent)) bad.push('no "Now:" line');
+      if (w.hwWhere('192.168.0.11%Ethernet 3', 5200) !== '192.168.0.11:5200') bad.push('hwWhere keeps the zone');
+      if (w.nwOf({ kind: 'lct', host: '192.168.0.11%Ethernet 3' }) !== 'Ethernet 3') bad.push('nwOf zone');
+      if (JSON.stringify(w.nwInfoRow({ hw: { kind: 'lct', host: '192.168.0.11%Ethernet 2' } })) !== '[["Network","Ethernet 2"]]') bad.push('Device info row');
+      w.hw.helper = true; var pick = w.olFoundHtml();
+      if (!/192\.168\.0\.11:5200 · Ethernet 2/.test(pick) || !/Two networks/.test(pick)) bad.push('Add processor list: no interface / flag');
+    } finally { w.hw.found = keepFound; w.hw.helper = keepHelper; w.nwClose(); }
+    return bad.length ? bad.join('; ') : true;
+  });
+  t('switching tabs shows its view and closes open menus', function () {
+    w.mbOpen('toolsMenu'); var m = w.document.getElementById('toolsMenu'); if (m.hidden) return 'Tools did not open';
+    w.setTab('library');
+    var ok = !w.document.getElementById('modLibrary').hidden && w.document.getElementById('modLayout').hidden && m.hidden && !w.mbOpenName() && !w.document.querySelector('#menuBar .mb-top.on');
+    w.setTab('layout'); return ok && !w.document.getElementById('modLayout').hidden;
+  });
+  t('menu bar: click opens, hover moves, a submenu opens, Esc closes; Edit greys the Layout commands off Layout', function () {
+    var d = w.document, $ = function (id) { return d.getElementById(id); }, bad = [];
+    w.setTab('dashboard'); w.mbClose(); w.devClosePicker();   // a blank project opens "Which processors?" at start; it takes Esc
+    $('mbFile').click(); if (w.mbOpenName() !== 'projMenu') bad.push('File did not open');
+    $('mbEdit').dispatchEvent(new w.MouseEvent('mouseover', { bubbles: true })); if (w.mbOpenName() !== 'editMenu') bad.push('hover did not move to Edit');
+    var off = Array.prototype.filter.call($('editMenu').querySelectorAll('button'), function (b) { return b.getAttribute('aria-disabled') === 'true'; }).map(function (b) { return b.textContent; }).join();
+    if (!/Copy/.test(off) || !/Group/.test(off) || !/Select All/.test(off)) bad.push('Edit off Layout not greyed: ' + off);
+    $('mbSettings').click(); var sb = $('settingsMenu').querySelector('.mb-subbtn'); sb.click();
+    if (sb.parentNode.lastElementChild.hidden) bad.push('Preferences › did not open');
+    w.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));   // closes the submenu
+    if (!sb.parentNode.lastElementChild.hidden || w.mbOpenName() !== 'settingsMenu') bad.push('first Esc should close only Preferences ›');
+    w.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));   // then the menu
+    if (w.mbOpenName()) bad.push('Esc left ' + w.mbOpenName() + ' open');
+    w.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'F10', bubbles: true })); if (w.mbOpenName() !== 'projMenu') bad.push('F10 did not open File');
+    w.mbClose();
+    w.setTab('layout'); $('mbView').click();
+    var wires = Array.prototype.filter.call($('viewMbMenu').querySelectorAll('button'), function (b) { return /Wires/.test(b.textContent); })[0], was = $('showWires').checked;
+    wires.click(); var now = $('showWires').checked; $('showWires').checked = was; $('showWires').dispatchEvent(new w.Event('change'));
+    if (now === was || w.ui.showWires !== was) bad.push('View ▸ Wires did not toggle the canvas checkbox');
+    if (w.mbOpenName()) bad.push('an item click left the menu open');
+    return bad.length ? bad.join('; ') : true;
+  });
+  // ---------------------------------------------------------------- drivers
+  t('all four drivers are registered', function () { return ['lct', 'unico', 'coex', 'offline'].every(function (k) { return w.DRV.families[k]; }); });
+  t('every capability a driver claims has its method', function () {
+    var bad = [];
+    Object.keys(w.DRV.families).forEach(function (k) {
+      var x = w.DRV.families[k], c = x.caps({ model: 'mctrl4k', hw: null }) || {};
+      if (!x.identify) bad.push(k + ' identify');
+      if (c.verify && (c.verify.backup || c.verify.primary) && !x.verifyBackup) bad.push(k + ' verifyBackup');
+      if (c.presets && !x.presets) bad.push(k + ' presets');
+      if (c.schedule && !x.schedules) bad.push(k + ' schedules');
+      if (c.rcvFile && (c.rcvFile.ncp || c.rcvFile.rcfgx) && !x.sendRcvFile) bad.push(k + ' sendRcvFile');
+      if (c.save && !x.save) bad.push(k + ' save');
+    });
+    return bad.length ? bad.join(', ') : true;
+  });
+  // ---------------------------------------------------------------- a fresh project (in memory only)
+  w.replaceProject(w.ensureLct(w.newProject()));   // a new project has no processor (2026-10-11)
+  var d0 = w.addProcessor('mctrl4k');
+  t('a fixed processor (MCTRL4K) has no “sending card”: name and port label', function () {
+    return !w.cardIsReal(0) && w.cardName(0) === w.deviceLabel(d0) && w.portLabel(0, 2) === 'P3' || 'got ' + w.cardName(0) + ' / ' + w.portLabel(0, 2);
+  });
+  var d1 = w.addProcessor('mctrl4k');
+  t('with two processors a port names its processor', function () {
+    var l = w.portLabel(1, 0); return l === w.deviceLabel(d1) + ' P1' || 'got ' + l;
+  });
+  w.setProcessorModel(d0, 'h5');
+  t('a chassis (H5) keeps sending cards: “Sending card 1”, “S1 P3”', function () {
+    return w.cardIsReal(0) && w.cardName(0) === 'Sending card 1' && w.portLabel(0, 2) === 'S1 P3' || 'got ' + w.cardName(0) + ' / ' + w.portLabel(0, 2);
+  });
+  w.setProcessorModel(d0, 'mctrl4k');
+  // a section on the first processor
+  var s = w.newScreen(0, 0); s.cols = 4; s.rows = 2; s.wiring.sender = 0; s.wiring.port = 0; P().screens.push(s); w.commit(); w.renderAll();
+  (function () {   // async: its row is added when the promise settles
+    var placed = w.hwPortCells(), want = Object.keys(placed).filter(function (k) { return +k.split(':')[0] === 0; }).map(function (k) { return k.split(':')[1] + '=' + placed[k].length; }).sort().join();
+    pending++;
+    w.DRV.families.offline.detect(d0).then(function (r) {
+      var got = Object.keys(r.cards[0].ports).map(function (p) { return p + '=' + r.cards[0].ports[p].length; }).sort().join();
+      row(want && got === want, 'the simulated driver detects exactly what the project places (' + got + ')');
+    }, function (e) { row(false, 'simulated detect threw ' + e.message); }).then(function () { pending--; });
+  })();
+  t('live-apply fingerprint: same project → same, moved section → different', function () {
+    var a = w.liveKey(d0), b = w.liveKey(d0); s.x += 128; var c = w.liveKey(d0); s.x -= 128;
+    return a && a === b && a !== c || [a, b, c].join(' / ');
+  });
+  // ---------------------------------------------------------------- guard locations + library levels
+  t('guard location text joins cable runs', function () {
+    var txt = w.rcvWhere([0, 1, 2, 5].map(function (i) { return { card: 0, port: 1, index: i, dst: 0 }; }));
+    return /P2 · cabinets 1–3, 6/.test(txt) || txt;
+  });
+  t('guard location text names a card the project doesn’t know', function () {
+    var txt = w.rcvWhere([{ card: null, dst: 3, port: 0, index: 0 }]); return /output card 4 \(not in the project\)/.test(txt) || txt;
+  });
+  t('library levels: mixed wall = “fits some”, none = block, ok stays ok', function () {
+    return w.lbLevel({ level: 'block', sendable: 3 }) === 'part' && w.lbLevel({ level: 'block', sendable: 0 }) === 'block' && w.lbLevel({ level: 'ok' }) === 'ok';
+  });
+  // ---------------------------------------------------------------- .uscr import with 64-bit cabinet IDs
+  t('.uscr import keeps cable positions of 64-bit IDs (written as numbers)', function () {
+    var id = function (port, idx) { return ((BigInt(0xABCDEF) << 32n) | (1n << 24n) | (BigInt(port) << 16n) | BigInt(idx)).toString(); };
+    var topo = '{"data":{"canvasInfoList":[{"canvasPosition":{"x":0,"y":0},"topologyList":[' +
+      [[2, 5, 0], [2, 6, 128], [0, 0, 256]].map(function (q) { return '{"cid":' + id(q[0], q[1]) + ',"cabinetPosition":{"x":' + q[2] + ',"y":0},"cabinetSize":{"width":128,"height":128}}'; }).join(',') + ']}]}}';
+    var before = P().lct.length; w.ui.mSender = 0; w.importUscr(topo, 'test.uscr');
+    var lc = P().lct[P().lct.length - 1], sec = P().screens.filter(function (x) { return x.screenId === lc.id; })[0];
+    if (P().lct.length !== before + 1 || !sec) return 'not imported';
+    var m = Object.keys(sec.manual).map(function (k) { return sec.manual[k].port + ':' + sec.manual[k].connect; }).sort().join(',');
+    return m === '0:0,2:5,2:6' || 'got ' + m;
+  });
+  t('.uscr import refuses to grow a fixed processor’s card', function () {
+    var id = ((BigInt(1) << 32n) | (1n << 24n) | (20n << 16n)).toString();   // port 21 on a 16-port MCTRL4K
+    var n = P().lct.length; w.ui.mSender = 0;
+    w.importUscr('{"data":{"canvasInfoList":[{"topologyList":[{"cabinetID":"' + id + '","cabinetPosition":{"x":0,"y":0},"cabinetSize":{"width":64,"height":64}}]}]}}', 'big.uscr');
+    return P().lct.length === n && P().processors[0].ports === 16 || 'ports ' + P().processors[0].ports;
+  });
+  // ---------------------------------------------------------------- Open file… = a new project (as VMP); Import into this project
+  t('Open file… makes a new project named after the file; Import into this project… replaces this one', function () {
+    var keep = [w.projShared, w.projCreate], made = [];
+    w.projShared = function () { return true; };
+    w.projCreate = function (pj, done) { made.push(pj.name); w.replaceProject(pj); if (done) done(); };   // stand-in: no server here
+    try {
+      var id = ((BigInt(0x123456) << 32n) | (1n << 24n) | (1n << 16n) | 3n).toString();
+      w.importUscr('{"data":{"canvasInfoList":[{"topologyList":[{"cid":' + id + ',"cabinetPosition":{"x":0,"y":0},"cabinetSize":{"width":64,"height":64}}]}]}}', 'Wall B.uscr', true);
+      var oneScreen = P().lct.length === 1 && P().lct[0].name === 'Wall B' && P().screens.length === 1 && P().screens[0].manual['0'].port === 1;
+      var pj = w.ensureLct(w.newProject()); pj.name = 'inside name';
+      w.importTake(pj, 'Show A.ledmap.json', true);
+      var named = P().name === 'Show A';
+      var pj2 = w.ensureLct(w.newProject()); pj2.name = 'Kept';
+      w.importTake(pj2, 'Other.scr', false);
+      return made.join('|') === 'Wall B|Show A' && oneScreen && named && P().name === 'Kept' || 'made ' + made.join('|') + ', one screen ' + oneScreen + ', name ' + P().name;
+    } finally { w.projShared = keep[0]; w.projCreate = keep[1]; w.replaceProject(w.ensureLct(w.newProject())); w.addProcessor('mctrl4k'); }
+  });
+  // ---------------------------------------------------------------- Arrange
+  t('Arrange ▸ align left lines sections up', function () {
+    w.showScreen(P().lct[0].id);
+    var a = w.newScreen(0, 0), b = w.newScreen(700, 300); [a, b].forEach(function (x) { x.cols = 2; x.rows = 2; P().screens.push(x); });
+    w.commit(); w.renderAll();
+    w.ui.selSecs = new Set([a.id, b.id]); w.ui.sel = a.id;
+    w.alignSections('left');
+    var A = P().screens.filter(function (x) { return x.id === a.id; })[0], B = P().screens.filter(function (x) { return x.id === b.id; })[0];
+    return A.x === B.x || 'x ' + A.x + ' / ' + B.x;
+  });
+  // ---------------------------------------------------------------- groups (Ctrl+G, UI cleanup 2026-10-11)
+  t('Group / Ungroup: one name, selects as one, and the Send plan + .scr are byte-identical', function () {
+    w.showScreen(P().lct[0].id);
+    var vis = w.visibleScreens(); if (vis.length < 2) return 'need two blocks of cabinets, have ' + vis.length;
+    var d = P().devices[0], sig = function () {
+      return JSON.stringify(w.HWSEND.buildSendPlan(w.hwSendModel(d), { modelId: 0x1103, senders: w.cardsOfDevice(d).length, backup: [], freeRoute: false, now: new Date(2026, 9, 11, 12, 0, 0) })) + '|' +   // fixed clock: the plan stamps the time (0x02000011), which made this flaky across a second boundary
+        Array.prototype.join.call(w.SCR.build(w.toScrModel()), ',');
+    };
+    var uu = sig; sig = function () { return uu().replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, 'UUID'); };   // NSSD gets fresh UUIDs per build
+    if (sig() !== sig()) return 'the signature itself is not stable';
+    var before = sig(), had = 'groups' in P();
+    w.ui.selSecs = new Set([vis[0].id, vis[1].id]); w.ui.sel = vis[0].id;
+    var g = w.groupSections();
+    if (!g || vis[0].group !== g.id || vis[1].group !== g.id || g.name !== 'Group 1') return 'not grouped: ' + JSON.stringify(P().groups);
+    if (sig() !== before) return 'grouping changed the Send plan or the .scr';
+    w.ui.selSecs = new Set(); w.ui.sel = null; w.arrangeToggle(vis[1]);
+    if (!(w.ui.selSecs.has(vis[0].id) && w.ui.selSecs.has(vis[1].id))) return 'Ctrl+click did not take the whole group';
+    var tree = w.document.querySelector('#tree .tn-grp');
+    if (!tree || !/Group 1/.test(tree.textContent)) return 'group missing from the tree';
+    w.renameGroup(g, 'Stage left');
+    if (w.document.getElementById('secHead').textContent.indexOf('Stage left') !== 0) return 'cabinets card: ' + w.document.getElementById('secHead').textContent;
+    w.ungroupSections([vis[0]]);
+    if (vis[0].group || vis[1].group || P().groups.length) return 'ungroup left ' + JSON.stringify(P().groups);
+    if (sig() !== before) return 'ungrouping changed the Send plan or the .scr';
+    if (!had) delete P().groups;
+    return true;
+  });
+  t('no “Section” words in the Layout tab (toolbar, cards, right-click)', function () {
+    w.setTab('layout'); w.renderAll();
+    var doc = w.document, s = w.visibleScreens()[0]; w.ui.sel = s && s.id; w.renderAll();
+    var txt = doc.querySelector('#modLayout .stage-tools').textContent + ' ' + doc.querySelector('#modLayout aside.panel.right').textContent;
+    var bb = s && w.screenBounds(s); if (bb) w.openCanvasMenu(10, 10, { x: bb.x + 1, y: bb.y + 1 });
+    txt += ' ' + doc.getElementById('ctxMenu').textContent; w.closeMenu();
+    var m = txt.match(/[^.]{0,30}\bsections?\b[^.]{0,20}/i);
+    return !m || 'found: ' + m[0].trim();
+  });
+  t('“cabinet”, not “panel” / “section”: visible text, tooltips and ⓘ on every tab', function () {
+    var doc = w.document, keep = w.ui.tab, hits = [], re = /\b(panels?|sections?)\b/i;
+    w.TABS.forEach(function (tb) {
+      if (tb.hide) return;
+      w.setTab(tb.id); w.renderAll();
+      var main = doc.getElementById(tb.main), txt = [main.innerText, doc.querySelector('header') ? doc.querySelector('header').innerText : ''];
+      Array.prototype.forEach.call(doc.querySelectorAll('[title],[aria-label],[placeholder]'), function (e) {
+        if (e.closest('[hidden]') || !(main.contains(e) || e.closest('header'))) return;
+        txt.push(e.getAttribute('title') || '', e.getAttribute('placeholder') || '', e.classList.contains('itip') ? e.getAttribute('aria-label') || '' : '');
+      });
+      txt.forEach(function (x) { var m = x && x.match(new RegExp('[^.\\n]{0,30}' + re.source + '[^.\\n]{0,20}', 'i')); if (m) hits.push(tb.id + ': ' + m[0].trim()); });
+    });
+    w.setTab(keep);
+    return !hits.length || hits.filter(function (x, i, a) { return a.indexOf(x) === i; }).slice(0, 6).join(' | ');
+  });
+  t('ⓘ: a click opens the popover, Esc closes it (on every tab, not only Layout)', function () {
+    var doc = w.document, keep = w.ui.tab, bad = [];
+    ['devices', 'screen', 'layout'].forEach(function (id) {
+      w.setTab(id); w.renderAll();
+      var b = Array.prototype.filter.call(doc.querySelectorAll('.itip'), function (x) { return x.offsetParent; })[0];
+      if (!b) return bad.push(id + ': no ⓘ');
+      b.click();
+      if (!doc.querySelector('.itip-pop')) return bad.push(id + ': no popover');
+      b.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      if (doc.querySelector('.itip-pop')) { bad.push(id + ': Esc left it open'); doc.querySelector('.itip-pop').remove(); }
+    });
+    w.setTab(keep);
+    return !bad.length || bad.join('; ');
+  });
+  t('View ▾ holds the canvas toggles; viewLive sets Live from Monitor', function () {
+    var doc = w.document, ids = ['showWires', 'showLabels', 'showCoords', 'magnet', 'showGrid', 'snapGrid', 'gridStep', 'showRulers', 'liveView'];
+    var out = ids.filter(function (id) { return !doc.getElementById(id) || !doc.getElementById(id).closest('#viewMenu'); });
+    if (out.length) return 'not in View ▾: ' + out.join(', ');
+    var lv = doc.getElementById('liveView'), keep = lv.value;
+    w.viewLive('status'); var ok = lv.value === 'status' && w.hlt.view === 'status' && w.ui.tab === 'layout';
+    w.viewLive(keep);
+    return ok || 'live view ' + lv.value + ' / ' + w.hlt.view;
+  });
+  // ---------------------------------------------------------------- override + service (2026-10-11)
+  t('a BLOCK override needs OVERRIDE typed', function () {
+    var keep = w.rg.ovr, r = [];
+    w.rg.ovr = { text: 'overrid', note: '' }; r.push(w.rcvOvrOk());
+    w.rg.ovr.text = ' override '; r.push(w.rcvOvrOk());
+    w.rg.ovr = null; r.push(w.rcvOvrOk());
+    w.rg.ovr = keep;
+    return r.join() === 'false,true,false' || r.join();
+  });
+  (function () {   // NovaLCT NCP send: one helper call per target (each ~35 s), never a Save call; .rcfgx stays one call
+    var keepPost = w.DRV.post, calls = [], d = { id: 'x', model: 'mctrl4k', hw: { kind: 'lct', host: '192.0.2.40', port: 5200, name: 'x' } };
+    var tg = [{ dst: 0, port: 0, card: null }, { dst: 0, port: 1, card: 2 }];
+    atEnd(function (done) { keepPost = w.DRV.post;   // runs once the other async checks (which stub DRV.post too) are done
+    w.DRV.post = function (f, path, body) { calls.push(path + ':' + body.targets.length); return Promise.resolve({ ok: true, frames: 669 }); };
+    w.DRV.families.lct.sendRcvFile(d, { data: '', name: 'a.ncp', kind: 'ncp', targets: tg }).then(function (r) {
+      var a = calls.join(' '); calls = [];
+      return w.DRV.families.lct.sendRcvFile(d, { data: '', name: 'a.rcfgx', kind: 'rcfgx', targets: tg }).then(function (r2) {
+        var got = a + ' | ' + calls.join(' ') + ' | ' + r.text;
+        row(got === '/api/hw/rcv-send:1 /api/hw/rcv-send:1 | /api/hw/rcv-send:2 | 1338 frames' && r.ok && r2.ok, 'NovaLCT NCP send: one helper call per target, no Save; .rcfgx one call — ' + got);
+      });
+    }).catch(function (e) { row(false, 'NCP send threw ' + e.message); }).then(function () { w.DRV.post = keepPost; done(); }); });
+  })();
+  t('Service offers only what was seen working, per family', function () {
+    var mk = function (kind) { return { id: 'x', model: 'mctrl4k', hw: { kind: kind, host: '10.0.0.1', port: 1, name: 'x' } }; };
+    var got = ['lct', 'unico', 'coex', 'offline'].map(function (k) {
+      var d = mk(k); return k + ':' + ['restart', 'factory', 'panels'].map(function (a) { return w.svWhy(d, a) ? '-' : a[0]; }).join('');
+    }).join(' ');
+    return got === 'lct:-fp unico:rf- coex:--p offline:-fp' || got;   // simulated: as its real model (an MCTRL4K here)
+  });
+  t('processors are named after their model ("H2", "H2 2"); old "Processor N" names show the model', function () {
+    var a = w.newProcName([], 'h2'), b = w.newProcName([{ name: 'H2' }], 'h2'), c = w.newProcName([{ name: 'H2' }, { name: 'H2 2' }], 'h2'), u = w.newProcName([{ name: 'x' }], 'custom');
+    var keep = w.P.devices, dv = { id: 'zz', model: 'h2', name: 'Processor 1' }; w.P.devices = [dv];
+    var lab = w.deviceLabel(dv); dv.name = 'FOH'; var lab2 = w.deviceLabel(dv); w.P.devices = keep;
+    var got = [a, b, c, u, lab, lab2].join(' | ');
+    return got === 'H2 | H2 2 | H2 3 | Processor 2 | H2 | FOH' || got;
+  });
+  t('Send: a screen goes whole, never cropped; another processor’s cabinet (only in a project from before the one-processor rule) is Blank', function () {
+    var keepM = w.toScrModel, keepC = w.cardsOfDevice, cell = function (r, c, snd) { return { row: r, col: c, sender: snd, port: 0, connect: 0, x: c * 108, y: r * 216, width: 108, height: 216 }; };
+    try {
+      w.cardsOfDevice = function () { return [1]; };   // "this processor" drives card 1; card 0 is another processor
+      w.toScrModel = function () { return { screens: [{ type: 1, x: 0, y: 0, cols: 1, rows: 2, cells: [cell(0, 0, 0), cell(1, 0, 1)] }] }; };
+      var a = w.hwSendModel({}).screens[0];
+      if (!(a.x === 0 && a.y === 0 && a.cols === 1 && a.rows === 2 && a.cells.length === 2 && a.cells[0].sender === 255 && a.cells[1].row === 1 && a.cells[1].sender === 0)) return 'stacked: ' + JSON.stringify(a);
+      w.toScrModel = function () { return { screens: [{ type: 1, x: 0, y: 0, cols: 2, rows: 2, cells: [cell(0, 0, 1), cell(0, 1, 1), cell(1, 0, 0), cell(1, 1, 1)] }] }; };
+      var b = w.hwSendModel({}).screens[0], bl = b.cells.filter(function (c) { return c.sender === 255; });
+      if (!(b.cols === 2 && b.rows === 2 && bl.length === 1 && bl[0].row === 1 && bl[0].col === 0)) return 'hole: ' + JSON.stringify(b);
+      return true;
+    } finally { w.toScrModel = keepM; w.cardsOfDevice = keepC; }
+  });
+  t('Send: a Complex screen goes out as Complex (its own cabinets, flag 0x0200004A = 01, NSSD ScrType 2)', function () {
+    var keepM = w.toScrModel, keepC = w.cardsOfDevice, reg = function (x, y, snd, k) { return { sender: snd, port: 0, connect: k, x: x, y: y, xInPort: 0, yInPort: 0, width: 128, height: 128 }; };
+    try {
+      w.cardsOfDevice = function () { return [1]; };
+      w.toScrModel = function () { return { screens: [{ type: 2, virtualMode: 0, regions: [reg(0, 0, 0, 0), reg(128, 40, 1, 0), reg(256, 80, 1, 1)] }] }; };
+      var m = w.hwSendModel({}), s = m.screens[0];
+      if (!(s.type === 2 && s.cells.length === 2 && s.cells.every(function (c) { return c.sender === 0; }))) return 'model: ' + JSON.stringify(m);
+      var p = w.HWSEND.buildSendPlan(m, { modelId: 0x7B48, senders: 1 });
+      var f = p.ops.filter(function (o) { return o.op === 'w' && o.addr === 0x0200004A; })[0], n = p.ops.filter(function (o) { return o.op === 'nssd'; })[0];
+      var j = n && JSON.parse(n.json).ScreenDataInSoftSpace[0];
+      return (f && f.hex === '01' && j && j.ScrType === 2 && j.CabinetInDevice.length === 2) || JSON.stringify({ f: f, j: j });
+    } finally { w.toScrModel = keepM; w.cardsOfDevice = keepC; }
+  });
+  // ---------------------------------------------------------------- Diagnostics (2026-10-11)
+  t('Diagnostics: hex dump lines and the problem filter', function () {
+    var hex = w.dgHex('55aa0001fe000000000000000200000002004a7b'), lines = hex.split('\n');
+    if (lines.length !== 2 || lines[0].indexOf('0000  55 AA 00 01 FE') !== 0 || lines[1].indexOf('0010  02 00 4A 7B') !== 0) return hex;
+    var keep = { errOnly: w.dg.errOnly, q: w.dg.q, link: w.dg.link };
+    w.dg.errOnly = true; w.dg.q = ''; w.dg.link = '';
+    var ok = w.dgMatch({ kind: 'err', error: 'no reply (timeout)', link: 'a' }) && !w.dgMatch({ kind: 'tg', sum: 'R sender S1', d: { status: 0 }, link: 'a' }) &&
+      w.dgMatch({ kind: 'tg', sum: 'x', d: { status: 3 }, link: 'a' }) && w.dgMatch({ kind: 'op', route: '/api/hw/run', phase: 'end', ok: false, ms: 3 });
+    w.dg.errOnly = keep.errOnly; w.dg.q = keep.q; w.dg.link = keep.link;
+    return ok || 'problem filter wrong';
+  });
+  t('Diagnostics: a frame finds its reply (same link and serial)', function () {
+    var keep = w.dg.frames;
+    var a = { seq: 1, kind: 'tg', link: 'h:5201', dir: 'tx', d: { serial: 7 } }, b = { seq: 2, kind: 'tg', link: 'h:5200', dir: 'rx', d: { serial: 7 } },
+      c = { seq: 3, kind: 'tg', link: 'h:5201', dir: 'rx', d: { serial: 7 } };
+    w.dg.frames = [a, b, c];
+    var r = w.dgPair(a) === c && w.dgPair(c) === a;
+    w.dg.frames = keep;
+    return r || 'paired with the wrong frame';
+  });
+  // ---------------------------------------------------------------- remove processor, tree, interface size (2026-10-11)
+  t('removing a processor removes its cabinets (asks first; undo brings them back)', function () {
+    w.replaceProject(w.ensureLct(w.newProject()));
+    w.addProcessor('mctrl4k');
+    var lc = P().lct[0].id, d1 = w.addProcessor('mctrl4k'), keepC = w.confirm, asked = [];
+    function sec(x, cols, rows) { var s = w.newScreen(x, 0); s.screenId = lc; s.cols = cols; s.rows = rows; P().screens.push(s); return s; }
+    var a = sec(0, 4, 2); a.wiring.sender = 1; a.wiring.port = 0;   // all on d1: goes
+    var b = sec(2000, 2, 2); b.wiring.mode = 'manual';               // half on d1: trimmed
+    b.manual = { '0,0': { sender: 0, port: 1, connect: 0 }, '0,1': { sender: 0, port: 1, connect: 1 }, '1,0': { sender: 1, port: 1, connect: 0 }, '1,1': { sender: 1, port: 1, connect: 1 } };
+    var c = sec(3000, 2, 1); c.wiring.sender = 0; c.wiring.port = 2;  // not on d1: stays
+    w.commit();
+    try {
+      w.confirm = function (m) { asked.push(m); return false; };
+      w.removeProcessor(d1);
+      if (P().devices.length !== 2 || P().screens.length !== 3) return 'cancel changed the project';
+      w.confirm = function (m) { asked.push(m); return true; };
+      w.removeProcessor(d1);
+    } finally { w.confirm = keepC; }
+    if (!/10 cabinets/.test(asked[0] || '') || /section/i.test(asked[0])) return 'confirm text: ' + asked[0];
+    var B = w.screenById(b.id), C = w.screenById(c.id);
+    if (P().devices.length !== 1 || w.screenById(a.id) || !B || !C) return 'after: ' + P().devices.length + ' processors, ' + P().screens.length + ' sections';
+    var bk = Object.keys(B.manual).sort().join(), bh = Object.keys(B.holes).sort().join();
+    if (bk !== '0,0,0,1' || bh !== '1,0,1,1') return 'trimmed section: wired ' + bk + ' blanks ' + bh;
+    if (w.cellsOf(C).some(function (x) { return x.sender !== 0; })) return 'untouched section lost its wiring';
+    w.undo();
+    return P().devices.length === 2 && !!w.screenById(a.id) && Object.keys(w.screenById(b.id).holes).length === 0 || 'undo did not bring it back';
+  });
+  t('no “Panel blocks” in the tree and no “Section N” labels on the canvas', function () {
+    w.setTab('layout'); w.renderAll();
+    var doc = w.document, tree = doc.getElementById('tree').textContent;
+    if (/Panel blocks/.test(tree) || doc.querySelector('#tree .tn-sec')) return 'tree still lists sections';
+    return !doc.querySelector('#svg .scr-name') && P().screens.length > 0 || 'canvas still has section labels';
+  });
+  // ---------------------------------------------------------------- port backup sets (2026-10-11)
+  t('port backup: primary and backup sets, Auto, and the Send rules shown before Send', function () {
+    var keepPull = w.pullProject; w.pullProject = function () {};   // a shared project from the server must not replace this one
+    try {
+      w.replaceProject(w.ensureLct(w.newProject()));
+      w.addProcessor('mctrl4k');   // card 0: another processor
+      var lc = P().lct[0].id, d = w.addProcessor('h5', 'h20'); w.addOutputCard(d, 'h20');
+      var c = w.cardsOfDevice(d), A = c[0], B = c[1], s = w.newScreen(0, 0);
+      s.screenId = lc; s.cols = 4; s.rows = 2; s.wiring.sender = A; s.wiring.port = 0; P().screens.push(s); w.commit();
+      var use = w.portUsage(w.allCells()), E = function (l) { return w.bkPairErr(l, use); };
+      if (!/itself/.test(E([{ ms: A, mp: 1, bs: A, bp: 1 }]))) return 'self pair allowed';
+      if (!/cabinets/.test(E([{ ms: A, mp: 1, bs: A, bp: 0 }]))) return 'backup port with panels allowed';
+      if (!/primary and a backup/.test(E([{ ms: A, mp: 1, bs: A, bp: 2 }, { ms: A, mp: 2, bs: A, bp: 3 }]))) return 'chain allowed';
+      if (!/same processor/.test(E([{ ms: 0, mp: 0, bs: A, bp: 5 }]))) return 'cross-processor allowed';
+      if (!/free card/.test(E([{ ms: B, mp: 0, bs: A, bp: 15 }]))) return 'backup card with panels allowed';
+      if (E([{ ms: A, mp: 0, bs: A, bp: 2 }]) || E([{ ms: A, mp: 0, bs: B, bp: 7 }])) return 'valid any-to-any pair refused';
+      if (w.bkSetText(w.bkAutoList(A, A)) !== 'S2 P1–P10 → S2 P11–P20' || w.bkSetText(w.bkAutoList(A, B)) !== 'S2 P1–P20 → S3 P1–P20') return 'auto: ' + w.bkSetText(w.bkAutoList(A, A));
+      w.setTab('backup'); w.bkSetMode('port'); w.ui.bkA = A; w.ui.bkB = A; w.ui.bkPf = 2; w.ui.bkPt = 5; w.ui.bkBf = 14; w.renderAll();
+      var add = w.document.querySelector('#bkBody [data-act=addset]');
+      if (!add || add.disabled || add.textContent !== 'Add 4 pairs') return 'Add button: ' + (add && add.textContent);
+      add.click();
+      var got = P().backup.pairs.map(function (q) { return q.mp + '>' + q.bp; }).join();
+      if (got !== '2>14,3>15,4>16,5>17') return 'set added ' + got;
+      w.ui.bkBf = 0; w.renderAll();
+      add = w.document.querySelector('#bkBody [data-act=addset]');
+      if (!add.disabled || !w.document.querySelector('#bkBody .bk-err')) return 'a set onto panels is not flagged before Send';
+      w.document.querySelector('#bkBody [data-act=auto]').click();
+      return P().backup.pairs.length === 10 && P().backup.pairs[9].bp === 19 || 'auto gave ' + P().backup.pairs.length + ' pairs';
+    } finally { w.pullProject = keepPull; w.setTab('layout'); }
+  });
+  // ---------------------------------------------------------------- Send backup (NovaLCT's redundancy Send, 2026-10-11)
+  var sendBackupTest = function (next) {   // async, run last (it keeps its own project): the helper is a stub (nothing leaves the frame)
+    var keepPull = w.pullProject, keepPost = w.DRV.post, keepConfirm = w.confirm, calls = [], asked = [];
+    w.pullProject = function () {};
+    w.DRV.post = function (fam, path, body) { calls.push({ path: path, body: body }); return Promise.resolve({ ok: true, frames: 42, log: [] }); };
+    w.confirm = function (txt) { asked.push(txt); return true; };
+    var fin = function () { w.DRV.post = keepPost; w.confirm = keepConfirm; w.pullProject = keepPull; w.setTab('layout'); pending--; if (next) next(); };
+    pending++;
+    try {
+      w.replaceProject(w.ensureLct(w.newProject()));
+      var lc = P().lct[0].id, d = w.addProcessor('h5', 'h20'), c = w.cardsOfDevice(d), A = c[0], s = w.newScreen(0, 0);
+      s.screenId = lc; s.cols = 4; s.rows = 2; s.wiring.sender = A; s.wiring.port = 0; P().screens.push(s);
+      d.hw = { kind: 'lct', host: '192.0.2.40', port: 5200, name: 'H5', senders: [0x7B48] };
+      w.bkSetMode('port'); w.bkAddPairs(w.bkAutoList(A, A), 'test'); w.commit();
+      w.setTab('backup'); w.renderAll();
+      var btn = w.document.querySelector('#rdBody [data-rd=send]');
+      if (!btn || btn.textContent !== 'Send backup') { row(false, 'Send backup: button ' + (btn && btn.textContent)); fin(); return; }
+      w.rdSendBackup(d).then(function (ok) {
+        var run = calls.filter(function (x) { return x.path === '/api/hw/run'; })[0], ops = run ? run.body.plan.ops : [];
+        var bad = ops.filter(function (o) { return o.op === 'w' && (o.dev !== 0 || [0x01000001, 0x01000011, 0x05065000].indexOf(o.addr) >= 0); });
+        var tbl = ops.filter(function (o) { return o.addr === 0x02300000; })[0];
+        row(ok && run && !bad.length && tbl && tbl.hex.indexOf('9a01000600') === 0 && /10 pairs/.test(asked[0] || '') && /P1 → .*P11/.test(asked[0] || '') && /Nothing is saved/.test(asked[0] || ''),
+          'Send backup: one processor, the confirm lists the pairs, NovaLCT’s redundancy Send only (no Save, no REDU) — ' + (run ? ops.length + ' ops' : 'not sent'));
+        var pend = w.rdReduPending(d);
+        row(pend && pend.length === 10 && w.hw.unsaved && w.hw.unsaved[d.id], 'after Send backup: processor unsaved, REDU waits for Save');
+        var sv = w.HWSEND.buildSavePlan({ pixels: 1, redu: pend });
+        row(sv.ops[0].addr === 0x05065000, 'the Save then writes the pairs record first');
+        // clear: no pairs left -> NovaLCT's Delete of what was sent
+        P().backup.pairs = []; w.commit(); calls.length = 0; asked.length = 0; w.renderAll();
+        var cb = w.document.querySelector('#rdBody [data-rd=send]');
+        row(cb && /Clear/.test(cb.textContent), 'no pairs: the button clears the processor’s backup (' + (cb && cb.textContent) + ')');
+        return w.rdSendBackup(d).then(function () {
+          var run2 = calls.filter(function (x) { return x.path === '/api/hw/run'; })[0], ops2 = run2 ? run2.body.plan.ops : [];
+          var offs = ops2.filter(function (o) { return o.op === 'w' && o.hex === '00' && o.dst === 0; }).length, t2 = ops2.filter(function (o) { return o.addr === 0x02300000; })[0];
+          row(offs === 10 && t2 && t2.hex === '9a0000000000' && /removes 10 pairs/.test(asked[0] || ''), 'clear: the 10 backup ports off, empty table, asked first (' + offs + ' flags)');
+          try { w.localStorage.removeItem('opennova.reduPending'); w.localStorage.removeItem('opennova.backupSent'); } catch (e) {}
+          if (w.hw.unsaved) { delete w.hw.unsaved[d.id]; }
+        });
+      }).then(fin, function (e) { row(false, 'Send backup threw ' + e.message); fin(); });
+    } catch (e) { row(false, 'Send backup setup threw ' + e.message); fin(); }
+  };
+  // ---------------------------------------------------------------- interface size / text size (2026-10-28)
+  // each test puts the sizes and their stored values back as they were
+  function keepSizes(fn) {
+    var ks = {}, z0 = w.uiZoom(), f0 = w.uiText(), tab0 = w.ui.tab;
+    ['opennova.uisize', 'opennova.textsize'].forEach(function (k) { try { ks[k] = w.localStorage.getItem(k); } catch (e) {} });
+    try { return fn(); } finally {
+      w.setUiSize(z0); w.setTextSize(f0); w.mbClose(); w.closeMenu(); if (w.ui.tab !== tab0) w.setTab(tab0);
+      Object.keys(ks).forEach(function (k) { try { if (ks[k] == null) w.localStorage.removeItem(k); else w.localStorage.setItem(k, ks[k]); } catch (e) {} });
+    }
+  }
+  t('interface size: steps 70–150 % (85 / 115 kept), remembered, badge, − 100 % + in Preferences', function () {
+    return keepSizes(function () {
+      w.setUiSize(1); var seq = [];
+      for (var i = 0; i < 8; i++) { w.stepUiSize(1); seq.push(Math.round(w.uiZoom() * 100)); }
+      w.setUiSize(0.9); w.stepUiSize(-1); seq.push(Math.round(w.uiZoom() * 100)); w.stepUiSize(-1); w.stepUiSize(-1); w.stepUiSize(-1); seq.push(Math.round(w.uiZoom() * 100));
+      var stored = w.localStorage.getItem('opennova.uisize'), mid = w.document.querySelector('#uiSizeBtns [data-uistep="0"]'), minus = w.document.querySelector('#uiSizeBtns [data-uistep="-1"]');
+      var badge = w.document.getElementById('uiBadge').textContent;
+      w.stepUiSize(0);
+      var got = seq.join(',') + ' ' + stored + ' ' + (mid && mid.textContent) + ' ' + (minus && minus.disabled) + ' ' + badge + ' ' + w.uiZoom() + ' ' + w.document.documentElement.style.zoom;
+      return got === '110,115,120,130,140,150,150,150,85,70 0.7 70 % true Interface 70 % (smallest) 1 ' || got;
+    });
+  });
+  t('interface size keys: Ctrl+Alt+= / − / 0 (and the number pad); Ctrl+0 and AltGr characters left alone', function () {
+    return keepSizes(function () {
+      var key = function (k, code, o) {
+        var e = new w.KeyboardEvent('keydown', Object.assign({ key: k, code: code, ctrlKey: true, altKey: true, bubbles: true, cancelable: true }, o || {}));
+        w.document.body.dispatchEvent(e); return Math.round(w.uiZoom() * 100) + (e.defaultPrevented ? '' : 'n');
+      };
+      w.setUiSize(1); w.setTab('dashboard');
+      var got = [key('=', 'Equal'), key('=', 'Equal'), key('-', 'Minus'), key('+', 'NumpadAdd'), key('-', 'NumpadSubtract'), key('0', 'Digit0'),
+        key('}', 'Digit0', { ctrlKey: true, altKey: true }), key('0', 'Digit0', { altKey: false }), key('Dead', 'Equal'), key('=', 'Equal', { ctrlKey: false, metaKey: true })];
+      w.setTab('layout'); got.push(key('-', 'Minus'));   // the Layout canvas's own keys don't take it
+      return got.join(' ') === '110 115 110 115 110 100 100n 100n 110 115 110' || got.join(' ');
+    });
+  });
+  t('text size: fonts only (body, menus, canvas labels’ limit), the canvas and the interface size stay; remembered', function () {
+    return keepSizes(function () {
+      w.setUiSize(1); w.setTextSize(1); w.setTab('layout'); w.renderAll();
+      var vp0 = w.document.getElementById('viewport').getBoundingClientRect().width, b0 = parseFloat(w.getComputedStyle(w.document.body).fontSize);
+      var h20 = parseFloat(w.getComputedStyle(w.document.querySelector('.modtabs button')).fontSize);
+      w.setTextSize(1.15);
+      var b1 = parseFloat(w.getComputedStyle(w.document.body).fontSize), h21 = parseFloat(w.getComputedStyle(w.document.querySelector('.modtabs button')).fontSize);
+      var vp1 = w.document.getElementById('viewport').getBoundingClientRect().width, on = w.document.querySelector('#textSizeBtns .on');
+      var got = [Math.round(b1 / b0 * 100) / 100, Math.round(h21 / h20 * 100) / 100, Math.abs(vp1 - vp0) < 30, w.uiZoom(), w.uiText(), w.localStorage.getItem('opennova.textsize'),
+        on && on.getAttribute('aria-label'), w.document.getElementById('uiBadge').textContent, w.textSizeName(1.3)].join(' ');
+      return got === '1.15 1.15 true 1 1.15 1.15 Large Text Large Extra large' || got;
+    });
+  });
+  t('menus open at the pointer at 70 % and 150 %; View ▸ Interface Size stays open and ticks the size', function () {
+    return keepSizes(function () {
+      var got = [];
+      [0.7, 1.5].forEach(function (z) {
+        w.setUiSize(z);
+        w.openMenu(400, 300, [{ label: 'x', act: function () {} }]);
+        var r = w.document.getElementById('ctxMenu').getBoundingClientRect(); w.closeMenu();
+        got.push(z + ':' + Math.round(r.left) + ',' + Math.round(r.top));
+      });
+      w.setUiSize(1); w.mbOpen('viewMbMenu');
+      var sub = Array.prototype.filter.call(w.document.querySelectorAll('#viewMbMenu .mb-subbtn'), function (b) { return /Interface Size/.test(b.textContent); })[0];
+      if (!sub) return 'no View ▸ Interface Size';
+      w.mbSubOpen(sub.parentNode);
+      var m = sub.parentNode.lastElementChild, big = Array.prototype.filter.call(m.querySelectorAll('button'), function (b) { return /^Bigger/.test(b.textContent); })[0];
+      big.click();
+      var tick = m.querySelector('[aria-checked="true"]'), sr = m.getBoundingClientRect();
+      got.push(w.uiZoom(), !m.hidden, tick && tick.textContent.replace(/[●✓]/g, '').trim(), m.querySelectorAll('[role=menuitemradio]').length, sr.right <= w.innerWidth + 1);
+      // at 150 % the long submenu moves up into the window (the frame is 800 px high)
+      w.setUiSize(1.5); w.mbClose(); w.mbOpen('viewMbMenu');
+      sub = Array.prototype.filter.call(w.document.querySelectorAll('#viewMbMenu .mb-subbtn'), function (b) { return /Interface Size/.test(b.textContent); })[0];
+      w.mbSubOpen(sub.parentNode);
+      var r15 = sub.parentNode.lastElementChild.getBoundingClientRect();
+      got.push(r15.bottom <= w.innerHeight + 1 && r15.top >= 0 || Math.round(r15.top) + '..' + Math.round(r15.bottom) + '/' + w.innerHeight);
+      // vh / vw are zoomed too: the CSS divides them by --uiz (the File menu's and the tall right-click menu's max-height)
+      var vx = w.document.createElement('div'); vx.style.cssText = 'position:fixed;left:0;top:0;width:calc(100vw / var(--uiz));height:calc(100vh / var(--uiz))';
+      w.document.body.appendChild(vx); var vr = vx.getBoundingClientRect(); vx.remove();
+      got.push(Math.abs(vr.width - w.innerWidth) < 2 && Math.abs(vr.height - w.innerHeight) < 2 || Math.round(vr.width) + '×' + Math.round(vr.height));
+      return got.join(' ') === '0.7:400,300 1.5:400,300 1.1 true 110 % 11 true true true' || got.join(' ');
+    });
+  });
+  // ---------------------------------------------------------------- Online / Offline, no generic processor (2026-10-11)
+  // (addresses from TEST-NET 192.0.2.x: never routed; the frame's searches / read-backs are switched off above)
+  t('a new project has no processor; drawing asks for one; the old unused “any model” default is dropped', function () {
+    var pj = w.ensureLct(w.newProject());
+    if (pj.devices.length || pj.processors.length) return 'new project has ' + pj.devices.length + ' processors';
+    var old = w.newProject(); old.devices = [{ id: 'od', model: 'custom', name: 'Processor 1' }]; old.processors = [{ ports: 40, dev: 'od' }];
+    w.ensureLct(old);
+    if (old.devices.length || old.processors.length) return 'old default kept';
+    var keep = w.P; w.P = pj;
+    try { var why = w.cardProblem({ sender: 0, port: 0 }), lbl = w.portLabel(0, 2); } finally { w.P = keep; }
+    return /Add a processor/.test(why) && lbl === 'P3' && w.PROC_ORDER.indexOf('custom') < 0 || why + ' / ' + lbl;
+  });
+  t('online: a found VX1000 (USB) is offered; one click adds it named and linked; then it shows “In project”', function () {
+    var keepPull = w.pullProject; w.pullProject = function () {};
+    try {
+      w.replaceProject(w.ensureLct(w.newProject()));
+      var x = { kind: 'lct', ip: 'usb:0483:5720@0-1', port: 0, usb: 'USB 0-1', senders: [0x620C], modelId: 0x620C, deviceName: 'VX1000 · USB', SN: '' };
+      var t0 = w.olTarget(x);
+      if (t0.how !== 'add' || t0.m.key !== 'vx1000') return 'target ' + JSON.stringify(t0);
+      if (P().devices.length) return 'something was added before the click';
+      w.olAdd(x);
+      var d = P().devices[0];
+      if (P().devices.length !== 1 || d.model !== 'vx1000' || d.name !== 'VX1000' || !d.hw || d.hw.host !== x.ip || P().processors.length !== 1 || P().processors[0].ports !== 10)
+        return 'got ' + P().devices.map(function (z) { return z.name + '/' + z.model; }) + ' cards ' + JSON.stringify(P().processors);
+      return w.olTarget(x).inp === d || 'not shown as in the project';
+    } finally { w.replaceProject(w.ensureLct(w.newProject())); w.pullProject = keepPull; }
+  });
+  t('online: one H over two links = one processor; the web API names the chassis; else the smallest H (“H2 2”)', function () {
+    var keepPull = w.pullProject; w.pullProject = function () {};
+    try {
+      w.replaceProject(w.ensureLct(w.newProject()));
+      var f = [{ kind: 'lct', ip: '192.0.2.15', port: '5201+5202', senders: [0x7B46, 0x7B46], modelId: 0x7B46, deviceName: 'H 16-port (RJ45) ×2', SN: '' },
+        { kind: 'lct', ip: '192.0.2.11', port: 5202, senders: [0x7B48], modelId: 0x7B48, deviceName: 'H5', SN: '', web: { modelId: 29963, ledCards: [{ slot: 1, modelId: 0x7B48 }] } },
+        { kind: 'lct', ip: '192.0.2.12', port: 5201, senders: [0x7B46], modelId: 0x7B46, deviceName: 'H 16-port (RJ45)', SN: '' }];
+      f.forEach(function (x) { w.olAdd(x); });
+      var got = P().devices.map(function (d) { return d.name + '/' + d.model + '/' + w.cardsOfDevice(d).map(function (i) { return P().processors[i].type; }).join('+') + '@' + d.hw.port; }).join(' ');
+      return got === 'H2/h2/h16+h16@5201+5202 H5/h5/h20@5202 H2 2/h2/h16@5201' && w.cardName(0) === 'Sending card 1' || got + ' / ' + w.cardName(0);
+    } finally { w.replaceProject(w.ensureLct(w.newProject())); w.pullProject = keepPull; }
+  });
+  t('online: Unico by serial number; an unlinked processor of that model (designed offline) is linked, not duplicated', function () {
+    var keepPull = w.pullProject; w.pullProject = function () {};
+    try {
+      w.replaceProject(w.ensureLct(w.newProject()));
+      var d = w.addProcessor('vx2000pro'), x = { kind: 'unico', ip: '192.0.2.20', port: 8088, SN: 'SN-TEST-1', modelId: 0x622C, deviceName: 'VX2000 Pro' };
+      if (w.olTarget(x).how !== 'link') return 'target ' + w.olTarget(x).how;
+      w.olAdd(x);
+      if (P().devices.length !== 1 || !d.hw || d.hw.sn !== 'SN-TEST-1') return 'devices ' + P().devices.length;
+      var moved = { kind: 'unico', ip: '192.0.2.21', port: 8088, SN: 'SN-TEST-1', modelId: 0x622C, deviceName: 'VX2000 Pro' };
+      return w.olTarget(moved).inp === d || 'same serial at a new address would be added again';
+    } finally { w.replaceProject(w.ensureLct(w.newProject())); w.pullProject = keepPull; }
+  });
+  t('“Pick a model” (an import): Send refused; Link names the model (VX1000 over USB, wiring kept)', function () {
+    var keepPull = w.pullProject, keepDet = w.hwDetect, keepPost = w.DRV.post, posts = [];
+    w.pullProject = function () {}; w.hwDetect = function () {}; w.DRV.post = function (f, path) { posts.push(path); return Promise.resolve({ ok: false, error: 'stub' }); };
+    try {
+      var pj = w.newProject(); pj.processors = [{ ports: 40 }];   // what a .scr import gives: cards without a processor
+      w.replaceProject(w.ensureLct(pj));
+      var d = P().devices[0], s = w.newScreen(0, 0); s.screenId = P().lct[0].id; s.cols = 2; s.rows = 2; s.wiring.sender = 0; s.wiring.port = 0; P().screens.push(s); w.commit();
+      if (!w.procUnset(d) || w.procModel(d.model).name !== 'Pick a model') return 'not "Pick a model": ' + d.model;
+      d.hw = { kind: 'lct', host: '192.0.2.50', port: 5200, name: 'x', senders: [0x620C] };
+      var sent = w.hwSend(d, false);
+      delete d.hw;
+      if (posts.length) return 'Send went out for an unset model: ' + posts.join();
+      var x = { kind: 'lct', ip: 'usb:0483:5720@0-2', port: 0, usb: 'USB 0-2', senders: [0x620C], modelId: 0x620C, deviceName: 'VX1000 · USB', SN: '' };
+      w.hwLink(d, x);
+      var ports = w.cellsOf(w.screenById(s.id)).map(function (c) { return c.sender + ':' + c.port; }).filter(function (v, i, a) { return a.indexOf(v) === i; }).join();
+      return typeof sent.then === 'function' && d.model === 'vx1000' && d.name === 'VX1000' && d.hw && d.hw.host === x.ip && P().processors[0].ports === 10 && /^0:/.test(ports) || d.model + ' ' + d.name + ' ' + JSON.stringify(P().processors) + ' ' + ports;
+    } finally { w.hwDetect = keepDet; w.DRV.post = keepPost; w.replaceProject(w.ensureLct(w.newProject())); w.pullProject = keepPull; }
+  });
+  t('Add processor: online lists only what was found, offline only the catalogue (never both, no generic choice)', function () {
+    var keepPull = w.pullProject, keepFound = w.hw.found, keepHelper = w.hw.helper; w.pullProject = function () {};
+    try {
+      w.replaceProject(w.ensureLct(w.newProject()));
+      w.hw.helper = true;   // as if the helper answered: without one (CI) its ping can land first and the list says so instead
+      w.hw.found = [{ kind: 'lct', ip: '192.0.2.30', port: 5200, senders: [0x1103], modelId: 0x1103, deviceName: 'MCTRL4K', SN: '' }];
+      P().mode = 'online'; w.devOpenPicker();
+      var doc = w.document, vis = function (id) { return !doc.getElementById(id).hidden; };
+      var on = vis('dpFound') && !vis('dpMain') && !vis('dpGo') && doc.querySelectorAll('#dpFound .dp-found').length === 1 && /MCTRL4K/.test(doc.getElementById('dpFound').textContent);
+      w.olSetMode('offline', 'test');
+      var off = !vis('dpFound') && vis('dpMain') && vis('dpGo') && doc.querySelectorAll('#dpModels [data-key]').length > 0 && !doc.querySelector('#dpFams [data-fam="Generic"]') &&
+        !/any model|Pick a model/i.test(doc.getElementById('devPickDlg').textContent);
+      w.devClosePicker();
+      return on && off && P().devices.length === 0 || 'online ' + on + ', offline ' + off + ', devices ' + P().devices.length;
+    } finally { w.devClosePicker(); w.hw.found = keepFound; w.hw.helper = keepHelper; w.replaceProject(w.ensureLct(w.newProject())); w.pullProject = keepPull; }
+  });
+  // ---------------------------------------------------------------- online / offline workspaces (as VMP; user, 2026-10-28)
+  t('Exit offline mode: the offline project goes out of view and is kept; Enter offline mode brings it back (this browser only)', function () {
+    var keep = { shared: w.projShared, pull: w.pullProject, confirm: w.confirm, toast: w.toast }, ls = w.localStorage, K = w.WS_KEY, kept = {}, asked = [], said = [];
+    ['online', 'offline'].forEach(function (m) { kept[m] = ls.getItem(K + m); ls.removeItem(K + m); });
+    w.projShared = function () { return false; }; w.pullProject = function () {}; w.confirm = function (m) { asked.push(m); return false; };
+    w.toast = function (m) { said.push(m); };
+    try {
+      var on = w.ensureLct(w.newProject()); on.name = 'Show online'; on.mode = 'online'; w.replaceProject(on); w.addProcessor('vx1000');
+      var label = function () { return w.document.getElementById('btnOfflineMode').textContent; };
+      if (label() !== 'Enter offline mode') return 'menu says ' + label();
+      w.olWorkspace('offline', 'test');
+      w.devClosePicker();   // a new offline project asks "Which processors?"
+      if (P().name !== 'Offline project' || w.olMode() !== 'offline' || P().devices.length || label() !== 'Exit offline mode') return 'entering: ' + P().name + ' ' + w.olMode() + ' ' + P().devices.length + ' ' + label();
+      w.addProcessor('mctrl4k'); w.addProcessor('mctrl4k'); P().name = 'Designed'; w.commit();
+      w.olSetMode('online', 'test');
+      if (w.olMode() !== 'offline') return 'the picker’s switch moved a project with processors';
+      w.olWorkspace('online', 'test');
+      var back = P().name === 'Show online' && P().devices.length === 1 && w.olMode() === 'online' && /^Offline project kept/.test(said[said.length - 1]);
+      if (!back) return 'exit: ' + P().name + ' ' + P().devices.length + ' ' + said.join(' / ');
+      if (w.ui.undo.length) return 'undo could bring the other workspace’s project back';
+      w.olWorkspace('offline', 'test');
+      var again = P().name === 'Designed' && P().devices.length === 2 && w.olMode() === 'offline';
+      // every processor linked to hardware: leaving offline offers to move the project to online (here: declined, so it is kept offline)
+      P().devices.forEach(function (d, i) { d.hw = { kind: 'lct', host: '192.0.2.' + (60 + i), port: 5200, senders: [] }; }); w.commit();
+      w.olWorkspace('online', 'test');
+      var declined = asked.length === 1 && /Move this project to online/.test(asked[0]) && P().name === 'Show online';
+      w.confirm = function (m) { asked.push(m); return true; };
+      w.olWorkspace('offline', 'test'); w.olWorkspace('online', 'test');
+      var moved = asked.length === 2 && P().name === 'Designed' && w.olMode() === 'online';
+      return again && declined && moved || 'again ' + again + ', declined ' + declined + ' (' + asked.length + '), moved ' + moved + ' ' + P().name + ' ' + w.olMode();
+    } finally {
+      w.projShared = keep.shared; w.pullProject = keep.pull; w.confirm = keep.confirm; w.toast = keep.toast; w.devClosePicker();
+      ['online', 'offline'].forEach(function (m) { if (kept[m] == null) ls.removeItem(K + m); else ls.setItem(K + m, kept[m]); });
+      w.replaceProject(w.ensureLct(w.newProject()));
+    }
+  });
+  workspaceServerTest();
+  pending++;   // the Screen Settings read check (own project + helper stub) runs right after Send backup, reserved now
+  sendBackupTest(screenReadTest);
+  heldErrorsTest();
+  heldSyncTest();
+  alphaTest();
+  actionIdTest();
+  errPromptTest();
+  heatTest();
+  pipeTest();
+  controlsTest();
+  previewTest();
+  lctGroupTest();
+  networkDialogTest(w, NW_DEMO);
+}
+// Settings ▸ Network…: ticks and the bind choice go to the helper (stubbed), at the end: the dialog is open meanwhile
+function networkDialogTest(w, NW_DEMO) {
+  atEnd(function (done) {
+    var keepPost = w.DRV.post, posts = [], d = w.document, cur = JSON.parse(JSON.stringify(NW_DEMO));   // the helper's settings, kept between calls
+    w.DRV.post = function (f, path, body) { if (path.indexOf('/api/hw/net/') !== 0) return keepPost.apply(this, arguments); posts.push(path + ' ' + JSON.stringify(body.disabled || body.bind || '')); var r = cur; if (body.disabled) { r.settings.disabled = body.disabled; r.interfaces.forEach(function (i) { i.search = i.type !== 'loopback' && body.disabled.indexOf(i.name) < 0; }); } if (body.bind) r.settings.bind = body.bind; return Promise.resolve(JSON.parse(JSON.stringify(r))); };
+    w.nwOpen(JSON.parse(JSON.stringify(NW_DEMO)));
+    var cb = d.querySelector('#nwBody [data-nw="search"][data-n="Ethernet 3"]'); cb.checked = false; cb.dispatchEvent(new Event('change', { bubbles: true }));
+    setTimeout(function () {
+      var sel = d.getElementById('nwBind'); sel.value = 'Ethernet 2'; sel.dispatchEvent(new Event('change', { bubbles: true }));
+      setTimeout(function () {
+        var txt = d.getElementById('nwBody').textContent, ok = posts[0] === '/api/hw/net/set ["Wi-Fi","Ethernet 3"]' && posts[1] === '/api/hw/net/set "Ethernet 2"' &&
+          /Applies the next time Open Nova starts/.test(txt) && !d.querySelector('#nwBody [data-n="Ethernet 3"]').checked;
+        w.DRV.post = keepPost; w.nwClose();
+        row(ok, 'Settings ▸ Network…: unticking a network saves the list (this computer), the bind choice saves and says it applies at the next start' + (ok ? '' : ' — ' + posts.join(' / ') + ' / ' + txt.slice(-120)));
+        done();
+      }, 50);
+    }, 50);
+  });
+}
+// Several screens on one NovaLCT processor (user, 2026-10-28: "multiple screens … grouped under the same singular
+// processor"): the tree lists them under it in its order, + Screen adds the next one of the active processor, one Send carries
+// all of them (NSSD in order, a fixed UUID per screen). A screen belongs to ONE processor (user, 2026-10-28: "A screen will
+// not be spread across two processors"): its card pickers, Move, auto wiring and the card of another processor keep to that;
+// a screen is given to another processor as a whole; an old project with a screen on two processors is split on load.
+// Read layout puts a processor's screens back into its own tabs in order and leaves the other processor's alone, Remove
+// processor closes its own screens.
+function lctGroupTest() {
+  var w = f.contentWindow, P = function () { return w.P; }, doc = w.document;
+  atEnd(function (done) {
+    var keepPull = w.pullProject, keepConfirm = w.confirm, keepTv = w.ui.treeView, bad = [], now = new Date(2026, 9, 28, 12, 0, 0);
+    var fin = function () {
+      w.confirm = keepConfirm; w.replaceProject(w.ensureLct(w.newProject())); w.pullProject = keepPull; w.setTreeView(keepTv); w.renderAll();
+      row(!bad.length, 'NovaLCT multi-screen: grouped under the processor (tree, order, + Screen), one Send with every screen in order, no wiring across processors, a screen moves to another processor whole, an old shared screen is split on load, read-back round trip into its own tabs, Remove processor closes its screens' + (bad.length ? ' — ' + bad.join('; ') : ''));
+      done();
+    };
+    var ids = function (l) { return l.map(function (x) { return x.id; }).join(); };
+    var sec = function (lc, x, cols, rows, card, port) { var s = w.newScreen(x, 0); s.screenId = lc.id; s.cols = cols; s.rows = rows; s.wiring.sender = card; s.wiring.port = port; P().screens.push(s); return s; };
+    var plan = function (d) { return JSON.stringify(w.HWSEND.buildSendPlan(w.hwSendModel(d), { modelId: 0x620C, senders: 1, backup: [], now: now })); };
+    try {
+      w.pullProject = function () {};
+      w.confirm = function () { return true; };
+      w.replaceProject(w.ensureLct(w.newProject()));
+      var A = w.addProcessor('vx1000'), B = w.addProcessor('vx1000'), lc0 = P().lct[0];
+      w.setTab('layout'); w.ui.viewScreen = lc0.id;
+      var a1 = sec(lc0, 0, 3, 2, 0, 0); a1.holes = { '0,0': true, '1,0': true, '2,0': true };   // a blank top row: NovaLCT keeps it
+      w.ui.mSender = 0; w.commit();
+      var lc1 = w.addLctScreen(); sec(lc1, 0, 2, 1, 0, 1);
+      w.ui.mSender = 1; var lc2 = w.addLctScreen(); var b1 = sec(lc2, 0, 2, 2, 1, 0);
+      w.ui.mSender = 0; var lc3 = w.addLctScreen(); w.commit();
+      // grouping and order
+      if (ids(P().lct) !== ids([lc0, lc1, lc3, lc2])) bad.push('+ Screen order ' + P().lct.map(function (l) { return l.name; }).join());
+      if (lc1.dev !== A.id || lc2.dev !== B.id || lc3.dev !== A.id) bad.push('+ Screen did not note the processor');
+      if (ids(w.lctScreensOf(A)) !== ids([lc0, lc1, lc3]) || ids(w.lctScreensOf(B)) !== ids([lc2])) bad.push('lctScreensOf');
+      w.ui.viewScreen = lc0.id; w.ui.mSender = 0; w.setTreeView('screens'); w.renderAll();
+      var own = Array.prototype.map.call(doc.querySelectorAll('#tree .tn-lct'), function (r) { var t = r.querySelector('.tn-own'); return t ? t.textContent : '-'; }).join();
+      if (own !== [A, A, A, B].map(w.deviceLabel).join()) bad.push('Screens view tags: ' + own);
+      var under2 = Array.prototype.map.call(doc.querySelectorAll('#tree .tn-dev[data-id="' + lc2.id + '"]'), function (r) { return r.dataset.dev; }).join();
+      if (under2 !== B.id) bad.push('under ' + lc2.name + ': ' + under2);
+      w.setTreeView('procs'); w.renderAll();
+      var pv = Array.prototype.map.call(doc.querySelectorAll('#devList .dv-li, #devList .dv-scr'), function (r) { return r.classList.contains('dv-scr') ? r.querySelector('.dv-n').textContent + ':' + r.dataset.lct : 'P:' + r.dataset.id; }).join();
+      if (pv !== ['P:' + A.id, '1:' + lc0.id, '2:' + lc1.id, '3:' + lc3.id, 'P:' + B.id, '1:' + lc2.id].join()) bad.push('Processors view: ' + pv);
+      // Send: all of A's screens (the empty one left out), in order, whole (blank top row kept), fixed UUIDs
+      var mA = w.hwSendModel(A), uA = mA.screens.map(function (s) { return s.uuid; });
+      if (mA.screens.length !== 2 || mA.screens[0].lcId !== lc0.id || mA.screens[1].lcId !== lc1.id) bad.push('Send model screens ' + mA.screens.map(function (s) { return s.name; }).join());
+      if (mA.screens[0].rows !== 2 || mA.screens[0].y !== a1.y || mA.screens[0].cells.filter(function (c) { return c.sender === 255; }).length !== 3) bad.push('screen wholly on A was cut: ' + mA.screens[0].rows + ' rows at y ' + mA.screens[0].y);
+      if (uA[0] !== w.lctUuid(lc0, A) || uA[0] === w.lctUuid(lc1, A) || !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(uA[0])) bad.push('UUID ' + uA[0]);
+      var nj = JSON.parse(JSON.parse(plan(A)).ops.filter(function (o) { return o.op === 'nssd'; })[0].json).ScreenDataInSoftSpace;
+      if (nj.map(function (s) { return s.ScreenIndex + '=' + s.UUID; }).join() !== '0=' + uA[0] + ',1=' + uA[1]) bad.push('NSSD ' + JSON.stringify(nj.map(function (s) { return [s.ScreenIndex, s.UUID]; })));
+      A.hw = { kind: 'lct', host: '192.0.2.61', port: 5200, name: 'VX1000', senders: [0x620C] };
+      var ps = w.DRV.families.lct.planSend(A, { pairs: [] });
+      if (!ps.ok || !/2 screens go together, in this order: 1 Screen 1 \(Standard\) · 2 Screen 2 \(Standard\)/.test(ps.confirm) || /⚠/.test(ps.confirm)) bad.push('Send confirm: ' + (ps.confirm || ps.error));
+      w.moveLct(lc1, -1);
+      if (w.hwSendModel(A).screens.map(function (s) { return s.lcId; }).join() !== lc1.id + ',' + lc0.id || ids(P().lct) !== ids([lc1, lc0, lc3, lc2])) bad.push('Earlier did not reorder A’s screens');
+      w.moveLct(lc1, 1);
+      // one processor per screen: the active card, the card picker, Move, another processor's card, auto wiring
+      w.ui.viewScreen = lc0.id; w.ui.mSender = 1; w.setTreeView('screens'); w.renderAll();
+      if (w.ui.mSender !== 0) bad.push('the active card stayed on B on A’s screen');
+      var opts = Array.prototype.map.call(doc.querySelectorAll('#mSender option'), function (o) { return o.value; }).join();
+      if (opts !== '0') bad.push('card picker on A’s screen offers ' + opts);
+      var a2 = P().screens.filter(function (x) { return x.screenId === lc1.id; })[0];
+      w.moveSectionTo(w.screenById(b1.id), lc0.id); w.movePortsTo(a2, 1);
+      if (w.screenById(b1.id).screenId !== lc2.id || a2.wiring.sender !== 0) bad.push('Move put cabinets on another processor');
+      var mv = w.P.processors.map(function (c, i) { return i; }).filter(function (i) { return (w.lctAllowedCards(lc1.id) || []).indexOf(i) >= 0; }).join();
+      if (mv !== '0') bad.push('Move ports to offers ' + mv);
+      w.activateCard(lc0.id, 1);
+      if (w.ui.viewScreen !== lc2.id || w.ui.mSender !== 1) bad.push('B’s card on A’s screen did not open B’s screen');
+      w.ui.viewScreen = lc0.id; w.renderAll();
+      var ov = sec(lc0, 1200, 2, 1, 0, 9); ov.wiring.max = 1; ov.wiring.dir = 'V'; w.commit();   // A has 10 ports: the 2nd column would be B's port 1
+      var oc = w.cellsOf(ov);
+      if (!(oc[0].sender === 0 && oc[1].sender == null && /no free port left/.test((w.ui.autoErr[ov.id] || []).join()))) bad.push('auto wiring ran onto B: ' + JSON.stringify(oc.map(function (c) { return c.sender + ':' + c.port; })));
+      P().screens = P().screens.filter(function (x) { return x.id !== ov.id; }); w.commit();
+      w.lctSetDev(lc3, B);
+      if (w.lctOwner(lc3).id !== B.id || ids(w.lctScreensOf(B)) !== ids([lc3, lc2])) bad.push('give an empty screen to B: ' + w.lctScreensOf(B).map(function (l) { return l.name; }).join());
+      w.lctSetDev(lc3, A);
+      var asked = 0; w.confirm = function () { asked++; return false; };
+      var hw = sec(lc1, 900, 1, 1, 0, 5); hw.wiring.mode = 'manual'; hw.manual = { '0,0': { sender: 0, port: 5, connect: 0 } }; w.commit();
+      w.lctSetDev(lc1, B);
+      if (asked !== 1 || w.lctOwner(lc1).id !== A.id) bad.push('giving a hand-wired screen away did not ask first');
+      w.confirm = function () { return true; };
+      P().screens = P().screens.filter(function (x) { return x.id !== hw.id; }); w.commit();
+      if (w.lctMixed().length || w.problems(w.allCells(), w.portUsage(w.allCells())).some(function (x) { return /one processor/.test(x); })) bad.push('a screen ended up on two processors');
+      // read-back round trip of A: its own tabs (same place and name), B untouched
+      lc0.name = 'Main'; w.commit();
+      var before = plan(A), bBefore = plan(B), n0 = JSON.parse(before).ops.filter(function (o) { return o.op === 'nssd'; })[0];
+      var r = { ok: true, cards: [{ dst: 0, screens: JSON.parse(n0.json).ScreenDataInSoftSpace }] };
+      P().screens = P().screens.filter(function (s) { return s.screenId !== lc1.id; });   // the project drifted
+      w.screenById(a1.id).x += 128; w.commit();
+      w.rbApply([{ d: A, r: r, bk: null }], 'test');
+      A = w.deviceById(A.id); B = w.deviceById(B.id);   // (the read-back's project is a new copy)
+      var L = P().lct;
+      if (L.map(function (l) { return l.id; }).join() !== [lc0.id, lc1.id, lc2.id].join() || L[0].name !== 'Main') bad.push('tabs after read-back: ' + L.map(function (l) { return l.name; }).join() + ' (A’s empty Screen 4 should close, the rest keep place and name)');
+      if (plan(A) !== before) bad.push('A’s Send after read-back differs from before');
+      if (plan(B) !== bBefore || !w.screenById(b1.id)) bad.push('reading A changed B');
+      if (w.ui.viewScreen !== lc0.id) bad.push('read-back shows ' + (w.lctById(w.ui.viewScreen) || {}).name);
+      // read-back of B holding NovaLCT's own two screens (unknown UUIDs, listed out of order): B's tab first, then a new one
+      // after it
+      var cab = function (dev, port, k, x) { return { DevID: dev, NetPort: port, ConnectID: k, XPos: x, YPos: 0, Width: 128, Height: 128, GroupID: 0, RowIndexInScreen: 0, ColIndexInScreen: k, DviIndex: 1 }; };
+      var rb = { ok: true, cards: [{ dst: 0, screens: [
+        { UUID: 'aaaaaaaa-0000-4000-8000-000000000001', ScrType: 2, ScreenIndex: 1, VirMode: 0, CabinetInDevice: [cab(0, 3, 0, 2000)] },
+        { UUID: 'aaaaaaaa-0000-4000-8000-000000000000', ScrType: 1, ScreenIndex: 0, VirMode: 0, ScrX: 0, ScrY: 0, CabinetCol: 2, CabinetRow: 1, DVIlist: { '1': '0, 0' }, CabinetInDevice: [cab(0, 0, 0, 0), cab(0, 0, 1, 128)] }] }] };
+      w.rbApply([{ d: B, r: rb, bk: null }], 'test');
+      A = w.deviceById(A.id); B = w.deviceById(B.id);
+      L = P().lct;
+      if (L.length !== 4 || L[2].id !== lc2.id || L[3].dev !== B.id || ids(w.lctScreensOf(B)) !== ids([L[2], L[3]])) bad.push('B read-back tabs: ' + L.map(function (l) { return l.name; }).join());
+      if (w.lctScreenType(L[2].id, w.allCells()).kind !== 'Standard' || w.lctScreenType(L[3].id, w.allCells()).kind !== 'Complex') bad.push('B’s screens out of order');
+      if (ids(w.lctScreensOf(A)) !== ids([lc0, lc1])) bad.push('A’s screens after reading B: ' + w.lctScreensOf(A).map(function (l) { return l.name; }).join());
+      // Remove processor: its own screens close with it
+      w.removeProcessor(B);
+      if (ids(P().lct) !== ids([lc0, lc1])) bad.push('after removing B: ' + P().lct.map(function (l) { return l.name; }).join());
+      // an old project (or an import) with a screen on two processors: split into one screen per processor on load, cabinets
+      // where they were, nothing cropped; until then Send refuses it and the layout lists it as a problem
+      w.replaceProject(w.ensureLct(w.newProject()));
+      A = w.addProcessor('vx1000'); B = w.addProcessor('vx1000'); lc0 = P().lct[0]; lc0.name = 'Stage';
+      var mixd = sec(lc0, 0, 2, 1, 0, 0); mixd.wiring.mode = 'manual'; mixd.manual = { '0,0': { sender: 0, port: 0, connect: 0 }, '1,0': { sender: 1, port: 0, connect: 0 } };
+      var bOnly = sec(lc0, 1000, 1, 1, 1, 1); w.commit();
+      if (!w.hwSendCheck(A) || !w.problems(w.allCells(), w.portUsage(w.allCells())).some(function (x) { return /Stage has cabinets on .* a screen belongs to one processor/.test(x); })) bad.push('a shared screen is not refused / listed');
+      var pj = w.ensureLct(JSON.parse(JSON.stringify(P())));
+      var nm = pj.lct.map(function (l) { return l.name + '@' + l.dev; }).join();
+      if (nm !== ['Stage – ' + w.deviceLabel(A) + '@' + A.id, 'Stage – ' + w.deviceLabel(B) + '@' + B.id].join()) bad.push('split tabs ' + nm);
+      var on = function (lcId) { return pj.screens.filter(function (x) { return x.screenId === lcId; }); };
+      var pa = on(pj.lct[0].id), pb = on(pj.lct[1].id);
+      if (!(pa.length === 1 && pa[0].id === mixd.id && pa[0].manual['0,0'] && !pa[0].manual['1,0'] && pa[0].holes['1,0'] && pa[0].x === 0 &&
+        pb.length === 2 && pb.some(function (x) { return x.id === bOnly.id && x.x === 1000; }) && pb.some(function (x) { return x.id !== mixd.id && x.x === 0 && x.manual['1,0'] && x.holes['0,0'] && !x.manual['0,0']; }))) bad.push('split sections ' + JSON.stringify(pj.screens.map(function (x) { return [x.screenId === pj.lct[0].id ? 'A' : 'B', x.x, x.manual, x.holes]; })));
+      w.replaceProject(pj);
+      if (w.lctMixed().length || w.hwSendCheck(w.deviceById(A.id))) bad.push('still mixed after the split');
+    } catch (e) { bad.push('threw ' + e.message + ' ' + (e.stack || '').split('\n')[1]); }
+    fin();
+  });
+}
+// The workspaces with the server's list (stand-ins for the server; tools/test_projects.py tests the real one): File lists only
+// the open workspace's projects; Enter offline mode opens the most recently used offline project, or makes one when there is none.
+function workspaceServerTest() {
+  var w = f.contentWindow;
+  atEnd(function (done) {
+    var keep = { shared: w.projShared, fetch: w.fetch, api: w.projApi, create: w.projCreate, pull: w.pullProject, proj: w.sync.project, toast: w.toast, busy: w.sync.busy }, calls = [], made = [], said = [];
+    var list = [{ id: 'pon1', name: 'Arena', mode: 'online', opened: 5 }, { id: 'pon2', name: 'Club', mode: 'online', opened: 9 },
+      { id: 'pof1', name: 'Mock-up old', mode: 'offline', opened: 3 }, { id: 'pof2', name: 'Mock-up new', mode: 'offline', opened: 7 }];
+    var json = function (o) { return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve(o); } }); };
+    var fin = function (ok, text) {
+      row(ok, text);
+      w.projShared = keep.shared; w.fetch = keep.fetch; w.projApi = keep.api; w.projCreate = keep.create; w.pullProject = keep.pull; w.sync.project = keep.proj; w.toast = keep.toast; w.sync.busy = keep.busy;
+      w.projAfter = null; w.sync.own = null; w.devClosePicker(); w.replaceProject(w.ensureLct(w.newProject())); done();
+    };
+    try {
+      w.projShared = function () { return true; }; w.pullProject = function () {}; w.toast = function (m) { said.push(m); };
+      w.fetch = function (u) { return /removed/.test(u) ? json({ removed: [{ file: 'Gone_pof9', id: 'pof9', name: 'Gone', mode: 'offline', modified: 1 }] }) : json({ current: w.sync.project, projects: list }); };
+      w.projApi = function (path) { calls.push(path); return Promise.resolve({ ok: true }); };
+      w.projCreate = function (pj, then, mode) { made.push(pj.name + ':' + mode); if (then) then(); };
+      var on = w.ensureLct(w.newProject()); on.name = 'Arena'; on.mode = 'online'; w.replaceProject(on);
+      clearTimeout(w.sync.t); w.sync.dirty = false; w.sync.busy = false; w.sync.project = 'pon1';   // nothing goes to the test server (a pull left waiting: not ours)
+      w.projMenuFill();
+      setTimeout(function () {
+        var d = w.document, rows = [].map.call(d.querySelectorAll('#projList [data-pid]'), function (b) { return b.textContent.replace(/^✓/, ''); }).join('|');
+        var head = [].map.call(d.querySelectorAll('#projList [data-ws]'), function (b) { return b.textContent + (b.classList.contains('on') ? '*' : ''); }).join('|');
+        var removed = d.getElementById('btnProjRemoved').textContent;
+        if (rows !== 'Arena|Club' || head !== 'Online projects*|Offline projects' || removed !== 'Removed (0)')
+          return fin(false, 'File lists only the open workspace: rows ' + rows + ', head ' + head + ', ' + removed);
+        d.querySelector('#projList [data-ws="offline"]').click();   // = Tools ▸ Enter offline mode
+        setTimeout(function () {
+          var opened = calls.join() === 'open?id=pof2';
+          list = list.filter(function (p) { return p.mode === 'online'; }); calls = [];
+          w.olWorkspace('offline', 'test');
+          setTimeout(function () {
+            fin(opened && !calls.length && made.join() === 'Offline project:offline', 'File ▸ Online projects | Offline projects lists one workspace; Enter offline mode opens the last-used offline project (' +
+              opened + '), or makes one when there is none (' + made.join() + calls.join() + ')' + (said.length ? ' said: ' + said.join(' / ') : '') +
+              (w.sync.dirty || w.sync.busy ? ' sync busy' : ''));
+          }, 80);
+        }, 80);
+      }, 80);
+    } catch (e) { fin(false, 'workspaces with the server: threw ' + e.message); }
+  });
+}
+// The content preview and the navigator (app-preview.js, app-navigator.js, PRO_LOOK_PLAN §7.3 case 9), every look: a
+// picture under the cabinets, which stay clickable; the Live view wins; nothing of it goes into the project. The server
+// side (/api/preview) is tools/test_projects.py's (this frame writes nothing to the test server).
+function previewTest() {
+  var w = f.contentWindow, d = w.document;
+  atEnd(function (done) {
+    var bad = [], keepMode = w.pv.mode, keepView = w.hlt.view, keepUrl = Object.assign({}, w.pv.url), keepStore = w.localStorage.getItem('opennova.preview');
+    try {
+      if (!w.P.screens.length) { var ns = w.newScreen(0, 0); w.P.screens.push(ns); w.commit(); }
+      var s = w.P.screens[0]; w.ui.viewScreen = s.screenId; w.setTab('layout'); w.renderAll();
+      var json0 = JSON.stringify(w.P);
+      w.pvSet('bars');
+      var svg = d.getElementById('svg');
+      if (!svg.querySelector('.pv-layer rect') || !svg.classList.contains('pv-on')) bad.push('bars: no picture layer');
+      var c = w.cellsOf ? w.cellsOf(s)[0] : null;
+      if (c && w.cellAt(s, { x: c.x + c.w / 2, y: c.y + c.h / 2 }) == null) bad.push('a cabinet under the picture is not found by cellAt');
+      w.hlt.view = 'status'; w.renderCanvas(w.allCells());
+      if (svg.querySelector('.pv-layer')) bad.push('the Live view did not win');
+      w.hlt.view = keepView; w.renderCanvas(w.allCells());
+      w.pv.url[w.pvKey(w.ui.viewScreen)] = 'data:image/gif;base64,R0lGODlhAQABAAAAACw='; w.pvSet('image');
+      if (!svg.querySelector('.pv-layer image')) bad.push('image: no <image> drawn');
+      if (JSON.stringify(w.P) !== json0 || /preview/.test(JSON.stringify(w.P))) bad.push('the project changed');
+      if (!d.getElementById('navigator') || d.getElementById('navigator').hidden) { if (w.innerWidth / w.uiZoom() >= 900 && w.nav.on) bad.push('navigator not shown'); }
+      else if (!d.querySelector('#navigator .nav-view').getAttribute('width')) bad.push('navigator: no view box');
+    } catch (e) { bad.push('threw ' + e.message); }
+    w.pv.url = keepUrl; w.pv.mode = keepMode; w.hlt.view = keepView;
+    if (keepStore === null) w.localStorage.removeItem('opennova.preview'); else w.localStorage.setItem('opennova.preview', keepStore);
+    w.renderAll();
+    row(!bad.length, 'content preview: bars / picture under the cabinets (still clickable), the Live view wins, nothing in the project; the navigator shows the view' + (bad.length ? ' — ' + bad.join('; ') : ''));
+    done();
+  });
+}
+// The header (app-pipeline.js, docs/PRO_LOOK_PLAN.md §2; user 2026-10-28: the tiles are the tabs): the tabs keep their ids,
+// role and Alt+1…9; the action row (Override: Pattern / Blackout / Freeze / Normal, System: Send / Save, Export) in every
+// look; in the pro look the tabs' status lines. The safety buttons, Send and Save stay visible and uncovered on every tab
+// at 375 / 1280 / 1920 px.
+function pipeTest() {
+  var w = f.contentWindow, d = w.document, $ = function (id) { return d.getElementById(id); };
+  t('header: the tabs keep their ids and role in header.bar; Override / System hold the moved buttons; Export in the action row; no status groups or tabs row', function () {
+    var bad = [], pipe = $('pipe'), hd = d.querySelector('header.bar');
+    if (!pipe || pipe.parentNode !== hd) bad.push('no #pipe in header.bar');
+    ['tabDevices', 'tabLayout', 'tabCorrection', 'tabScreen', 'tabBackup', 'tabPresets', 'tabHealth', 'tabSchedule'].forEach(function (id) {
+      var b = $(id); if (!b || b.getAttribute('role') !== 'tab' || !b.closest('header.bar > .modtabs')) bad.push(id);
+    });
+    ['btnBlackout', 'btnFreeze', 'btnNormalHdr', 'btnTestHdr'].forEach(function (id) { if (!$(id).closest('.pg-pin[data-pg="override"]')) bad.push(id + ' not in Override'); });
+    ['btnSendHdr', 'btnSaveHw'].forEach(function (id) { if (!$(id).closest('.pg-pin[data-pg="system"]')) bad.push(id + ' not in System'); });
+    if ($('btnExport').parentNode !== pipe) bad.push('Export moved');
+    if (d.querySelector('.bar-view, #pgProc, #pgImage, #pgMonitor')) bad.push('old strip parts still in the page');
+    ['Send', 'Save', 'Pattern'].forEach(function (n) { var b = $(n === 'Send' ? 'btnSendHdr' : n === 'Save' ? 'btnSaveHw' : 'btnTestHdr'); if (b.textContent.indexOf('▾') < 0) bad.push(n + ' lost its ▾'); });
+    // Alt+3 still opens the third bar tab
+    var was = w.ui.tab; w.dispatchEvent(new w.KeyboardEvent('keydown', { key: '3', code: 'Digit3', altKey: true, bubbles: true }));
+    if (w.ui.tab !== 'correction') bad.push('Alt+3 → ' + w.ui.tab);
+    w.setTab(was);
+    return bad.length ? bad.join('; ') : true;
+  });
+  atEnd(function (done) {   // every bar tab at three widths: Blackout / Freeze / Normal / Send / Save inside the window and on top
+    var widths = [375, 1280, 1920], tabs = w.TABS.filter(function (x) { return x.bar !== false && !x.hide; }).map(function (x) { return x.id; }), bad = [], wi = 0, was = f.style.width, wasT = w.ui.tab;
+    (function next() {
+      if (wi >= widths.length) { f.style.width = was; w.dispatchEvent(new w.Event('resize')); w.setTab(wasT); row(!bad.length, 'header: the safety buttons, Send and Save are visible and uncovered on every tab at 375 / 1280 / 1920 px' + (bad.length ? ' — ' + bad.slice(0, 6).join('; ') : '')); return done(); }
+      f.style.width = widths[wi] + 'px'; w.dispatchEvent(new w.Event('resize'));
+      setTimeout(function () {
+        tabs.forEach(function (tb) {
+          w.setTab(tb); w.fitHeader();
+          ['btnBlackout', 'btnFreeze', 'btnNormalHdr', 'btnSendHdr', 'btnSaveHw'].forEach(function (id) {
+            var r = $(id).getBoundingClientRect(), x = r.left + r.width / 2, y = r.top + r.height / 2, vw = d.documentElement.clientWidth, top;   // client px, as elementFromPoint
+            if (!r.width || r.left < -1 || r.right > vw + 1 || r.top < 0) { bad.push(id + ' off-screen on ' + tb + ' @' + widths[wi]); return; }
+            top = d.elementFromPoint(x, y);
+            if (!top || !(top === $(id) || $(id).contains(top))) bad.push(id + ' covered on ' + tb + ' @' + widths[wi] + (top ? ' by ' + (top.id || top.className || top.tagName) : ''));
+          });
+        });
+        wi++; next();
+      }, 150);
+    })();
+  });
+  atEnd(function (done) {   // the pro look: safety states, Save, status lines, the processor worked on, nothing linked / helper down
+    if (!w.proLook()) { row(true, 'header tiles: classic look, no status lines (run under ?look=pro)'); return done(); }
+    var bad = [], v = function (id) { return ($(id).querySelector('.v') || {}).textContent; }, st = function (id) { var e = $(id).querySelector('.tab-st'); return e && !e.hidden ? e.textContent : ''; };
+    var keepRead = w.scrRead, keepMode = w.disp.mode;
+    w.scrRead = function () {};   // no processor reads from this check
+    try {
+      w.setTab('layout'); w.renderAll();
+      // Blackout on → the tile is lit and says On; off → no "OFF" text; Normal never greyed while something can take it
+      w.disp.mode = 'blackout'; w.renderDisplayBar();
+      if (!$('btnBlackout').classList.contains('on') || v('btnBlackout') !== 'On') bad.push('blackout tile: ' + v('btnBlackout'));
+      w.disp.mode = 'normal'; w.renderDisplayBar();
+      if (v('btnBlackout') !== '' || v('btnFreeze') !== '') bad.push('off shows "' + v('btnBlackout') + '"');
+      if (w.dispLinked().length && $('btnNormalHdr').disabled && !$('btnNormalHdr').dataset.ro) bad.push('Normal greyed with a processor linked');
+      if (!/every linked processor/.test($('btnBlackout').dataset.roTitle || $('btnBlackout').title)) bad.push('Blackout tooltip doesn’t say it is global');
+      // something not saved on the processor worked on → amber Save "Not saved"; saved → back
+      var d0 = w.pipeScope().filter(function (x) { return x.hw; })[0], keepUn = JSON.stringify(w.hw.unsaved);
+      if (d0) {
+        w.hw.unsaved[d0.id] = { why: 'test', at: Date.now() }; w.renderUnsaved();
+        if (!$('btnSaveHw').classList.contains('warn') || v('btnSaveHw') !== 'Not saved') bad.push('unsaved: ' + v('btnSaveHw'));
+        w.hw.unsaved = JSON.parse(keepUn); w.renderUnsaved();
+        if ($('btnSaveHw').classList.contains('warn') || v('btnSaveHw') === 'Not saved') bad.push('saved: still amber');
+      }
+      // status lines: Layout counts the cabinets (the screens when empty); Device names the processor worked on; every tab
+      // tile carries its pictogram (DESIGN_SYSTEM.md item 1)
+      if (!/screen|cab|over/.test(st('tabLayout'))) bad.push('Layout status: "' + st('tabLayout') + '"');
+      ['tabDevices', 'tabLayout', 'tabCorrection', 'tabScreen', 'tabBackup', 'tabPresets', 'tabHealth', 'tabSchedule'].forEach(function (id) {
+        var pk = $(id).querySelector('.tpic svg'), cp = d.querySelector('header.bar.compact');   // compact (narrow / short): one-line tiles, no pictures
+        if (!pk || (!cp && !pk.getBoundingClientRect().width)) bad.push(id + ': no pictogram');
+      });
+      var devs = w.P.devices;
+      if (devs.length && st('tabDevices').indexOf(w.deviceLabel(w.pipeActive())) !== 0) bad.push('Device status: "' + st('tabDevices') + '"');
+      // the Device tile's right-click switcher; picking one makes it the one worked on; Ctrl-picking several; Esc = one
+      if (devs.length > 1) {
+        $('tabDevices').dispatchEvent(new w.MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: 20, clientY: 60 }));
+        var items = Array.prototype.slice.call(d.querySelectorAll('#ctxMenu .ctx-i')), other = devs.filter(function (x) { return x !== w.pipeActive(); })[0];
+        if (d.getElementById('ctxMenu').hidden || items.length < devs.length) bad.push('switcher: ' + items.length + ' items for ' + devs.length + ' processors');
+        var it2 = items.filter(function (i) { return i.textContent.replace(/^[●✓]?\s*/, '').replace(' (not linked)', '') === w.deviceLabel(other); })[0];
+        if (!it2) bad.push('switcher: no item for ' + w.deviceLabel(other));
+        else { it2.click(); if (w.pipeActive() !== other || st('tabDevices').indexOf(w.deviceLabel(other)) !== 0) bad.push('switch: ' + st('tabDevices')); }
+        w.ui.devMulti = []; w.ui.devSel = devs[0].id; w.setTab('devices'); w.devMultiPick(devs[1], false);
+        if (st('tabDevices') !== '2 processors' || (!d.querySelector('#devList .dv-li.multi') && w.ui.treeView === 'procs')) bad.push('multi: "' + st('tabDevices') + '"');
+        var lk = [devs[0], devs[1]].filter(function (x) { return x.hw && w.DRV.caps(x).save; }), keepU = JSON.stringify(w.hw.unsaved);
+        if (lk.length === 2) { w.hw.unsaved = {}; w.hw.unsaved[lk[0].id] = { why: 'test', at: 1 }; w.renderUnsaved(); if (v('btnSaveHw') !== '1 of 2 not saved') bad.push('multi save: ' + v('btnSaveHw')); w.hw.unsaved = JSON.parse(keepU); w.renderUnsaved(); }
+        w.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+        if ((w.ui.devMulti || []).length || st('tabDevices') === '2 processors') bad.push('Esc: still several');
+      }
+      // the Monitor tab: opening it clears the "new" count, never the held errors
+      w.watch.alerts = 2; var heldN = Object.keys(w.hlt.held).length;
+      $('tabHealth').click();
+      if (w.ui.tab !== 'health' || w.watch.alerts !== 0 || Object.keys(w.hlt.held).length !== heldN) bad.push('Monitor tab: ' + w.ui.tab + ' alerts ' + w.watch.alerts);
+      // nothing linked, helper down: the safety tiles stay (greyed), Monitor's line says why
+      var keepHelper = w.hw.helper; w.hw.helper = false;
+      w.replaceProject(w.ensureLct(w.newProject())); w.setTab('layout'); w.renderAll();
+      ['btnBlackout', 'btnFreeze', 'btnNormalHdr', 'btnSendHdr', 'btnSaveHw'].forEach(function (id) { if (!$(id).offsetWidth) bad.push(id + ' hidden with nothing linked'); });
+      if (!$('btnBlackout').disabled) bad.push('Blackout not greyed with nothing linked');
+      if (st('tabHealth') !== 'helper off' || !$('tabHealth').querySelector('.tab-st.bad')) bad.push('helper down: Monitor says "' + st('tabHealth') + '"');
+      w.hw.helper = keepHelper;
+    } catch (e) { bad.push('threw ' + e.message); }
+    w.scrRead = keepRead; w.disp.mode = keepMode; w.renderAll();
+    row(!bad.length, 'header tiles: Blackout lit + "On" (no "OFF"), global tooltips, Save amber "Not saved", status lines (Layout, Device), right-click switcher, Ctrl-pick = "2 processors" + "1 of 2 not saved", Esc = one, Monitor keeps errors, nothing linked + helper down' + (bad.length ? ' — ' + bad.join('; ') : ''));
+    done();
+  });
+}
+// The pro look's controls (app-controls.js, PRO_LOOK_PLAN §7.3 cases 7–8): proxies only, the field keeps its id and handlers.
+function controlsTest() {
+  var w = f.contentWindow, d = w.document, $ = function (id) { return d.getElementById(id); };
+  atEnd(function (done) {
+    if (!w.proLook()) { row(true, 'controls: classic look, no proxies (run under ?look=pro)'); return done(); }
+    var bad = [];
+    try {
+      w.setTab('layout');
+      var s = w.P.screens.filter(function (x) { return !x.kind || x.kind !== 'complex'; })[0] || w.newScreen(0, 0);
+      if (w.P.screens.indexOf(s) < 0) { w.P.screens.push(s); w.commit(); }
+      w.ui.sel = s.id; w.ui.selScreen = s.id; w.renderAll();
+      // 7. ▲ on Columns: one more column, one undo step, the field keeps its id inside the spin box
+      var cols = s.cols, und = w.ui.undo.length, up = $('sCols') && $('sCols').parentNode.querySelector('.spin-b > i[data-d="1"]');
+      if (!up) bad.push('no spin box on #sCols');
+      else {
+        up.dispatchEvent(new w.PointerEvent('pointerdown', { bubbles: true, button: 0 })); d.dispatchEvent(new w.PointerEvent('pointerup', { bubbles: true }));
+        s = w.screenById(s.id);
+        if (s.cols !== cols + 1 || w.ui.undo.length !== und + 1) bad.push('▲: cols ' + cols + ' → ' + s.cols + ', undo steps +' + (w.ui.undo.length - und));
+        if (!$('sCols').closest('.spin') || !$('sCols').closest('label')) bad.push('#sCols moved out of its label');
+        w.undo(); if (w.screenById(s.id).cols !== cols) bad.push('undo did not take the column back');
+      }
+      // 8. the segmented Bit depth: a click sets P.bitDepth (the select's own change handler), undo puts the proxy back
+      var bd = w.P.bitDepth, seg = $('bitDepth').nextElementSibling, ten = seg && seg.querySelector('button[data-v="' + (bd === 10 ? 12 : 10) + '"]');
+      if (!ten || !$('bitDepth').classList.contains('ctl-hidden')) bad.push('no segmented Bit depth');
+      else {
+        ten.click();
+        if (w.P.bitDepth !== +ten.dataset.v || !ten.classList.contains('on')) bad.push('click: bit depth ' + w.P.bitDepth);
+        w.undo(); w.renderAll();
+        var on = seg.querySelector('button.on');
+        if (w.P.bitDepth !== bd || !on || +on.dataset.v !== bd) bad.push('undo: bit depth ' + w.P.bitDepth + ', proxy ' + (on && on.dataset.v));
+      }
+      // 12. corners: rounded by default, Square changes the tile radius token and is remembered
+      var root = d.documentElement, keepC = w.localStorage.getItem('opennova.corners'), r = function () { return w.getComputedStyle(root).getPropertyValue('--r-tile').trim(); };
+      w.setCorners('round'); var round = r(); w.setCorners('square'); var sq = r(), kept = w.localStorage.getItem('opennova.corners');
+      if (round !== '8px' || sq !== '2px' || kept !== 'square' || !$('cornerBtns').querySelector('[data-corners="square"].on')) bad.push('corners: ' + round + ' / ' + sq + ' / ' + kept);
+      w.setCorners(keepC === 'square' ? 'square' : 'round'); if (keepC === null) w.localStorage.removeItem('opennova.corners');
+    } catch (e) { bad.push('threw ' + e.message); }
+    row(!bad.length, 'controls: ▲ on Columns = one more column, one undo step, id kept; segmented Bit depth sets the project and follows undo; Corners rounded / square, remembered' + (bad.length ? ' — ' + bad.join('; ') : ''));
+    done();
+  });
+}
+// The alpha (app-alpha.js): the unlock code's SHA-256 here (crypto.subtle isn't there over the LAN); read-only = the
+// helper's policy, Send greyed with the reason, a write refused without any helper call, reads pass, all back when off.
+// A made-up state (the test server's helper decides the real one); nothing reaches the helper.
+function alphaTest() {
+  var w = f.contentWindow;
+  t('alpha: SHA-256 of the unlock code', function () {
+    var a = w.alphaSha256('abc'), e = w.alphaSha256('');
+    return a === 'ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad' && e === 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' || a;
+  });
+  atEnd(function (done) {   // version.json is fetched at start: by now it is in
+    w.mbHelp('about'); var txt = w.document.getElementById('helpBody').textContent; w.document.getElementById('helpDlg').hidden = true;
+    var v = (w.alpha.st || w.alpha.ver || {}).version;
+    row(!!v && txt.indexOf(v) >= 0 && w.alphaTitleText() === 'Open Nova ' + v, 'alpha: the version (' + v + ') in the window title and Help ▸ About');
+    done();
+  });
+  atEnd(function (done) {
+    var keep = w.alpha.st, keepPost = w.ALPHA_POST, calls = [];
+    var pol = { read: ['/api/hw/detect'], readPrefix: ['/api/hw/diag/'], readWhen: { '/api/hw/calib': ['op', ['read']], '/api/hw/proxy': ['on', [false, null, 0, '']] }, readOps: ['note', 'sleep', 'r', 'stash'] };
+    w.alpha.st = { ok: true, alpha: true, readOnly: true, version: 't', build: 't', unlock: null, policy: pol };
+    var C = w.alphaClassify, wr = { op: 'w', dev: 0, dst: 0, port: 0, card: 0, addr: 0x02000074, hex: '78' };
+    // default-deny: a test pattern / blackout plan, COEX identify, an unknown route are writes; reads and read-only plans pass
+    var cls = [C('/api/hw/detect', {}), C('/api/hw/run', { plan: { ops: [{ op: 'w', dev: 1, addr: 0x02000101 }] } }), C('/api/hw/run', { plan: { ops: [wr] } }),
+      C('/api/coex/cabinets', { action: 'identify' }), C('/api/unico/send', {}), C('/api/hw/calib', { op: 'read' }), C('/api/hw/ber-clear', {}), C('/api/hw/new-thing', {}),
+      C('/api/hw/run', { plan: { ops: [{ op: 'r' }, { op: 'note' }] } }), C('/api/hw/proxy', {}), C('/api/hw/proxy', { on: true })].join();
+    w.ALPHA_POST = function (fam, path) { calls.push(path); return Promise.resolve({ ok: true }); };
+    var fin = function (ok, text) { w.alpha.st = keep; w.ALPHA_POST = keepPost; w.alphaApplyRO(); row(ok, text); done(); };
+    try {
+      w.alphaApplyRO();
+      var b = w.document.getElementById('btnSendHdr'), grey = b.disabled && /Writing to processors is off/.test(b.title) && !w.document.getElementById('mbRO').hidden;
+      var bk = w.document.getElementById('btnBlackout'), tst = w.document.getElementById('btnTest');
+      var grey2 = bk.disabled && /Writing to processors is off/.test(bk.title) && tst.disabled;   // blackout / Test menu need the code too
+      var kAP = w.alphaPost; w.alphaPost = function (p) { calls.push('note ' + p); return Promise.resolve({ ok: true }); };
+      w.DRV.post('lct', '/api/hw/run', { host: '192.0.2.1', port: 5200, plan: { ops: [{ op: 'w', dev: 1, dst: 0, port: 255, card: 65535, addr: 0x02000100, hex: 'FF' }] } }).then(function (r) {
+        var refused = r.readOnly && calls.join() === 'note /api/hw/alpha/refused';   // no call to the processor; the helper is told
+        calls.length = 0; w.alphaPost = kAP;
+        return w.DRV.post('lct', '/api/hw/detect', {}).then(function () {
+          var readOk = calls.join() === '/api/hw/detect';
+          w.alpha.st = keep; w.alphaApplyRO();
+          var back = !b.dataset.ro && !/Writing to processors is off/.test(b.title);
+          fin(cls === 'read,write,write,write,write,read,write,write,read,read,write' && grey && grey2 && refused && readOk && back,
+            'alpha read-only: policy (' + cls + '), Send greyed ' + grey + ', blackout / Test greyed ' + grey2 + ', a blackout refused without a processor call ' + refused + ', reads pass ' + readOk + ', back when off ' + back);
+        });
+      }).catch(function (e) { fin(false, 'alpha read-only threw ' + e.message); });
+    } catch (e) { fin(false, 'alpha read-only threw ' + e.message); }
+  });
+}
+// App actions (app-log.js logAct): a user action's id goes with every helper call it makes, also from a step chained on
+// an answer and from a short timer it set; a repeating timer runs as no action; the log entries carry the same id.
+// fetch is a stand-in here: nothing reaches the helper.
+function actionIdTest() {
+  var w = f.contentWindow;
+  atEnd(function (done) {
+    var keepFetch = w.fetch, keepSt = w.alpha.st, bodies = [], iv;
+    var fin = function (ok, text) { w.fetch = keepFetch; w.alpha.st = keepSt; if (iv) w.clearInterval(iv); row(ok, text); done(); };
+    try {
+      w.alpha.st = null;   // not the alpha here: the gate is another test
+      w.fetch = function (url, o) { var b = JSON.parse(o.body); if (b.tst) bodies.push(b); return Promise.resolve({ ok: true, json: function () { return Promise.resolve({ ok: true }); } }); };
+      var a = w.logActNew('test: Send to H5', 'click'), id = a.id;
+      var logged = function () { return w.logState.buf.filter(function (l) { return l.indexOf('"act":"' + id + '"') >= 0; }); };
+      w.DRV.post('lct', '/api/hw/detect', { host: '192.0.2.1', port: 5200, tst: 1 }).then(function () {
+        return w.DRV.post('lct', '/api/hw/health', { host: '192.0.2.1', port: 5200, tst: 1 });   // a step chained on the answer
+      }).then(function () {
+        return new w.Promise(function (ok) { w.setTimeout(function () { w.DRV.post('lct', '/api/hw/info', { tst: 1 }).then(ok); }, 10); });   // a short timer it set
+      }).then(function () {
+        w.logAct.cur = a;   // a repeating timer started inside the action still runs as no action
+        iv = w.setInterval(function () { w.clearInterval(iv); iv = 0; w.DRV.post('lct', '/api/hw/discover', { tst: 1 }); }, 5);
+        w.logAct.cur = null;
+        return new w.Promise(function (ok) { w.setTimeout(ok, 60); });
+      }).then(function () {
+        var acts = bodies.map(function (b) { return b._action || '-'; }).join(), lines = logged();
+        var good = acts === [id, id, id, '-'].join() && bodies[0]._actionWhat === 'test: Send to H5' && bodies[0].host === '192.0.2.1' &&
+          lines.some(function (l) { return /"action":"helper_call"/.test(l); }) && lines.some(function (l) { return /"action":"helper_done"/.test(l); });
+        fin(good, 'actions: the click\'s id on its helper calls (direct, chained, timer) and in the log, a repeating timer none (' + acts + ', ' + lines.length + ' log lines)');
+      }).catch(function (e) { fin(false, 'actions threw ' + e.message); });
+    } catch (e) { fin(false, 'actions threw ' + e.message); }
+  });
+}
+// An unexpected error caught (app-alpha.js): one notice; the same error again none; Make a report opens the report with it
+// preselected and its payload carries time, action, message, stack and the log before it; a helper bug (HTTP 500 flagged
+// internal) is offered too, a processor not answering is not; the issue text has no addresses, serials or names.
+// A made-up error event (not a real throw); nothing reaches the helper.
+function errPromptBoom(w) { return new w.Error('test: boom at 192.0.2.77'); }   // one place, so both errors are the same
+function errPromptTest() {
+  var w = f.contentWindow;
+  atEnd(function (done) {
+    var d = w.document, note = d.getElementById('errNote'), keepFetch = w.fetch, keepBusy = w.hw.busy;
+    var fin = function (ok, text) { w.fetch = keepFetch; w.hw.busy = keepBusy; note.hidden = true; w.alphaErr.cur = null; w.alphaErr.wait = null; if (!d.getElementById('alDlg').hidden) w.alphaDlgClose(); row(ok, text); done(); };
+    try {
+      w.hw.busy = null; note.hidden = true; w.alphaErr.wait = null;
+      var fire = function () { var er = errPromptBoom(w); w.dispatchEvent(new w.ErrorEvent('error', { message: er.message, error: er })); };
+      var n0 = w.alphaErr.list.length, a = w.logActNew('test: Send to H5', 'click');
+      fire(); w.logAct.cur = null;
+      var one = !note.hidden && w.alphaErr.list.length === n0 + 1, e = w.alphaErr.cur;
+      note.hidden = true; fire();
+      var none = note.hidden && w.alphaErr.list.length === n0 + 1;
+      var logged = w.logState.buf.some(function (l) { return /"action":"error_prompt"/.test(l) && l.indexOf('"error":' + e.id) >= 0; });
+      note.hidden = false; d.getElementById('errNoteGo').click();
+      var sel = d.getElementById('rpErr'), pre = !d.getElementById('alDlg').hidden && sel && sel.value === String(e.id);
+      var chose = w.logState.buf.some(function (l) { return /"action":"error_prompt_choice"/.test(l) && /make a report/.test(l); });
+      var pl = w.alphaErrPayload(e);
+      var payOk = pl.act === a.id && pl.acts.indexOf(a.id) >= 0 && /boom/.test(pl.message) && /errPromptBoom|app_test/.test(pl.stack) && pl.t === e.t &&
+        pl.log.some(function (x) { return /client_error/.test(x) && x.indexOf('[' + a.id + ']') >= 0; });
+      w.alphaDlgClose();
+      // a helper bug comes back as HTTP 500 {internal: true, where}; a processor that didn't answer is {ok: false} only
+      var answers = [{ ok: false, error: 'udp timed out' }, { ok: false, internal: true, error: 'KeyError: \'ports\'', where: ['Traceback', '  File "novalink.py", line 9'] }];
+      w.fetch = function () { var j = answers.shift(); return Promise.resolve({ ok: true, json: function () { return Promise.resolve(j); } }); };
+      var n1 = w.alphaErr.list.length;
+      w.DRV.post('lct', '/api/hw/detect', {}).then(function () {
+        var quiet = w.alphaErr.list.length === n1;
+        return w.DRV.post('lct', '/api/hw/detect', {}).then(function () {
+          var h = w.alphaErr.list[w.alphaErr.list.length - 1], helper = w.alphaErr.list.length === n1 + 1 && h.kind === 'helper' && /line 9/.test(h.stack);
+          var devs = [{ id: 'x1', name: 'Stage Left', model: 'h2', hw: { kind: 'lct', host: '192.168.0.11', sn: 'ZX9K44AB1234', name: 'FOH-Proc' } }, { id: 'x2', name: 'Spare', model: 'vx1000pro' }];
+          var bad = w.alphaErrCaught('error', 'no answer from 192.168.0.11 (Stage Left, SN ZX9K44AB1234, mac 00:1a:2b:3c:4d:5e) in D:\\gigs\\x.json', '');
+          var txt = w.alphaIssueText({ os: 'Windows 10', version: '0.1.0', build: 'b1' }, bad, devs);
+          var leaks = ['192.168', 'Stage Left', 'ZX9K44AB1234', 'FOH-Proc', '00:1a', 'gigs', 'Spare'].filter(function (s) { return txt.indexOf(s) >= 0; });
+          var issueOk = !leaks.length && /0\.1\.0/.test(txt) && /Windows 10/.test(txt) && /H series: H2 ×1/.test(txt) && /VX: VX1000 Pro ×1/.test(txt) && /zip attached/.test(txt) && /<ip>/.test(txt);
+          fin(one && none && logged && pre && chose && payOk && quiet && helper && issueOk,
+            'error caught → report: one notice ' + one + ', the same error again none ' + none + ', prompt logged ' + logged + ', Make a report preselects it ' + pre + ' (choice logged ' + chose +
+            '), payload (action, nearby actions, stack, log) ' + payOk + ', a processor not answering quiet ' + quiet + ', a helper 500 offered ' + helper +
+            ', issue text clean ' + issueOk + (leaks.length ? ' (leaks ' + leaks.join(', ') + ')' : '') + (issueOk ? '' : ' — ' + txt));
+        });
+      }).catch(function (x) { fin(false, 'error prompt threw ' + x.message); });
+    } catch (x) { fin(false, 'error prompt threw ' + x.message); }
+  });
+}
+// Monitor: the kept errors live on the app server beside the project (/api/errors), so a reload / another browser reads them
+// back: a record the server no longer has was cleared elsewhere (no new alarm); one it never had was found here (sent up);
+// one changed here and not sent yet keeps ours; a list older than what was sent is ignored; a Clear sends null at once.
+function heldSyncTest() {
+  var w = f.contentWindow;
+  atEnd(function (done) {
+    var keep = { srv: w.hltSrv, mark: w.hltErrMark, fetch: w.fetch, on: w.sync.on, proj: w.sync.project }, marks = [], sent = [];
+    var fin = function (ok, text) { row(ok, text); w.hltSrv = keep.srv; w.hltErrMark = keep.mark; w.fetch = keep.fetch; w.sync.on = keep.on; w.sync.project = keep.proj;
+      w.hlt.held = {}; w.hlt.gone = {}; w.hlt.base = {}; delete w.hlt.watch.dv; w.hltList(); done(); };
+    try {
+      var rec = function (k, ended) { return { key: k, dev: 'dv', card: 0, port: 0, index: 1, kind: 'bit errors', text: 'bit errors (4)', level: 'warning', t: 1, ended: ended || null, n: 1 }; };
+      w.hltSrv = { proj: 'p1', rev: 3, t: null, busy: false, loading: false, again: false, ready: true, dirty: { held: { mine: 1 }, gone: {}, base: {} }, sending: {}, known: { old: 1, both: 1 } };
+      w.hlt.held = { old: rec('old'), local: rec('local'), mine: rec('mine', 9), both: rec('both') }; w.hlt.gone = {}; w.hlt.base = {}; w.hlt.watch.dv = {};
+      w.hltErrMark = function (part, k) { marks.push(part + ':' + k); };
+      w.hltErrApply({ rev: 2, held: {}, gone: {}, base: {} });
+      if (Object.keys(w.hlt.held).length !== 4) return fin(false, 'kept errors: a list older than what was sent was applied');
+      w.hltErrApply({ rev: 4, held: { both: rec('both', 7), remote: rec('remote'), mine: rec('mine') }, gone: { g: 5 }, base: { 'dv|0|0|1': { bitErrors: 3 } } });
+      var got = Object.keys(w.hlt.held).sort().join() + ' ' + w.hlt.held.both.ended + ' ' + w.hlt.held.mine.ended + ' ' + marks.join() + ' ' + !!w.hlt.watch.dv.quiet + ' ' + w.hlt.gone.g + ' ' + w.hlt.base['dv|0|0|1'].bitErrors;
+      if (got !== 'both,local,mine,remote 7 9 held:local true 5 3') return fin(false, 'kept errors: merge got ' + got);
+      w.hltErrMark = realMark; w.sync.on = true; w.sync.project = 'p1'; w.hltSrv.dirty = { held: {}, gone: {}, base: {} };
+      w.fetch = function (url, o) { sent.push({ url: url, body: JSON.parse(o.body) }); return Promise.resolve({ ok: true, status: 200, json: function () { return Promise.resolve({ ok: true, rev: 5 }); } }); };
+      w.hlt.held.remote.pt = 1234;
+      w.hltClear(null).then(function () {
+        setTimeout(function () {
+          var b = sent[0] && sent[0].body, ok = sent.length === 1 && sent[0].url === 'api/errors?project=p1' && Object.keys(b.held).sort().join() === 'both,local,mine,remote' &&
+            Object.keys(b.held).every(function (k) { return b.held[k] === null; }) && b.gone.remote === 1234 && w.hltSrv.rev === 5 && !Object.keys(w.hltSrv.known).length;
+          fin(ok, 'kept errors on the server: a reload / other browser merges the list (cleared elsewhere = gone, quiet; found here = sent; unsent = ours; stale list ignored); Clear sends null at once — ' + JSON.stringify(sent.map(function (x) { return x.body; })));
+        }, 60);
+      }).catch(function (e) { fin(false, 'kept errors threw ' + e.message); });
+    } catch (e) { fin(false, 'kept errors threw ' + e.message); }
+  });
+}
+// Monitor: an error stays (listed, marked) after it ends, until the user's Clear (user 2026-10-11: "errors clear manually just
+// like in lct, VMP"); Clear writes 0x01000076 (NovaLCT protocol, via the helper stub) or, on Unico, counts on from the clear.
+// Runs after every other async check (they swap the project and stub DRV.post too).
+function heldErrorsTest() {
+  var w = f.contentWindow, P = function () { return w.P; };
+  atEnd(function (done) {
+    var keepPull = w.pullProject, keepPost = w.DRV.post, posts = [];
+    var fin = function (ok, text) { row(ok, text); w.DRV.post = keepPost; w.hlt.held = {}; w.hlt.base = {}; w.hlt.gone = {}; w.hlt.by = {}; w.hltList(); w.watchAck();
+      w.replaceProject(w.ensureLct(w.newProject())); w.pullProject = keepPull; done(); };
+    try {
+      w.pullProject = function () {};
+      w.replaceProject(w.ensureLct(w.newProject()));
+      w.addProcessor('mctrl4k');
+      var d = P().devices[0], s = w.newScreen(0, 0), C = w.cardsOfDevice(d)[0];
+      s.screenId = P().lct[0].id; s.cols = 3; s.rows = 1; s.wiring.sender = C; s.wiring.port = 0; P().screens.push(s); w.commit();
+      d.hw = { kind: 'lct', host: '192.0.2.40', port: 5200, name: 'MCTRL4K', senders: [0x1103] };
+      var read = function (ber, psu) {   // one reading of 3 cabinets on P1 (card 0 on the link): bit errors per cabinet, PSU 2 of cabinet 3
+        var h = w.hltNorm(d, { ports: [{ card: 0, port: 0, link: 'ok', cabinets: 3 }], events: [], cabinets: [0, 1, 2].map(function (i) {
+          return { card: 0, port: 0, index: i, side: 'primary', dark: false, temp: 40, tempStatus: 'ok', voltage: 5, voltStatus: 'ok', bitErrors: ber[i], psu: psu && i === 2 ? [1, 0] : [1, 1] }; }) });
+        w.hlt.by[d.id] = h; w.hltLatch(d, h);
+        return w.hlt.log.map(function (e) { return e.where.replace(/^.*cabinet /, 'c') + ' ' + e.text + (e.ended ? ' (ended)' : ''); }).join(' | ');
+      };
+      var stub = function (fn) { var k = w.DRV.post; w.DRV.post = function (fam, path, body) { posts.push(path + ' ' + JSON.stringify(body.targets)); return Promise.resolve({ ok: true, written: body.targets ? body.targets.length : 1, failed: 0 }); };
+        try { return fn(); } finally { w.DRV.post = k; } };   // clearErrors posts at once: the stub only has to be there for the call
+      var a = read([0, 4, 0], true);
+      if (a !== 'c2 bit errors (4) | c3 power supply 2 failed') return fin(false, 'held errors: first reading ' + a);
+      read([0, 4, 0], false); var b = read([0, 4, 0], false);
+      if (b !== 'c2 bit errors (4) | c3 power supply 2 failed (ended)') return fin(false, 'held errors: an ended error must stay listed — got ' + b);
+      var mk = w.hltHeldAt(C, 0, 2);
+      if (mk.length !== 1 || !mk[0].ended) return fin(false, 'held errors: cabinet 3 should keep an ended mark');
+      stub(function () { return w.hltClear({ dev: d, cab: { card: C, port: 0, index: 2 } }); }).then(function () {
+        var c = w.hlt.log.map(function (e) { return e.text; }).join(' | ');
+        if (c !== 'bit errors (4)' || posts[0] !== '/api/hw/ber-clear [{"dst":0,"port":0,"card":2}]') return fin(false, 'held errors: cabinet clear left ' + c + ' / posted ' + posts[0]);
+        return stub(function () { return w.hltClear(null); }).then(function () {
+          if (w.hlt.log.length || posts[1] !== '/api/hw/ber-clear null') return fin(false, 'held errors: Clear all left ' + w.hlt.log.length + ' / posted ' + posts[1]);
+          var e1 = read([0, 0, 0], false), e2 = read([0, 0, 5], false);   // the processor's counters start from 0; a new count raises it again
+          if (e1 !== '' || e2 !== 'c3 bit errors (5)') return fin(false, 'held errors: after a hardware clear got "' + e1 + '" then "' + e2 + '"');
+          d.hw.kind = 'unico';   // Unico: its clear was never seen live, nothing is sent, Open Nova counts on from the clear
+          read([0, 9, 5], false);
+          return w.hltClear({ dev: d }).then(function () {
+            var u1 = read([0, 9, 5], false), u2 = read([0, 12, 5], false);
+            fin(u1 === '' && u2 === 'c2 bit errors (3)' && posts.length === 2, 'Monitor errors stay until Clear: ended = still listed and marked; Clear per cabinet / all writes 0x01000076 (helper /api/hw/ber-clear); Unico counts on from the clear — ' + (u1 || 'nothing') + ' then ' + u2);
+          });
+        });
+      }).catch(function (e) { fin(false, 'held errors threw ' + e.message); });
+    } catch (e) { fin(false, 'held errors threw ' + e.message); }
+  });
+}
+// Screen Settings: what a linked NovaLCT processor holds is read (the helper's reply stubbed, nothing leaves this page) and
+// the controls start from it; a wanted value set here still wins; the table says where each value came from.
+function screenReadTest(n) {
+  var w = f.contentWindow;
+  if ((n || 0) < 40 && w.location.protocol !== 'file:' && (!w.sync.on || (n || 0) < 3)) return setTimeout(function () { screenReadTest((n || 0) + 1); }, 100);   // the app's first load from the server swaps the project when it lands
+  var P = function () { return w.P; }, keepPost = w.DRV.post, keepPull = w.pullProject, asked = [];
+  var keepDirty = w.sync.dirty; w.sync.dirty = true;   // a pull already on its way (another browser on this server) must not swap the project now
+  w.pullProject = function () {};
+  w.replaceProject(w.ensureLct(w.newProject()));
+  w.addProcessor('mctrl4k');
+  var d = P().devices[0], lc = P().lct[0], s = w.newScreen(0, 0), proj = P();
+  s.screenId = lc.id; s.cols = 2; s.rows = 1; s.wiring.sender = 0; s.wiring.port = 0; P().screens.push(s); w.commit();
+  d.hw = { kind: 'lct', host: '192.0.2.40', port: 5200, name: 'MCTRL4K', senders: [0x1103] };
+  // monitoring of this processor paused during the check (it polls every linked processor in the background); a reading
+  // already on its way is not counted
+  var keepWatch = w.hlt.watch[d.id]; w.hlt.watch[d.id] = { inflight: true };
+  // card 0 of P1: gamma 16 (2.2), brightness 8C (55 %), R / G / B FE B3 42 (3200 K), colour space FF (off)
+  w.DRV.post = function (fam, path) { if (/\/health$/.test(path)) return Promise.resolve({ ok: false, error: 'monitoring: not in this test' }); asked.push(path); return Promise.resolve(path === '/api/hw/color-read' ? { ok: true, ports: [{ dst: 0, port: 0, via: [0, 0], hex: '168cfeb342fe' + new Array(43).join('00'), gamut: 'ff', record: null, src: 5 }] } : { ok: false, error: 'not in this test' }); };
+  var finish = function (ok, text) { row(ok, text); w.DRV.post = keepPost; if (keepWatch) w.hlt.watch[d.id] = keepWatch; else delete w.hlt.watch[d.id]; w.setTab('layout'); w.replaceProject(w.ensureLct(w.newProject())); w.pullProject = keepPull; w.sync.dirty = keepDirty; pending--; };
+  w.scr.readDone = {}; w.scrRead(lc);
+  setTimeout(function () {
+    try {
+      var v = w.scrColor(lc), ap = w.scrApplied(d, lc), rd = w.scr.read[w.scrKey(d, lc)];
+      if (asked.join() !== '/api/hw/color-read') return finish(false, 'Screen read: asked ' + asked.join());
+      if (v.brightness !== 55 || v.gamma !== 2.2 || v.colorTemp !== 3200) return finish(false, 'Screen read: controls ' + JSON.stringify(v) + ' devs ' + w.scrDevices(lc).length + ' same project ' + (P() === proj) + ' ap ' + JSON.stringify(ap) + ' read ' + JSON.stringify(rd));
+      if (ap.gamut !== undefined || rd.values.gamut !== 'original') return finish(false, 'Screen read: gamut (not settable on NovaLCT) ' + ap.gamut + ' / ' + rd.values.gamut);
+      lc.color = { brightness: 70 };
+      if (w.scrColor(lc).brightness !== 70) return finish(false, 'Screen read: the wanted value didn’t win');
+      w.setTab('screen');
+      setTimeout(function () {
+        var cell = Array.prototype.filter.call(w.document.querySelectorAll('#scBody .sc-tbl td'), function (td) { return /^55 %/.test(td.textContent); })[0];
+        finish(!!cell && /Wanted 70/.test(cell.title) && asked.filter(function (p) { return p === '/api/hw/color-read'; }).length >= 2 && !asked.some(function (p) { return /run|gamma|calib|send/.test(p); }),
+          'Screen Settings reads the processor (55 %, γ 2.2, 3200 K; NovaLCT gamut shown only), wanted value wins, nothing written (' + (cell ? cell.title : 'no 55 % cell') + ')');
+      }, 150);
+    } catch (e) { finish(false, 'Screen read threw ' + e.message); }
+  }, 100);
+}
+// The heat map (app-heat.js, PRO_LOOK_PLAN §5.6 / §7.3 #10, #11): readings injected as monitoring would hold them (the
+// processor "linked" to a documentation address, its polling paused): the field between a 30 °C and a 50 °C cabinet is
+// the mean at their shared edge and exact at the centres; a cabinet without a reading has weight 0 (never 0 °C) and is
+// hatched; a dark one is outlined; a backup-fed one is hatched in Temperature; pan / zoom don't rebuild the image, a new
+// reading rebuilds it once. Then the field's time for 1 500 cabinets (a warning above 25 ms, not a failure).
+function heatTest() {
+  var w = f.contentWindow, P = function () { return w.P; };
+  atEnd(function (done) {
+    var keepPull = w.pullProject, d, doc = w.document;
+    var fin = function (ok, text) { row(ok, text); w.hlt.view = 'off'; if (doc.getElementById('liveView')) doc.getElementById('liveView').value = 'off';
+      if (d) { delete w.hlt.by[d.id]; delete w.hlt.watch[d.id]; } w.replaceProject(w.ensureLct(w.newProject())); w.pullProject = keepPull; w.renderAll(); done(); };
+    try {
+      w.pullProject = function () {};
+      w.replaceProject(w.ensureLct(w.newProject()));
+      w.addProcessor('mctrl4k');
+      d = P().devices[0];
+      var lc = P().lct[0], s = w.newScreen(0, 0), C = w.cardsOfDevice(d)[0];
+      s.screenId = lc.id; s.cols = 4; s.rows = 2; s.wiring.sender = C; s.wiring.port = 0; P().screens.push(s); w.commit();
+      d.hw = { kind: 'lct', host: '192.0.2.40', port: 5200, name: 'MCTRL4K', senders: [0x1103] };
+      w.hlt.watch[d.id] = { inflight: true };   // no polling in this check
+      var list = w.hwPortCells()[C + ':0'] || [], cw = list[0] && list[0].width, ch = list[0] && list[0].height;
+      if (list.length !== 8) return fin(false, 'heat map: 8 cabinets on P1 expected, got ' + list.length);
+      var read = function (fx) {   // left two columns 30 °C, right two 50 °C; fx(cabinet, col, row) adjusts / drops one
+        var cabs = [];
+        list.forEach(function (c, j) {
+          var col = Math.round(c.x / cw), rw = Math.round(c.y / ch), x = { card: 0, port: 0, index: j, side: 'primary', dark: false, temp: col < 2 ? 30 : 50, tempStatus: 'ok', voltage: 5, voltStatus: 'ok' };
+          if (fx) x = fx(x, col, rw);
+          if (x) cabs.push(x);
+        });
+        w.hlt.by[d.id] = w.hltNorm(d, { ports: [{ card: 0, port: 0, link: 'ok', cabinets: 8 }], events: [], cabinets: cabs });
+      };
+      read();
+      w.ui.viewScreen = lc.id; w.hlt.view = 'temp'; w.setTab('layout'); w.ui.view = null; w.renderCanvas(w.allCells());
+      var e = w.heat.cur;
+      if (!e) return fin(false, 'heat map: no image on the canvas');
+      var px = 1 / e.field.s, ey = s.y + ch, ex = s.x + 2 * cw;   // the shared edge between column 2 and 3, half way down
+      var l = w.heatAt(ex - px / 2, ey), r = w.heatAt(ex + px / 2, ey), mid = (l + r) / 2;
+      var c0 = w.heatAt(s.x + cw / 2, s.y + ch / 2), c3 = w.heatAt(s.x + 3.5 * cw, s.y + ch / 2);
+      if (!(Math.abs(mid - 40) < 1 && Math.abs(c0 - 30) < 0.6 && Math.abs(c3 - 50) < 0.6)) return fin(false, 'heat map: edge ' + l + ' / ' + r + ' (want a mean of 40), centres ' + c0 + ' / ' + c3);
+      // pan / zoom: same image
+      var b0 = w.heat.builds; w.zoom(0.8); w.ui.view.x += 40; w.renderCanvas(w.allCells());
+      if (w.heat.builds !== b0) return fin(false, 'heat map: pan / zoom rebuilt the image');
+      // a new reading (new time): rebuilt once
+      read(); w.hlt.by[d.id].at = e.at + 1e6; w.renderCanvas(w.allCells()); w.renderCanvas(w.allCells());
+      if (w.heat.builds !== b0 + 1) return fin(false, 'heat map: a new reading rebuilt ' + (w.heat.builds - b0) + ' times (want once)');
+      // missing (no record for column 2, row 1), dark (column 4, row 2), backup-fed (column 1, row 2)
+      read(function (x, col, rw) { if (col === 1 && rw === 0) return null; if (col === 3 && rw === 1) { x.dark = true; x.temp = null; } if (col === 0 && rw === 1) x.side = 'backup'; return x; });
+      w.renderCanvas(w.allCells()); e = w.heat.cur;
+      var miss = w.heatAt(s.x + 1.5 * cw, s.y + ch / 2), dark = w.heatAt(s.x + 3.5 * cw, s.y + 1.5 * ch);
+      var svg = doc.getElementById('svg'), q = function (sel) { return svg.querySelectorAll(sel).length; };
+      var bad = [];
+      if (miss === miss) bad.push('missing cabinet has a value ' + miss);
+      if (dark === dark) bad.push('dark cabinet has a value ' + dark);
+      if (e.items.some(function (it) { return !it.w && it.v != null; })) bad.push('a weight-0 cabinet carries a value');
+      if (!q('.heat-gaps rect[fill="url(#heatMiss)"]')) bad.push('missing not hatched');
+      if (!q('.heat-gaps rect[stroke="#f0484d"]')) bad.push('dark not outlined');
+      if (!q('rect[fill="url(#hltHatchFine)"]')) bad.push('backup not hatched in Temperature');
+      if (!q('g.heat-num[filter="url(#heatTxt)"] text') || !q('#heatTxt feDropShadow')) bad.push('numbers without the drop shadow');
+      var mx = w.heatMax();
+      if (!mx || mx.value !== 50) bad.push('heatMax ' + JSON.stringify(mx && mx.value));
+      if (doc.getElementById('heatLegend').hidden || !/max 50/.test(doc.getElementById('heatLegend').textContent)) bad.push('legend');
+      if (bad.length) return fin(false, 'heat map: ' + bad.join('; '));
+      // 1 500 cabinets (50 × 30 of 128 px): the field's time, a warning only
+      var items = [];
+      for (var i = 0; i < 1500; i++) items.push({ c: { x: (i % 50) * 128, y: Math.floor(i / 50) * 128, w: 128, h: 128 }, w: 1, v: 30 + (i % 17), st: 'ok' });
+      var f1 = w.heatField(items), ms = f1.ms;
+      for (var k = 0; k < 3; k++) ms = Math.min(ms, w.heatField(items).ms);   // after the first runs (the JIT warmed up)
+      row(true, 'heat field, 1 500 cabinets (' + f1.W + '×' + f1.H + ' raster): ' + ms.toFixed(1) + ' ms' + (ms > 25 ? ' — WARNING over 25 ms (a slow machine, or move heatField into a Worker)' : ''));
+      fin(true, 'Heat map: interpolated field (edge = mean 40, centres exact), missing / dark weight 0 and hatched / outlined, backup hatched in Temperature, white numbers with a drop shadow, pan / zoom keep the image, a new reading rebuilds it once, heatMax');
+    } catch (ex) { fin(false, 'heat map threw ' + ex.message); }
+  });
+}
+</script>
+</body>
+</html>

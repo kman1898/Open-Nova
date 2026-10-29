@@ -1,0 +1,4 @@
+/* app/looks/classic.css - the "Classic" look (View ▸ Look ▸ Classic; ?look=classic): Open Nova as it looked before the pro
+   look became the default (2026-10-28). It is app.css + polish.css alone, so this file adds nothing; it exists so the look
+   loader (index.html) treats Classic like any other look. polish.css hides the pro look's extra header parts (the pipeline
+   strip's status groups, tile pictures, the tabs row) whenever <html data-look> isn't "pro". */

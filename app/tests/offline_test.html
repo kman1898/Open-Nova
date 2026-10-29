@@ -1,0 +1,217 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Offline parity checks</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 20px; background: #15181c; color: #e6e9ed; }
+  .r { padding: 6px 10px; margin: 4px 0; border-left: 4px solid #58c08a; background: #1d2126; white-space: pre-wrap; }
+  .r.fail { border-color: #ef6b6b; } .r.info { border-color: #6b8bef; }
+  iframe { width: 1400px; height: 900px; border: 0; position: absolute; left: -3000px; }
+</style>
+</head>
+<body>
+<h1>Offline parity</h1>
+<p>An offline project (H5, VX1000, VX1000 Pro, MX40 Pro, no hardware): every tab shows its real controls through the simulated
+processors (drv-offline.js) — no “link it” / “not linked” / “nothing to read” — and the simulated processors answer like the
+real ones (calibration, monitor, screen settings, presets, schedules, backup, service). Nothing may reach the helper's
+hardware routes. Add <code>?audit=1</code> to list each tab's text.</p>
+<div id="sum"></div><div id="out"></div>
+<iframe id="app" src="../index.html"></iframe>
+<script>
+var out = document.getElementById('out'), fails = 0, passes = 0, AUDIT = /audit=1/.test(location.search);
+function row(ok, text, cls) { var d = document.createElement('div'); d.className = 'r' + (cls ? ' ' + cls : ok ? '' : ' fail'); d.textContent = (cls === 'info' ? 'INFO ' : ok ? 'PASS ' : 'FAIL ') + text; out.appendChild(d); if (cls) return; if (ok) passes++; else fails++; }
+function t(name, fn) { try { var r = fn(); row(r === true, name + (r === true ? '' : ' — ' + (typeof r === 'string' ? r : 'returned ' + JSON.stringify(r)))); } catch (e) { row(false, name + ' — threw ' + e.message); } }
+function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+var f = document.getElementById('app');
+f.onload = function () {
+  var w = f.contentWindow, tries = 0;
+  (function boot() {
+    if (!(w.OpenNova && typeof w.setTab === 'function') && tries++ < 100) return setTimeout(boot, 100);
+    // the app's first load from the server swaps the project when it lands: wait for it, then no more pulls
+    if (w.location.protocol !== 'file:' && !(w.sync && w.sync.on) && tries++ < 140) return setTimeout(boot, 100);
+    w.pullProject = function () {};
+    w.saveLocal = function () {}; w.schedulePush = function () {}; w.liveApplySchedule = function () {};
+    w.olSearch = function () {}; w.rbAuto = function () {}; w.olWebRefresh = function () {}; w.hw.bgAt = Date.now() + 1e9;
+    w.hltErrMark = function () {}; w.hltErrLoad = function () { return Promise.resolve(); }; w.hltErrReady = function () { return true; };   // kept errors: this page only
+    var toasts = []; w.toast = function (m) { toasts.push(String(m)); };
+    // every request to the helper's hardware routes from here on is a failure: offline must never reach them
+    // (the helper's own routes that never reach a processor — recorder, library, network list, ping — are fine)
+    var posts = [], realFetch = w.fetch;
+    var HWRX = /\/api\/(unico|coex)\/|\/api\/hw\/(?!diag\/|ping|net\/|alpha\/|vendor\/|support)/;
+    w.fetch = function (u) { if (HWRX.test(String(u))) posts.push(String(u)); return realFetch.apply(this, arguments); };
+    wait(500).then(function () { return run(w, toasts, posts); }).then(finish, function (e) { row(false, 'threw ' + (e && e.stack || e)); finish(); });
+  })();
+};
+function finish() {
+  document.getElementById('sum').innerHTML = '<p class="r' + (fails ? ' fail' : '') + '">' + (fails ? fails + ' failed, ' + passes + ' passed' : 'All passed (' + passes + ')') + '</p>';
+  document.title = (fails ? 'FAIL ' : 'PASS ') + 'offline parity';
+}
+// what an offline tab must never say (it is simulated, never "go and link it")
+var BAD = /link it|not linked|link one|link a processor|nothing to read|simulated: nothing|has nothing to restart|no processor is linked|no linked processor/i;
+function run(w, toasts, posts) {
+  var d = w.document, $ = function (id) { return d.getElementById(id); };
+  var pj = w.ensureLct(w.newProject()); pj.name = 'Offline parity'; pj.mode = 'offline'; pj.procsChosen = true;
+  w.replaceProject(pj);
+  var keys = ['h5', 'vx1000', 'vx1000pro', 'mx40pro'], devs = keys.map(function (k) { return w.addProcessor(k); }), lcs = [];
+  devs.forEach(function (dv, i) {   // two sections of 4 × 2 cabinets on the first two ports of each processor, on its own screen
+    var c0 = w.cardsOfDevice(dv)[0], lc = i ? w.lctNew(dv) : w.P.lct[0];   // (a screen belongs to one processor)
+    lcs.push(lc);
+    [0, 1].forEach(function (p) {
+      var s = w.newScreen(i * 4 * 176, p * 2 * 176); s.screenId = lc.id; s.cols = 4; s.rows = 2; s.wiring.sender = c0; s.wiring.port = p; w.P.screens.push(s);
+    });
+  });
+  w.commit(); w.renderAll();
+  t('offline project: every processor is simulated by itself (no Link step), none counts as linked', function () {
+    var bad = devs.filter(function (x) { return !x.hw || x.hw.kind !== 'offline' || w.olLinked(x); }).map(w.deviceLabel);
+    return w.olMode() === 'offline' && !bad.length || 'mode ' + w.olMode() + '; not simulated: ' + bad.join(', ');
+  });
+  t('simulated caps follow the real model (backup Send on NovaLCT, presets / schedules on VX Pro and MX, calibration everywhere)', function () {
+    var c = devs.map(function (x) { return w.DRV.caps(x); });
+    var bad = [];
+    if (!c[0].simulated || c[0].applyMode !== 'send' || !c[0].backupSend) bad.push('H5 ' + JSON.stringify(c[0]));
+    if (c[2].backupSend || c[3].backupSend) bad.push('backup Send on a VX Pro / MX');
+    if (!c[2].presets || !c[2].schedule) bad.push('VX1000 Pro presets / schedule');
+    if (!c[3].presets || !c[3].schedule) bad.push('MX40 Pro presets / schedule');
+    devs.forEach(function (x, i) { if (!w.DRV.of(x).correctionCaps || !w.DRV.of(x).correctionCaps(x)) bad.push(keys[i] + ' correctionCaps'); });
+    return bad.length ? bad.join('; ') : true;
+  });
+  var tabs = ['dashboard', 'devices', 'layout', 'correction', 'screen', 'backup', 'presets', 'health', 'schedule', 'maintain', 'library', 'diag'];
+  // per tab: controls that must be there and usable (selector, how many at least)
+  var WANT = { dashboard: [['#btnBlackout', 1], ['#btnFreeze', 1], ['#btnNormalHdr', 1]], devices: [['#dvHwBody [data-hw="detect"]', 1], ['#dvHwBody [data-hw="info"]', 1], ['#dvHwBody [data-hw="readlayout"]', 1], ['#dvHwBody [data-hw="save"]', 1]],
+    backup: [['#rdBody [data-rd="read"]', 4]], presets: [['#psDev [data-dp="save"]', 2]], schedule: [['#shBody [data-sh="add"]', 2], ['#shBody [data-sh="enable"]', 2]],
+    health: [['#hlBody .hl-tiles', 4]] };
+  // the per-screen tabs (a screen belongs to one processor): each processor's screen, with what its real model offers
+  // (NovaLCT: every calibration step; Unico: the switch; COEX: read only; gamut on VX Pro / MX only)
+  var PER = { correction: [[['#coForm [data-co="mode"]', 3], ['#coForm [data-co="reset"]', 1], ['#coForm [data-co="save"]', 1], ['#coForm [data-co="flash"]', 1], ['#coRead', 1]],
+      [['#coForm [data-co="mode"]', 3], ['#coForm [data-co="reset"]', 1], ['#coRead', 1]], [['#coForm [data-co="mode"]', 3], ['#coRead', 1]], [['#coRead', 1]]],
+    screen: [[['#scForm input[data-k="brightness"]', 1]], [['#scForm input[data-k="brightness"]', 1]],
+      [['#scForm input[data-k="brightness"]', 1], ['#scForm select[data-k="gamut"]', 1]], [['#scForm input[data-k="brightness"]', 1], ['#scForm select[data-k="gamut"]', 1]]] };
+  var visits = [];
+  tabs.forEach(function (id) { if (PER[id]) lcs.forEach(function (lc, i) { visits.push({ id: id, lc: lc, want: PER[id][i], tag: id + ' (' + w.deviceLabel(devs[i]) + '’s screen)' }); }); else visits.push({ id: id, want: WANT[id], tag: id }); });
+  var check = function (v) {
+    var m = $(w.tabDef(v.id).main), txt = m ? m.innerText : '';
+    var dis = m ? Array.prototype.filter.call(m.querySelectorAll('button'), function (b) { return b.disabled && b.offsetParent; }).map(function (b) { return (b.textContent || b.title).trim().slice(0, 30); }) : [];
+    if (AUDIT) row(true, v.tag + '\n' + txt.replace(/\n{2,}/g, '\n').slice(0, 3000) + '\n  disabled: ' + dis.join(' | '), 'info');
+    var hit = txt.split('\n').filter(function (l) { return BAD.test(l); });
+    row(!hit.length, v.tag + ': no “link it” / “not linked” empty states' + (hit.length ? ' — ' + hit.slice(0, 4).join(' / ') : ''));
+    var miss = (v.want || []).filter(function (q) { var n = Array.prototype.filter.call(d.querySelectorAll(q[0]), function (b) { return !b.disabled; }).length; return n < q[1]; }).map(function (q) { return q[0]; });
+    if (v.want) row(!miss.length, v.tag + ': its real controls are there and usable' + (miss.length ? ' — missing / greyed: ' + miss.join(', ') : ''));
+  };
+  var show = function (i) { w.ui.viewScreen = lcs[i].id; w.renderAll(); };   // processor i's screen on the per-screen tabs
+  return visits.reduce(function (p, v) {
+    return p.then(function () {
+      if (v.lc) w.ui.viewScreen = v.lc.id;
+      w.setTab(v.id); w.renderAll(); return wait(v.id === 'health' || v.lc ? 1500 : 500);
+    }).then(function () { check(v); });
+  }, Promise.resolve()).then(function () {
+    // ---------------------------------------------------------------- the simulated processors answer like the real ones
+    var h5 = devs[0], vx = devs[1], pro = devs[2], mx = devs[3];
+    w.prompt = function (q) { return /RESET/.test(q) ? 'RESET' : /SAVE/.test(q) ? 'SAVE' : 'Sim preset'; }; w.confirm = function () { return true; };
+    t('Correction read: every cabinet of every processor reports its calibration (NovaLCT with coefficients and module flash)', function () {
+      var bad = devs.filter(function (x) { var c = w.cor.data[x.id]; return !c || c.error || Object.keys(c.by).length !== 16; }).map(w.deviceLabel);
+      var lct = w.cor.data[h5.id] && w.cor.data[h5.id].by, any = lct && lct[Object.keys(lct)[0]];
+      if (!any || !any.coef || any.moduleFlash == null) bad.push('H5 cabinet ' + JSON.stringify(any));
+      return bad.length ? bad.join('; ') : true;
+    });
+    var modes = function (x) { var b = w.cor.data[x.id].by; return Object.keys(b).map(function (k) { return b[k].mode; }); };
+    var mxWas = modes(mx).join();
+    w.setTab('correction');
+    // the switch on each screen (not the MX's: greyed there, not confirmed live)
+    return [0, 1, 2].reduce(function (p, i) { return p.then(function () { show(i); return w.corSwitch('brightness'); }); }, Promise.resolve()).then(function () {
+      show(0);   // the coefficient steps on the H5's screen
+      t('Calibration switch: the NovaLCT and Unico ones switch, COEX (not confirmed live) stays as it was', function () {
+        var ok = [h5, vx, pro].every(function (x) { return modes(x).every(function (m) { return m === 'brightness'; }); });
+        return ok && w.corCaps(mx).modes === null && modes(mx).join() === mxWas || [h5, vx, pro, mx].map(function (x) { return w.deviceLabel(x) + ' ' + modes(x).join(','); }).join(' | ');
+      });
+      return w.corReset();
+    }).then(function () {
+      t('Reset to flat: coefficients flat, “not saved” until Save to cards / Reload', function () {
+        var b = w.cor.data[h5.id].by, flat = Object.keys(b).every(function (k) { return b[k].coef === 'flat'; });
+        return flat && !!w.cor.pending[h5.id] || 'flat ' + flat + ', pending ' + w.cor.pending[h5.id];
+      });
+      return w.corReload();
+    }).then(function () {
+      t('Reload from cards brings the stored coefficients back', function () {
+        var b = w.cor.data[h5.id].by; return Object.keys(b).some(function (k) { return b[k].coef === 'calibrated'; }) && !w.cor.pending[h5.id] || JSON.stringify(b);
+      });
+      return w.corFlashCheck();
+    }).then(function () {
+      t('Flash check: a result per card with module flash, all OK', function () { var fl = w.cor.flash[h5.id]; return !!fl && fl.cards.length > 0 && fl.cards.every(function (c) { return !(c.bad || []).length; }) || JSON.stringify(fl); });
+      return w.corSave();
+    }).then(function () {
+      // ---------------------------------------------------------------- Monitor
+      return Promise.all(devs.map(function (x) { return (w.hlt.watch[x.id] || {}).inflight ? wait(300) : w.hltPoll(x); }));
+    }).then(function () {
+      t('Monitor: temperatures vary smoothly over the wall (heat map), voltages near 5 V, bit errors latched', function () {
+        var bad = [];
+        devs.forEach(function (x) {
+          var h = w.hlt.by[x.id]; if (!h) return bad.push(w.deviceLabel(x) + ' no reading');
+          var tt = h.cabinets.map(function (c) { return c.temp; }), v = h.cabinets.map(function (c) { return c.voltage; });
+          if (h.cabinets.length !== 16 || Math.max.apply(null, tt) - Math.min.apply(null, tt) < 0.5 || Math.max.apply(null, tt) > 55 || Math.min.apply(null, tt) < 25) bad.push(w.deviceLabel(x) + ' temps ' + tt.join(','));
+          if (v.some(function (y) { return !(y > 4.8 && y < 5.2); })) bad.push(w.deviceLabel(x) + ' volts ' + v.join(','));
+        });
+        var held = Object.keys(w.hlt.held).map(function (k) { return w.hlt.held[k]; }).filter(function (r) { return /bit errors/.test(r.text); });
+        if (held.length !== 4) bad.push(held.length + ' bit-error records held (want one per processor)');
+        return bad.length ? bad.join('; ') : true;
+      });
+      return w.hltClear(null);
+    }).then(function () { return wait(100); }).then(function () {
+      return Promise.all(devs.map(function (x) { return (w.hlt.watch[x.id] || {}).inflight ? wait(400) : w.hltPoll(x); }));
+    }).then(function () {
+      t('Clear zeroes the simulated counters; they stay cleared on the next readings (no error clears by itself, none comes back)', function () {
+        var left = Object.keys(w.hlt.held).length, be = devs.map(function (x) { return w.hlt.by[x.id].cabinets.filter(function (c) { return c.bitErrors; }).length; }).join(',');
+        return !left && be === '0,0,0,0' || left + ' held, bit errors ' + be;
+      });
+      // ---------------------------------------------------------------- Screen settings, presets, schedules, backup, service, info
+      return Promise.all([w.DRV.of(pro).screenSet(pro, 'gamut', 'dcip3'), w.DRV.of(h5).screenSet(h5, 'gamut', 'dcip3'), w.DRV.of(pro).readColor(pro)]);
+    }).then(function (r) {
+      t('Screen settings: what the real model offers (gamut on VX Pro, not on H5), values read back', function () {
+        return r[0].ok && /Simulated/.test(r[0].text) && !r[1].ok && r[1].unsupported && r[2].values.brightness === 100 && r[2].values.gamut === 'dcip3' || JSON.stringify(r);
+      });
+      return w.DRV.of(pro).presetSave(pro, 'Show A').then(function () { return w.DRV.of(mx).scheduleAdd(mx, { start: '2026-10-28 20:00', end: '2026-10-28 23:00', brightness: 40, repeat: [1] }); })
+        .then(function () { return Promise.all([w.DRV.of(pro).presets(pro), w.DRV.of(mx).schedules(mx)]); });
+    }).then(function (r) {
+      t('Presets and schedules are kept on the simulated processor', function () { return r[0].presets.length === 1 && r[0].presets[0].name === 'Show A' && r[1].brightness.length === 1 || JSON.stringify(r); });
+      var c = w.cardsOfDevice(vx)[0];
+      w.P.backup = { mode: 'port', pairs: [{ ms: c, mp: 0, bs: c, bp: 5 }], cards: [] }; w.commit(); w.renderAll();
+      return w.rdSendBackup(vx, { noConfirm: true }).then(function (ok) { return w.DRV.of(vx).readBackup(vx).then(function (b) { return [ok, b]; }); });
+    }).then(function (r) {
+      t('Backup: Send backup (NovaLCT) and Read from processor give the pairs back', function () { return r[0] === true && JSON.stringify(r[1].pairs) === '[[0,0,0,5]]' || JSON.stringify(r); });
+      return w.DRV.of(vx).verifyBackup(vx, 'backup');
+    }).then(function (r) {
+      t('Backup verify works on the simulated NovaLCT processor', function () { return r.ok || JSON.stringify(r); });
+      t('Service: the real model’s buttons (NovaLCT: factory reset + cabinets; Unico: restart + factory reset; COEX: cabinets)', function () {
+        var got = [h5, pro, mx].map(function (x) { return ['restart', 'factory', 'panels'].map(function (a) { return w.svWhy(x, a) ? '-' : a[0]; }).join(''); }).join(' ');
+        return got === '-fp rf- --p' && /data-act="factory"/.test(w.svHtml(h5)) || got;
+      });
+      return Promise.all([w.DRV.of(mx).deviceInfo(mx), w.DRV.of(h5).display(h5, 'blackout', null), w.DRV.of(pro).pattern(pro, 'red', null), w.DRV.of(h5).readLayout(h5), w.DRV.of(h5).display(h5, 'normal', null)]);
+    }).then(function (r) {
+      t('Device info, blackout, test pattern, read-back all answer (and say Simulated)', function () {
+        var rows = r[0].rows.map(function (x) { return x[0]; }).join(',');
+        return r[0].inputs.length === 4 && /Output cards/.test(rows) && /Simulated/.test(r[1].text) && /Simulated/.test(r[2].text) && r[3].cabinets.length === 16 || JSON.stringify(r).slice(0, 400);
+      });
+      // ---------------------------------------------------------------- the alpha's read-only gate
+      var refused = null;
+      t('alpha read-only: a simulated-only project keeps its buttons; a real link greys them', function () {
+        var keepSt = w.alpha.st, keepHw = h5.hw, bad = [];
+        try {
+          w.alpha.st = { readOnly: true, unlock: null, policy: { read: ['/api/hw/ping'] }, version: 'x', build: 'x' };
+          w.alphaApplyRO(); if ($('btnBlackout').classList.contains('ro-off')) bad.push('greyed with simulated processors only');
+          h5.hw = { kind: 'lct', host: '10.255.255.1', port: 5200, name: 'test', senders: [] };
+          w.alphaApplyRO(); if (!$('btnBlackout').classList.contains('ro-off')) bad.push('not greyed with a real link');
+          refused = w.DRV.post('lct', '/api/hw/run', { host: '10.255.255.1', port: 5200, plan: { ops: [{ op: 'w' }] } });
+        } finally { h5.hw = keepHw; w.alpha.st = keepSt; w.alphaApplyRO(); }
+        return bad.length ? bad.join('; ') : true;
+      });
+      return Promise.resolve(refused).then(function (x) { row(!!(x && x.readOnly), 'alpha read-only: a write to a real processor is still refused before it leaves the app'); });
+    }).then(function () { return wait(300); }).then(function () {
+      var hits = toasts.filter(function (x) { return BAD.test(x); });
+      row(!hits.length, 'no toast asks to link a processor' + (hits.length ? ' — ' + hits.join(' / ') : ''));
+      row(!posts.length, 'nothing reached the helper’s hardware routes' + (posts.length ? ' — ' + posts.slice(0, 5).join(', ') : ''));
+    });
+  });
+}
+</script>
+</body>
+</html>

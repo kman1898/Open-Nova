@@ -1,0 +1,235 @@
+/* app/looks/_base.css - the component rules shared by the looks (docs/DESIGN_LOOKS.md): pro.css (the default look since
+   2026-10-28) imports this file, sets the --lk-* tokens (and the app's own --bg / --panel / --ink …) for dark and light,
+   then adds what is its own. (The try-on looks studio / console / precision that also used it are retired to
+   docs/design/looks-retired/.) Loaded after polish.css; the classic look doesn't load it.
+
+   Specificity: plain element rules use :where(:root[data-look]) so they weigh what polish.css's do and win by order, while
+   the app's specific rules (.card-t, .seg button, .mb-top …) still beat them; component rules use :root[data-look] to beat
+   polish.css. Nothing here changes markup, ids or behaviour. Safety items (UI_STREAMLINE_PROPOSAL §2) keep their colours. */
+
+:root[data-look] {
+  --lk-font: "Segoe UI", system-ui, -apple-system, "SF Pro Text", Roboto, "Helvetica Neue", sans-serif;
+  --lk-mono: ui-monospace, "Cascadia Mono", "SF Mono", Menlo, Consolas, monospace;
+  --lk-fs: 13px; --lk-fs-sm: 12px; --lk-fs-xs: 11px; --lk-fs-head: 13.5px; --lk-fs-title: 15px; --lk-fs-num: 24px;
+  --lk-w-body: 400; --lk-w-btn: 500; --lk-w-head: 600; --lk-w-num: 500; --lk-w-brand: 650;
+  --lk-head-tt: none; --lk-head-ls: 0; --lk-th-tt: none; --lk-th-ls: 0;
+  --lk-h: 28px; --lk-row-h: 30px; --lk-r: 4px; --lk-r-sm: 3px; --lk-r-card: 6px; --lk-r-menu: 6px; --lk-r-tab: 4px; --lk-r-btn: var(--lk-r);
+  --lk-btn-pad: 4px 12px; --lk-act-gap: 8px;
+  --lk-alarm: #d32f2f;   /* filled red: Blackout / Freeze pressed, display bar, alarm banner (white text 5 : 1) */
+  --lk-fill: var(--accent); --lk-fill-ink: #fff; --lk-hover: rgba(255, 255, 255, .06);
+  --lk-divider: var(--line); --lk-scroll: rgba(127, 127, 127, .35);
+  --lk-pop-shadow: 0 10px 30px rgba(0, 0, 0, .45), 0 0 0 1px rgba(0, 0, 0, .25);
+  --lk-card-shadow: none; --lk-check: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M3.5 8.2l3 3 6-6.4' fill='none' stroke='%23fff' stroke-width='2.2' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+  --lk-chev: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M3 4.5l3 3 3-3' fill='none' stroke='%238a93a3' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+}
+
+/* ---- type */
+:where(:root[data-look]) body { font-family: var(--lk-font); font-size: calc(var(--lk-fs) * var(--fs, 1)); font-weight: var(--lk-w-body); line-height: 1.45;
+  background: var(--bg); color: var(--ink); -webkit-font-smoothing: antialiased; font-feature-settings: "tnum" 1; }
+:where(:root[data-look]) .hint { font-size: calc(var(--lk-fs-sm) * var(--fs, 1)); color: var(--muted); }
+:where(:root[data-look]) label { font-size: calc(var(--lk-fs-sm) * var(--fs, 1)); color: var(--muted); }
+:where(:root[data-look]) label.chk { font-size: calc(var(--lk-fs) * var(--fs, 1)); color: var(--ink); }
+:root[data-look] h2, :root[data-look] .tree-title { font-size: calc(var(--lk-fs-head) * var(--fs, 1)); font-weight: var(--lk-w-head);
+  text-transform: var(--lk-head-tt); letter-spacing: var(--lk-head-ls); color: var(--ink); }
+:root[data-look] h3 { font-weight: var(--lk-w-head); }
+:root[data-look] b.dv-h { font-size: calc(var(--lk-fs-title) * var(--fs, 1)); font-weight: var(--lk-w-head); letter-spacing: 0; }
+:root[data-look] :focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+:root[data-look] * { scrollbar-color: var(--lk-scroll) transparent; }
+
+/* ---- menu bar (app-menubar.js) */
+:root[data-look] .menubar { background: var(--lk-menubar-bg, var(--panel)); border-bottom: 1px solid var(--lk-menubar-line, var(--line)); }
+:root[data-look] .menubar .mb-top, :root[data-look] .menubar .mb-burger, :root[data-look] .menubar .mb-proj {
+  color: var(--lk-menubar-ink, var(--ink)); font-size: calc(12.5px * var(--fs, 1)); font-weight: 400; }
+:root[data-look] .menubar .mb-proj { font-weight: var(--lk-w-head); }
+:root[data-look] .menubar .mb-top:hover, :root[data-look] .menubar .mb-burger:hover { background: var(--lk-hover); }
+:root[data-look] .menubar .mb-top.on, :root[data-look] .menubar .mb-top.on:hover { background: var(--lk-fill); color: var(--lk-fill-ink); }
+
+/* ---- menus, popovers, context menu, tooltips */
+:root[data-look] .dropmenu, :root[data-look] .ctx, :root[data-look] .wt-pop, :root[data-look] .itip-pop, :root[data-look] .qa-box {
+  background: var(--lk-menu-bg, var(--panel)); border: 1px solid var(--lk-menu-bd, var(--line)); border-radius: var(--lk-r-menu); box-shadow: var(--lk-pop-shadow); }
+:root[data-look] .menubar .mb-menu { border-radius: 0 0 var(--lk-r-menu) var(--lk-r-menu); padding: 4px; }
+:root[data-look] .menubar .mb-subm { border-radius: var(--lk-r-menu); }
+:root[data-look] .menubar .mb-menu > button, :root[data-look] .menubar .mb-menu > label.btn, :root[data-look] .menubar .mb-sub > .mb-subbtn,
+:root[data-look] .menubar .mb-menu .proj-row, :root[data-look] .dropmenu > button, :root[data-look] .dropmenu > label.btn, :root[data-look] .ctx .ctx-i {
+  min-height: 28px; border-radius: var(--lk-r-sm); font-size: calc(var(--lk-fs) * var(--fs, 1)); font-weight: 400; color: var(--ink); }
+:root[data-look] .menubar .mb-menu > button:hover, :root[data-look] .menubar .mb-menu > label.btn:hover, :root[data-look] .menubar .mb-sub > .mb-subbtn:hover,
+:root[data-look] .menubar .mb-sub.open > .mb-subbtn, :root[data-look] .menubar .mb-menu .proj-row:hover, :root[data-look] .dropmenu > button:hover,
+:root[data-look] .dropmenu > label.btn:hover, :root[data-look] .proj-list .proj-row:hover, :root[data-look] .ctx .ctx-i:hover, :root[data-look] .ctx .ctx-i:focus,
+:root[data-look] .ctx .ctx-i.open, :root[data-look] .view-menu > label.chk:hover, :root[data-look] .view-menu .vm-row label.chk:hover {
+  background: var(--lk-menu-hover, var(--accent-soft)); color: var(--lk-menu-hover-ink, var(--ink)); }
+:root[data-look] .ctx .ctx-h, :root[data-look] .proj-head { font-size: calc(var(--lk-fs-xs) * var(--fs, 1)); letter-spacing: .06em; }
+:root[data-look] .dropmenu hr, :root[data-look] .ctx .ctx-sep { border-top-color: var(--lk-divider); background: var(--lk-divider); }
+
+/* ---- header: brand, tabs, the action row */
+:root[data-look] header.bar { background: var(--lk-hdr-bg, var(--panel)); border-bottom: 1px solid var(--lk-hdr-line, var(--line)); }
+:root[data-look] header.bar .brand { font-size: calc(16px * var(--fs, 1)); font-weight: var(--lk-w-brand); letter-spacing: var(--lk-brand-ls, 0); color: var(--ink); }
+:root[data-look] header.bar .bar-actions { gap: var(--lk-act-gap); background: var(--lk-hdr-bg, var(--panel)); border-top-color: var(--lk-hdr-line, var(--line)); }
+:root[data-look] header.bar.one-row .bar-actions { background: transparent; }
+:root[data-look] header.bar .modtabs button { border-radius: var(--lk-r-tab); background: var(--lk-tab-bg); color: var(--lk-tab-ink, var(--muted)); border: 1px solid var(--lk-tab-bd, transparent);
+  font-size: calc(12px * var(--fs, 1)); font-weight: 500; box-shadow: none; transform: none; }
+:root[data-look] header.bar .modtabs button:hover { background: var(--lk-tab-hover); color: var(--ink); border-color: var(--lk-tab-bd, transparent); transform: none; }
+:root[data-look] header.bar .modtabs button.on { background: var(--lk-fill); color: var(--lk-fill-ink); border-color: transparent; box-shadow: var(--lk-tab-on-shadow, none); }
+:root[data-look] header.bar .modtabs button.on svg { color: var(--lk-fill-ink); }
+:root[data-look] .sync { font-size: calc(var(--lk-fs-xs) * var(--fs, 1)); }
+
+/* the safety group: Blackout | Freeze | Normal as one segmented control (all three stay visible, never in a menu) */
+@media (min-width: 701px) {
+  :root[data-look] header.bar #btnBlackout { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+  :root[data-look] header.bar #btnFreeze { border-radius: 0; margin-left: calc(-1 * var(--lk-act-gap) - 1px); }
+  :root[data-look] header.bar #btnNormalHdr { border-top-left-radius: 0; border-bottom-left-radius: 0; margin-left: calc(-1 * var(--lk-act-gap) - 1px); margin-right: 6px; }
+}
+:root[data-look] header.bar .disp-btn.on { background: var(--lk-alarm); border-color: var(--lk-alarm); color: #fff; position: relative; z-index: 1; }
+/* Save turns amber when something isn't saved: filled, so it reads at a glance */
+:root[data-look] #btnSaveHw.warn { background: var(--warn); border-color: var(--warn); color: #1d1404; font-weight: 600; }
+:root[data-look] #btnSaveHw.warn:hover { filter: brightness(1.08); }
+
+/* ---- banners under the header (§2: all stay visible) */
+:root[data-look] #unsavedBar { background: color-mix(in srgb, var(--warn) 13%, var(--panel)); border-bottom: 1px solid color-mix(in srgb, var(--warn) 45%, transparent);
+  box-shadow: inset 4px 0 var(--warn); color: var(--ink); font-size: calc(var(--lk-fs) * var(--fs, 1)); }
+:root[data-look] #btnSaveBar { background: var(--warn); border-color: var(--warn); color: #1d1404; font-weight: 600; box-shadow: none; }
+:root[data-look] #rbBar { background: color-mix(in srgb, var(--accent) 12%, var(--panel)); border-bottom: 1px solid color-mix(in srgb, var(--accent) 40%, transparent);
+  box-shadow: inset 4px 0 var(--accent); }
+:root[data-look] .display-bar, :root[data-look] .wt-banner { background: var(--lk-alarm); color: #fff; box-shadow: inset 0 -1px rgba(0, 0, 0, .25); }
+
+/* ---- buttons */
+:where(:root[data-look]) button, :where(:root[data-look]) .btn { background: var(--lk-btn-bg); border: 1px solid var(--lk-btn-bd); color: var(--lk-btn-ink, var(--ink));
+  border-radius: var(--lk-r-btn); padding: var(--lk-btn-pad); font-weight: var(--lk-w-btn); box-shadow: none; transition: background .12s, border-color .12s, color .12s; }
+:where(:root[data-look]) button:hover, :where(:root[data-look]) .btn:hover { background: var(--lk-btn-hover); border-color: var(--lk-btn-bd-hover, var(--lk-btn-bd)); }
+:where(:root[data-look]) button.primary { background: var(--lk-fill); border-color: var(--lk-fill); color: var(--lk-fill-ink); box-shadow: none; filter: none; }
+:where(:root[data-look]) button.primary:hover { background: var(--lk-fill-hover, var(--lk-fill)); border-color: var(--lk-fill-hover, var(--lk-fill)); filter: none; }
+:where(:root[data-look]) button.danger { color: var(--danger); border-color: color-mix(in srgb, var(--danger) 45%, transparent); }
+:where(:root[data-look]) button.danger:hover { background: color-mix(in srgb, var(--danger) 14%, transparent); border-color: var(--danger); }
+:where(:root[data-look]) button.active { background: var(--lk-fill); border-color: var(--lk-fill); color: var(--lk-fill-ink); }
+:where(:root[data-look]) button.mini { border-radius: var(--lk-r-sm); font-size: calc(var(--lk-fs-sm) * var(--fs, 1)); padding: 1px 8px; }
+:where(:root[data-look]) button:disabled { opacity: .45; }
+
+/* ---- inputs, selects, checkboxes, sliders */
+:where(:root[data-look]) select, :where(:root[data-look]) textarea, :where(:root[data-look]) input:where(:not([type=checkbox], [type=radio], [type=range], [type=file], [type=color])) {
+  background-color: var(--lk-input-bg); border: 1px solid var(--lk-input-bd); border-radius: var(--lk-r); color: var(--ink); padding: 4px 8px;
+  font-size: calc(var(--lk-fs) * var(--fs, 1)); min-height: var(--lk-h); }
+:where(:root[data-look]) select:hover, :where(:root[data-look]) input:where(:not([type=checkbox], [type=radio], [type=range])):hover { border-color: var(--lk-input-bd-hover, var(--lk-input-bd)); }
+:where(:root[data-look]) input:focus, :where(:root[data-look]) select:focus, :where(:root[data-look]) textarea:focus { outline: 2px solid var(--accent); outline-offset: -1px; border-color: transparent; }
+:where(:root[data-look]) select:where(:not([multiple])) { -webkit-appearance: none; appearance: none; background-image: var(--lk-chev); background-repeat: no-repeat;
+  background-position: right 7px center; background-size: 12px 12px; padding-right: 24px; }
+:where(:root[data-look]) input::placeholder { color: var(--muted); opacity: .75; }
+:where(:root[data-look]) input[type=checkbox] { -webkit-appearance: none; appearance: none; width: 15px; height: 15px; flex: none; margin: 0; padding: 0; min-height: 0;
+  border: 1px solid var(--lk-check-bd, var(--muted)); border-radius: var(--lk-r-sm); background: var(--lk-input-bg) center / 12px no-repeat; cursor: pointer; vertical-align: middle; }
+:where(:root[data-look]) label.chk input[type=checkbox], :where(:root[data-look]) label input[type=checkbox] { width: 15px; }   /* app.css sets width: auto */
+:where(:root[data-look]) input[type=checkbox]:checked { background-color: var(--lk-fill); border-color: var(--lk-fill); background-image: var(--lk-check); }
+:where(:root[data-look]) input[type=checkbox]:disabled { opacity: .45; cursor: default; }
+:where(:root[data-look]) input[type=radio] { accent-color: var(--accent); }
+:where(:root[data-look]) input[type=range] { accent-color: var(--accent); }
+/* switches (Unico / VMP style) for the on / off settings in the side panels and the View menu, in the looks that use them;
+   drawn with gradients (Safari / Firefox draw no ::before on inputs) */
+:root[data-look="studio"] .panel.right label.chk > input[type=checkbox], :root[data-look="studio"] .view-menu label.chk > input[type=checkbox],
+:root[data-look="console"] .panel.right label.chk > input[type=checkbox], :root[data-look="console"] .view-menu label.chk > input[type=checkbox] {
+  width: 30px; height: 16px; border-radius: 8px; border: 0; background: var(--lk-sw-off, #4a5263) radial-gradient(circle at 8px 50%, #fff 5.5px, transparent 6px) no-repeat; }
+:root[data-look="studio"] .panel.right label.chk > input[type=checkbox]:checked, :root[data-look="studio"] .view-menu label.chk > input[type=checkbox]:checked,
+:root[data-look="console"] .panel.right label.chk > input[type=checkbox]:checked, :root[data-look="console"] .view-menu label.chk > input[type=checkbox]:checked {
+  background: var(--lk-fill) radial-gradient(circle at 22px 50%, #fff 5.5px, transparent 6px) no-repeat; }
+:root[data-look] .sc-range { border: 0; background: transparent; height: 28px; }
+:root[data-look] .sc-range::-webkit-slider-runnable-track { height: var(--lk-track-h, 4px); border-radius: 3px; background: var(--lk-track, var(--line)); }
+:root[data-look] .sc-range::-moz-range-track { height: var(--lk-track-h, 4px); border-radius: 3px; background: var(--lk-track, var(--line)); }
+:root[data-look] .sc-range::-moz-range-progress { height: var(--lk-track-h, 4px); border-radius: 3px; background: var(--accent); }
+:root[data-look] .sc-range::-webkit-slider-thumb { width: var(--lk-thumb, 16px); height: var(--lk-thumb, 16px); margin-top: calc((var(--lk-track-h, 4px) - var(--lk-thumb, 16px)) / 2);
+  background: var(--lk-thumb-bg, #fff); border: 2px solid var(--lk-thumb-bd, var(--accent)); box-shadow: 0 1px 3px rgba(0, 0, 0, .4); }
+:root[data-look] .sc-range::-moz-range-thumb { width: calc(var(--lk-thumb, 16px) - 4px); height: calc(var(--lk-thumb, 16px) - 4px); background: var(--lk-thumb-bg, #fff);
+  border: 2px solid var(--lk-thumb-bd, var(--accent)); box-shadow: 0 1px 3px rgba(0, 0, 0, .4); }
+:root[data-look] .sc-reset { width: 28px; height: 28px; font-size: calc(16px * var(--fs, 1)); border-radius: 50%; }
+:root[data-look] .sc-slide .sc-head label { font-size: calc(var(--lk-fs) * var(--fs, 1)); font-weight: 500; color: var(--ink); }
+:root[data-look] .sc-slide .sc-val input[type=number] { font-size: calc(var(--lk-fs) * var(--fs, 1)); width: 76px; }
+:root[data-look] .sc-slide .sc-val .unit { font-size: calc(var(--lk-fs-sm) * var(--fs, 1)); }
+
+/* ---- segmented controls */
+:root[data-look] .seg { background: var(--lk-seg-bg, var(--lk-input-bg)); border: 1px solid var(--lk-seg-bd, var(--lk-input-bd)); border-radius: var(--lk-r); padding: 2px; gap: 2px; }
+:root[data-look] .seg button, :root[data-look] .seg button + button { border: 0; border-radius: var(--lk-r-sm); background: transparent; color: var(--muted); box-shadow: none; font-weight: 500; }
+:root[data-look] .seg button:hover { color: var(--ink); background: var(--lk-hover); }
+:root[data-look] .seg button.on { background: var(--lk-seg-on, var(--lk-fill)); color: var(--lk-seg-on-ink, var(--lk-fill-ink)); box-shadow: none; }
+
+/* ---- side panels, project tree */
+:root[data-look] .panel { background: var(--panel); }
+:root[data-look] .panel.left { border-right: 1px solid var(--lk-divider); }
+:root[data-look] .panel.right { border-left: 1px solid var(--lk-divider); }
+:root[data-look] .tn { min-height: var(--lk-row-h); border-radius: var(--lk-r-row, var(--lk-r)); }
+:root[data-look] .tn:hover { background: var(--lk-hover); }
+:root[data-look] .tn.on { background: var(--lk-sel-bg, var(--lk-fill)); color: var(--lk-sel-ink, var(--lk-fill-ink)); box-shadow: var(--lk-sel-shadow, none); }
+:root[data-look] .tn.on .tn-tag, :root[data-look] .tn.on .tn-ico, :root[data-look] .tn.on .tn-name, :root[data-look] .tn.on .tn-tw { color: var(--lk-sel-ink, var(--lk-fill-ink)); }
+:root[data-look] .tn-lct.on, :root[data-look] .tn-dev.on, :root[data-look] .tn-card.on, :root[data-look] .tn-grp.on, :root[data-look] .tn.tn-dev.on {
+  background: var(--lk-sel2-bg, var(--accent-soft)); color: var(--ink); box-shadow: var(--lk-sel2-shadow, inset 3px 0 0 var(--accent)); }
+:root[data-look] .tn-lct.on .tn-name, :root[data-look] .tn-dev.on .tn-name, :root[data-look] .tn-card.on .tn-name, :root[data-look] .tn-grp.on .tn-name,
+:root[data-look] .tn-lct.on .tn-ico, :root[data-look] .tn-dev.on .tn-ico, :root[data-look] .tn-card.on .tn-ico, :root[data-look] .tn-lct.on .tn-tw,
+:root[data-look] .tn-dev.on .tn-tw, :root[data-look] .tn-card.on .tn-tw { color: var(--ink); }
+:root[data-look] .tn-lct.on .tn-tag, :root[data-look] .tn-dev.on .tn-tag, :root[data-look] .tn-card.on .tn-tag, :root[data-look] .tn-grp.on .tn-tag { color: var(--muted); }
+:root[data-look] .tn-proj { font-size: calc(var(--lk-fs-head) * var(--fs, 1)); font-weight: var(--lk-w-head); }
+:root[data-look] .tn-lct, :root[data-look] .tn-dev { font-weight: 500; }
+:root[data-look] .tn-tag { font-size: calc(var(--lk-fs-xs) * var(--fs, 1)); }
+:root[data-look] .tn-type { border-color: var(--lk-divider); }
+:root[data-look] .dv-li.on .tn-name { color: inherit; }
+:root[data-look] .dv-li.on .dv-li-s { color: inherit; opacity: .85; }
+:root[data-look] .tree-search { margin-top: 2px; }
+
+/* ---- centre: toolbar, canvas, status line, port list */
+:root[data-look] .stage { background: var(--stage); }
+:root[data-look] .stage-tools { background: var(--lk-tool-bg, var(--panel)); border-bottom: 1px solid var(--lk-divider); }
+:root[data-look] .stage-tools .sep { background: var(--lk-divider); }
+:root[data-look] .viewport { background: var(--lk-viewport-bg, transparent); }
+:root[data-look] svg .canvas-bg { fill: var(--canvas); stroke: var(--lk-canvas-bd, var(--line)); }
+:root[data-look] .status { background: var(--lk-tool-bg, var(--panel)); border-top: 1px solid var(--lk-divider); font-size: calc(var(--lk-fs-sm) * var(--fs, 1)); }
+:root[data-look] .portlist { background: var(--lk-portlist-bg, var(--panel)); border-top: 1px solid var(--lk-divider); }
+:root[data-look] .pl-head b { font-weight: var(--lk-w-head); }
+:root[data-look] .pt { background: var(--lk-tile-bg); border: 1px solid var(--lk-tile-bd, transparent); border-radius: var(--lk-r); }
+:root[data-look] .pt:hover { border-color: var(--muted); }
+:root[data-look] .pt.on { border-color: var(--accent); outline: 1px solid var(--accent); outline-offset: -1px; }
+:root[data-look] .pt.over { border-color: var(--danger); }
+:root[data-look] .pt-n { font-weight: 600; }
+:root[data-look] .badge { border-radius: var(--lk-r-sm); font-weight: 600; }
+
+/* ---- right column: collapsible property cards */
+:root[data-look] .card { border-bottom: 1px solid var(--lk-divider); }
+:root[data-look] .card-h { background: var(--lk-card-h-bg, transparent); }
+:root[data-look] .card-t { font-size: calc(var(--lk-fs-head) * var(--fs, 1)); font-weight: var(--lk-w-head); text-transform: var(--lk-head-tt); letter-spacing: var(--lk-head-ls); color: var(--ink); }
+:root[data-look] .card-t:hover { color: var(--accent); background: transparent; }
+:root[data-look] .chev::before { content: ''; width: 6px; height: 6px; margin: 0 9px 3px 3px; border: solid var(--muted); border-width: 0 1.5px 1.5px 0;
+  transform: rotate(45deg); vertical-align: middle; }
+:root[data-look] .card.collapsed .chev::before { transform: rotate(-45deg); margin-bottom: 1px; }
+:root[data-look] .card-sub, :root[data-look] .sub-h span { color: var(--lk-sub-ink, var(--accent)); font-weight: 400; }
+:root[data-look] .sub-h { border-top-color: var(--lk-divider); text-transform: var(--lk-head-tt); letter-spacing: var(--lk-head-ls); color: var(--muted); }
+:root[data-look] .dv-ptabs { border-bottom-color: var(--lk-divider); }
+:root[data-look] .dv-ptabs span { font-size: calc(var(--lk-fs-head) * var(--fs, 1)); font-weight: var(--lk-w-head); border-bottom-color: var(--accent); }
+:root[data-look] .out-group { border-top-color: var(--lk-divider); }
+:root[data-look] .out-group > summary { font-weight: var(--lk-w-head); }
+:root[data-look] .cap, :root[data-look] .dims { font-size: calc(var(--lk-fs-sm) * var(--fs, 1)); }
+
+/* ---- content cards (Dashboard, Monitor, Screen Settings, Backup, Preset …) */
+:root[data-look] .sc-card, :root[data-look] .rd-dev, :root[data-look] .ps-scene, :root[data-look] .hl-dev, :root[data-look] .db-card, :root[data-look] .pre-card,
+:root[data-look] .db-ring, :root[data-look] .hm-card, :root[data-look] .dv-card:not(.dv-add) {
+  background: var(--lk-card-bg); border: 1px solid var(--lk-card-bd, transparent); border-radius: var(--lk-r-card); box-shadow: var(--lk-card-shadow); }
+:root[data-look] .dv-card.on { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); }
+:root[data-look] .dv-card.dv-add { border-radius: var(--lk-r-card); border-color: var(--lk-divider); }
+:root[data-look] .sc-card h3, :root[data-look] .rd-dev h3, :root[data-look] .ps-scene h3, :root[data-look] .db-card h3, :root[data-look] .hl-dev h3 {
+  font-size: calc(var(--lk-fs-title) * var(--fs, 1)); font-weight: var(--lk-w-head); }
+:root[data-look] .hl-tile { background: var(--lk-tile2-bg, var(--lk-tile-bg)); border-radius: var(--lk-r); }
+:root[data-look] .hl-tile b { font-size: calc(var(--lk-fs-num) * var(--fs, 1)); font-weight: var(--lk-w-num); }
+:root[data-look] .db-ring b { font-size: calc(calc(var(--lk-fs-num) + 6px) * var(--fs, 1)); font-weight: var(--lk-w-num); }
+:root[data-look] .db-ring svg circle { stroke-width: var(--lk-ring-w, 6); }
+:root[data-look] .db-ring svg circle[stroke="#2fae6a"] { stroke: var(--ok); }
+:root[data-look] .db-ring svg circle[stroke="#e0a84a"] { stroke: var(--warn); }
+:root[data-look] .db-ring svg circle[stroke="#e05252"] { stroke: var(--danger); }
+:root[data-look] .db-ring svg circle:first-child { stroke: var(--lk-ring-track, rgba(127, 127, 127, .22)); }
+:root[data-look] .hm-screen { background: var(--lk-well, var(--stage)); border-radius: var(--lk-r); }
+:root[data-look] .rd-pair { background: var(--lk-tile2-bg, var(--raise)); border-radius: var(--lk-r-sm); }
+:root[data-look] .sc-thumb { background: var(--lk-well, var(--stage)); border-radius: var(--lk-r); }
+
+/* ---- tables */
+:root[data-look] .sc-tbl th, :root[data-look] .hl-ports th, :root[data-look] .mt-tbl th, :root[data-look] .ps-scene th, :root[data-look] table.cmp th, :root[data-look] .dg-tbl th {
+  font-size: calc(var(--lk-fs-xs) * var(--fs, 1)); font-weight: 600; text-transform: var(--lk-th-tt); letter-spacing: var(--lk-th-ls); color: var(--muted); background: var(--lk-th-bg, transparent); }
+:root[data-look] .sc-tbl td, :root[data-look] .hl-ports td, :root[data-look] .mt-tbl td, :root[data-look] .ps-scene td, :root[data-look] table.cmp td,
+:root[data-look] .sc-tbl th, :root[data-look] .hl-ports th, :root[data-look] .mt-tbl th, :root[data-look] .ps-scene th { border-top-color: var(--lk-divider); }
+:root[data-look] .mt-tbl tbody tr:hover td, :root[data-look] .hl-ports tbody tr:hover td { background: var(--lk-hover); }
+
+/* ---- dialogs, toasts */
+:root[data-look] .logdlg { background: rgba(0, 0, 0, .55); }
+:root[data-look] .logbox { background: var(--lk-menu-bg, var(--panel)); border: 1px solid var(--lk-menu-bd, var(--line)); border-radius: var(--lk-r-card); box-shadow: var(--lk-pop-shadow); }
+:root[data-look] .logtext, :root[data-look] .dg-hex { background: var(--lk-well, var(--bg)); border-color: var(--lk-divider); border-radius: var(--lk-r); }
+:root[data-look] .toast { background: var(--lk-toast-bg, #111); color: var(--lk-toast-ink, #fff); border-radius: var(--lk-r-card); box-shadow: var(--lk-pop-shadow);
+  font-size: calc(var(--lk-fs) * var(--fs, 1)); padding: 9px 16px; }

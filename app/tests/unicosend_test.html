@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>VX Pro send test</title>
+<style>
+  :root { --bg: #f6f7f9; --fg: #1d2330; --muted: #5d6675; --line: #d6dae1; --ok: #1d7a3a; --bad: #b42318; --card: #fff; }
+  @media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #161a21; --fg: #e6e9ef; --muted: #9aa3b2; --line: #2c3340; --ok: #4cc27a; --bad: #ff7a6b; --card: #1e232c; } }
+  body { background: var(--bg); color: var(--fg); font: 14px/1.4 system-ui, sans-serif; margin: 0; padding: 16px; }
+  fieldset { border: 1px solid var(--line); background: var(--card); border-radius: 6px; margin: 0 0 12px; }
+  label { margin-right: 12px; white-space: nowrap; }
+  input, select, button { font: inherit; }
+  pre { background: var(--card); border: 1px solid var(--line); padding: 8px; overflow: auto; max-height: 50vh; white-space: pre-wrap; }
+  .ok { color: var(--ok); } .bad { color: var(--bad); } .muted { color: var(--muted); }
+</style>
+</head>
+<body>
+<h2>Send to a VX Pro (Unico-family) processor (test page)</h2>
+<p class="muted">Builds the layout with the app's own code (unicosend.js) and hands it to the local helper (tools\novalink.py on
+port 8790, which runs tools\unicolink.py). The processor's existing topology on the screen is replaced; the read-back checks every cabinet.</p>
+<fieldset><legend>Show file</legend>
+  <input id="file" type="text" size="32" placeholder="name.scr in app/samples" title="A show file in app/samples (private, not in the repository), or pick one">
+  <input type="file" id="pick" accept=".scr">
+  <label><input type="checkbox" id="backup"> Back up every used port on port + <input id="offset" type="number" value="11" min="1" max="19" style="width:3.5em"></label>
+</fieldset>
+<fieldset><legend>Processor</legend>
+  <button id="discover">Find processors</button>
+  <select id="found"><option value="">(none yet)</option></select>
+  <label>Host <input id="host" value="127.0.0.1"></label>
+  <label>Port <input id="port" value="8088" style="width:5em"></label>
+  <button id="info">Read processor</button>
+  <button id="build">Build layout</button>
+  <button id="dry">Dry run</button>
+  <button id="send">Send to processor</button>
+</fieldset>
+<pre id="out"></pre>
+<script src="../scr.js"></script>
+<script src="../unicosend.js"></script>
+<script>
+var HELPER = 'http://127.0.0.1:8790';
+var out = document.getElementById('out'), picked = null, found = document.getElementById('found');
+function say(s, cls) { var d = document.createElement('div'); d.textContent = s; if (cls) d.className = cls; out.appendChild(d); }
+document.getElementById('pick').onchange = function (e) { picked = e.target.files[0] || null; };
+found.onchange = function () { if (!found.value) return; var d = JSON.parse(found.value); document.getElementById('host').value = d.ip; document.getElementById('port').value = d.port; };
+function target() { return { host: document.getElementById('host').value, port: +document.getElementById('port').value }; }
+
+async function layout() {
+  var buf = picked ? await picked.arrayBuffer() : await (await fetch('../samples/' + encodeURIComponent(document.getElementById('file').value))).arrayBuffer();
+  var L = UNICOSEND.buildLayout(SCR.parse(buf));
+  if (document.getElementById('backup').checked) L.portBackup = UNICOSEND.portBackupPairs(L, +document.getElementById('offset').value);
+  return L;
+}
+async function post(path, body) {
+  var r = await fetch(HELPER + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+  return r.json();
+}
+function summary(L) {
+  return L.cabinets.length + ' cabinets on ' + L.ports + ' ports; load ' + Object.keys(L.load).map(function (p) { return 'P' + (+p + 1) + ' ' + L.load[p] + '%'; }).join(', ') +
+    (L.portBackup ? '; backup ' + L.portBackup.map(function (q) { return (q[0] + 1) + '→' + (q[1] + 1); }).join(' ') : '');
+}
+async function run(fn) { out.textContent = ''; try { await fn(); } catch (e) { say(e.message, 'bad'); } }
+
+document.getElementById('discover').onclick = function () { run(async function () {
+  var r = await post('/api/unico/discover', { timeout: 2 });
+  found.innerHTML = '';
+  (r.devices || []).forEach(function (d) { var o = document.createElement('option'); o.value = JSON.stringify(d);
+    o.textContent = d.deviceName + ' · ' + d.ip + ':' + d.port + ' · ' + ((UNICOSEND.MODELS[d.modelId] || {}).name || 'model ' + d.modelId); found.appendChild(o); });
+  say((r.devices || []).length + ' processor(s) answered', r.ok ? 'ok' : 'bad');
+  if (r.devices && r.devices.length) found.onchange();
+}); };
+document.getElementById('info').onclick = function () { run(async function () {
+  var r = await post('/api/unico/info', target());
+  if (!r.ok) throw new Error(r.error || 'failed');
+  var i = r.info, m = UNICOSEND.MODELS[i.modelId];
+  say(i.name + ' · ' + (m ? m.name : 'model ' + i.modelId) + ' · SN ' + i.sn + ' · ' + i.version + ' · MAC ' + (i.mac || '-'), 'ok');
+  say(i.ports.length + ' output ports; canvas ' + i.canvases.map(function (c) { return c.width + '×' + c.height; }).join(', ') + '; ' + i.placedCabinets.length + ' cabinets placed now');
+  if (i.status === 9) say('Busy: a processor-backup sync is running', 'bad');
+  if (i.deviceBackup && i.deviceBackup.master && i.deviceBackup.master.sn) say('Processor backup: ' + i.deviceBackup.master.name + ' → ' + i.deviceBackup.slave.map(function (s) { return s.name; }).join(', '));
+  var L = await layout(); UNICOSEND.check(L, i).forEach(function (w) { say(w, 'bad'); });
+}); };
+document.getElementById('build').onclick = function () { run(async function () {
+  var L = await layout(); window.lastLayout = L; say(summary(L), 'ok');
+  L.cabinets.slice(0, 40).forEach(function (c) { say(JSON.stringify(c)); });
+}); };
+async function send(dry) {
+  var L = await layout(), t = target(); say(summary(L));
+  say((dry ? 'Dry run against ' : 'Sending to ') + t.host + ':' + t.port + ' ...');
+  var r = await post('/api/unico/send', { host: t.host, port: t.port, layout: L, dry: dry });
+  say(r.ok ? (dry ? 'Dry run ok: ' + r.calls + ' calls' : 'Done: ' + r.cabinets + ' cabinets on the processor, read-back matches') : 'Failed: ' + (r.error || 'read-back mismatch'), r.ok ? 'ok' : 'bad');
+  (r.warnings || []).forEach(function (w) { say(w, 'bad'); });
+  (r.tail || []).forEach(function (l) { say(l, 'muted'); }); if (r.log) say('log: ' + r.log, 'muted');
+}
+document.getElementById('dry').onclick = function () { run(function () { return send(true); }); };
+document.getElementById('send').onclick = function () { run(function () { return send(false); }); };
+</script>
+</body>
+</html>

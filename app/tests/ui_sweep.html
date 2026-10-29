@@ -1,0 +1,82 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>UI sweep</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 20px; background: #15181c; color: #e6e9ed; }
+  pre { white-space: pre-wrap; background: #1d2126; padding: 8px; }
+  .host iframe { border: 0; position: absolute; left: -4000px; top: 0; }
+</style>
+</head>
+<body>
+<h1>UI sweep</h1>
+<p>Runs <code>ui-lint.js</code> <code>uiSweep()</code> (every tab, every ▾ menu, every menu-bar menu and submenu) in the app at each
+window width × interface size × text size × theme, in a hidden frame of that size — no window resize needed. Query:
+<code>?w=375,768,1280,1920&amp;z=0.7,1,1.5&amp;fs=1,1.15&amp;theme=dark,light&amp;h=800</code> (<code>&amp;offline=1</code>: in an offline
+project with four simulated processors, so every tab shows its full controls). Saving, sync and processor searches are
+switched off in the frame; this browser’s size / text / theme settings are put back at the end.</p>
+<pre id="out">running…</pre>
+<div class="host" id="host"></div>
+<script>
+var q = new URLSearchParams(location.search);
+function list(k, d) { return (q.get(k) || d).split(','); }
+var W = list('w', '375,768,1280,1920'), Z = list('z', '1'), F = list('fs', '1'), T = list('theme', 'dark,light'), H = +(q.get('h') || 800);
+var KEYS = ['opennova.uisize', 'opennova.textsize', 'opennova.theme'], keep = {}, out = document.getElementById('out'), lines = [], total = 0;
+KEYS.forEach(function (k) { try { keep[k] = localStorage.getItem(k); } catch (e) {} });
+function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+// ?offline=1: an offline project (H5, VX1000, VX1000 Pro, MX40 Pro, all simulated) so every tab shows its full controls
+function offlineProject(win) {
+  var pj = win.ensureLct(win.newProject()); pj.name = 'Offline sweep'; pj.mode = 'offline'; pj.procsChosen = true; win.replaceProject(pj);
+  ['h5', 'vx1000', 'vx1000pro', 'mx40pro'].forEach(function (k, i) {
+    var dv = win.addProcessor(k), c0 = win.cardsOfDevice(dv)[0], lc = i ? win.lctNew(dv) : win.P.lct[0];   // a screen per processor
+    [0, 1].forEach(function (p) { var s = win.newScreen(i * 704, p * 352); s.screenId = lc.id; s.cols = 4; s.rows = 2; s.wiring.sender = c0; s.wiring.port = p; win.P.screens.push(s); });
+  });
+  win.commit(); win.renderAll();
+}
+function frame(w) {
+  return new Promise(function (resolve) {
+    var f = document.createElement('iframe'); f.width = w; f.height = H; f.style.width = w + 'px'; f.style.height = H + 'px';
+    f.onload = function () {
+      var win = f.contentWindow, tries = 0;
+      (function go() {
+        if (!(win.OpenNova && typeof win.setTab === 'function') && tries++ < 100) return setTimeout(go, 100);
+        win.saveLocal = function () {}; win.schedulePush = function () {}; win.liveApplySchedule = function () {};
+        win.olSearch = function () {}; win.rbAuto = function () {}; win.olWebRefresh = function () {}; if (win.hw) win.hw.bgAt = Date.now() + 1e9;
+        if (q.get('offline')) offlineProject(win);
+        var s = win.document.createElement('script'); s.src = 'tests/ui-lint.js?' + Date.now();
+        s.onload = function () { resolve(f); }; win.document.body.appendChild(s);
+      })();
+    };
+    f.src = '../index.html'; document.getElementById('host').appendChild(f);
+  });
+}
+(async function () {
+  for (var t of T) for (var fs of F) for (var z of Z) for (var w of W) {
+    try { localStorage.setItem('opennova.uisize', z); localStorage.setItem('opennova.textsize', fs); localStorage.setItem('opennova.theme', t); } catch (e) {}
+    var f = await frame(+w); await wait(400);
+    var tag = w + ' px · ' + Math.round(z * 100) + ' % · text ' + fs + ' · ' + t, r;
+    try { r = await f.contentWindow.uiSweep(); } catch (e) { r = { res: { error: [String(e && e.message)] } }; }
+    // one line per problem (the same one seen with several menus open counts once, "[open X]" tells where it was first);
+    // text cut off on purpose (ends in … with a title) only counted
+    // and the same one on several tabs (a menu-bar menu) is one line with the tabs listed
+    var seen = {}, uniq = [], titled = 0;
+    Object.keys(r.res).forEach(function (k) { r.res[k].forEach(function (x) {
+      var key = x.replace(/^\[[^\]]*\] /, '');
+      if (seen[key]) { if (seen[key].tabs.indexOf(k) < 0) seen[key].tabs.push(k); return; }
+      seen[key] = { x: x, tabs: [k] };
+      if (/\(has title\)/.test(x)) titled++; else uniq.push(seen[key]);
+    }); });
+    uniq = uniq.map(function (u) { return '    ' + (u.tabs.length > 3 ? u.tabs.length + ' tabs' : u.tabs.join(', ')) + ': ' + u.x; });
+    total += uniq.length; lines.push(tag + ': ' + (uniq.length ? uniq.length + ' problem(s)' : 'clean') + (titled ? ' (+' + titled + ' cut off with a title)' : ''));
+    lines = lines.concat(uniq);
+    out.textContent = lines.join('\n') + '\n…';
+    f.remove();
+  }
+  KEYS.forEach(function (k) { try { if (keep[k] == null) localStorage.removeItem(k); else localStorage.setItem(k, keep[k]); } catch (e) {} });
+  out.textContent = lines.join('\n') + '\n\nDone: ' + total + ' problem(s).';
+  document.title = 'UI sweep done (' + total + ')';
+})();
+</script>
+</body>
+</html>

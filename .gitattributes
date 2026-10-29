@@ -1,0 +1,6 @@
+# Line endings as the files are written, on every computer: a checkout on Windows (core.autocrlf) must not turn the
+# macOS / Linux launchers into CRLF scripts (they would stop starting), and a package built there must not ship them.
+* text=auto eol=lf
+*.bat text eol=crlf
+*.woff2 binary
+*.png binary

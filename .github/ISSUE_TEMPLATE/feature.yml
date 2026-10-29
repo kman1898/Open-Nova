@@ -1,0 +1,22 @@
+name: Feature request
+description: Something Open Nova should do
+labels: [enhancement]
+body:
+  - type: textarea
+    id: goal
+    attributes:
+      label: What are you trying to do
+      description: The job on the wall you have in mind, and where Open Nova gets in the way today.
+    validations:
+      required: true
+  - type: input
+    id: processor
+    attributes:
+      label: Processors
+      description: Optional. Which processors and cards this is for.
+      placeholder: MX40 Pro, VX1000
+  - type: textarea
+    id: idea
+    attributes:
+      label: How you imagine it working
+      description: Optional. In your own words; if NovaLCT, VMP or Unico already does it, say where and how you use it there (please don't paste their manuals).
