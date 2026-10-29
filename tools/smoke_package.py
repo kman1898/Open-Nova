@@ -125,7 +125,7 @@ def main(argv):
     base = 'http://127.0.0.1:%d/' % port
     try:
         st = None
-        for _ in range(60):
+        for _ in range(240):                    # opennova.py gives the helper and the server up to 60 s each
             st, ct, body = req(base + 'index.html', timeout=2)
             if st == 200 or p.poll() is not None: break
             time.sleep(0.5)

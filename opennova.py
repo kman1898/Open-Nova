@@ -28,10 +28,12 @@ def alive(url, want=None):
         return False
 
 
-def wait(url, want, secs):
+def wait(url, want, secs, proc=None):
+    """Until url answers with want, at most secs; False at once if proc (the process that should answer) has ended."""
     end = time.time() + secs
     while time.time() < end:
         if alive(url, want): return True
+        if proc is not None and proc.poll() is not None: return False
         time.sleep(0.3)
     return False
 
@@ -65,8 +67,9 @@ def main(argv):
             print('Hardware helper already running on port %d — using it.' % hport)
         else:
             kids.append(subprocess.Popen([py, os.path.join(HERE, 'tools', 'novalink.py'), 'serve', '--port', str(hport), '--app-port', str(port)], cwd=os.path.join(HERE, 'tools'), **flags))
-            if not wait('http://127.0.0.1:%d/api/hw/ping' % hport, 'novalink', 15):
-                print('The hardware helper didn\'t start (see the messages above).'); return 1
+            # a slow or busy computer (a first start on macOS lists the network services) can take a while: up to 60 s
+            if not wait('http://127.0.0.1:%d/api/hw/ping' % hport, 'novalink', 60, kids[-1]):
+                print('The hardware helper didn\'t start%s (see the messages above).' % ('' if kids[-1].poll() is None else ': it stopped with code %s' % kids[-1].returncode)); return 1
         url = 'http://localhost:%d/' % port
         if alive(url + 'index.html', 'Open Nova'):
             print('Open Nova is already being served on port %d — using it.' % port)
@@ -76,7 +79,7 @@ def main(argv):
             if opts.get('--local-only'): cmd.append('--local-only')
             if opts.get('--bind'): cmd += ['--bind', opts['--bind']]   # else serve.py reads Settings > Network itself
             kids.append(subprocess.Popen(cmd, cwd=os.path.join(HERE, 'app'), **flags))
-            if not wait(url + 'index.html', 'Open Nova', 15):
+            if not wait(url + 'index.html', 'Open Nova', 60, kids[-1]):
                 print('The app server didn\'t start (is port %d used by something else? try --port 8775).' % port); return 1
         print('\nOpen Nova is running: %s\nLeave this window open while you work; close it (or press Ctrl+C) to stop.\n' % url); sys.stdout.flush()
         if not opts.get('--no-browser'): webbrowser.open(url)
