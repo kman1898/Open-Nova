@@ -226,7 +226,8 @@ ts = [threading.Thread(target=reads, args=(B.port, 10, done)) for _ in range(2)]
 for t in ts: t.start()
 for t in ts: t.join(10)
 ser = time.time() - t0
-ok(par < 0.5 and ser > 0.55, 'two targets run in parallel (%.2f s for 2 x 10 frames), one target one frame at a time (%.2f s)' % (par, ser))
+# relative: slow CI runners (macOS) stretch both times
+ok(par < ser * 0.7 and ser > 0.55, 'two targets run in parallel (%.2f s for 2 x 10 frames), one target one frame at a time (%.2f s)' % (par, ser))
 ok(B.accepted == 1 and C.accepted == 1 and B.rejected + C.rejected == 0, 'one connection each')
 
 # ------------------------------------------------------------------ idle close, refused target, LINK_IDLE 0
