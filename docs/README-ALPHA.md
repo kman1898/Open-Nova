@@ -4,10 +4,10 @@ Thank you for testing Open Nova, an open-source alternative to NovaLCT, VMP and 
 This is an early alpha: it will have bugs. When something goes wrong, one report from you tells us what we need to fix it.
 
 ## Known limits in this alpha
-- **Only the H2, H5 and H9 have been tried on real processors** (finding and reading them). MCTRL, VX, NovaPro, Unico and
-  MX / CX processors have only been run against simulators so far. If something looks wrong, a report is the most useful
-  thing you can send.
-- **USB (NovaPro HD, a VX's USB-B port) is ready, but the first test on a real NovaPro HD is still to come.** Windows:
+- **Tried on real processors so far:** the H2, H5 and H9 (finding and reading them), and a VX4S-N over USB (Send, Save,
+  Detect and test patterns, from alpha.4). MCTRL, other VX models, NovaPro, Unico and MX / CX processors have only been
+  run against simulators so far. If something looks wrong, a report is the most useful thing you can send.
+- **USB (NovaPro HD, a VX's USB-B port) works on a real VX4S-N; the first test on a real NovaPro HD is still to come.** Windows:
   install NovaLCT once (it brings the USB driver). Open Nova and NovaLCT can both use the controller. To record what
   NovaLCT does, Open Nova asks once to **Install USB capture** (then restart the computer) and once per start to
   **Allow USB recording**.
