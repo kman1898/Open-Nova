@@ -177,10 +177,12 @@ function bindForms() {
     };
   });
   bindCards(); bindViewMenu();
-  $('btnAddScreen').onclick = function () {
-    var x = 0;
-    visibleScreens().forEach(function (s) { var b = screenBounds(s); x = Math.max(x, b.x + b.w); });
-    var s = newScreen(x, 0); P.screens.push(s); ui.sel = s.id; commit(); ui.view = null; renderAll();
+  // Drawing by hand is the default (user, 2026-11-06: a block of auto-wired cabinets meant delete, then switch to manual).
+  $('btnAddScreen').onclick = function () { setSelfDraw(true); };
+  $('btnReadBack').onclick = function () {
+    var d = lctOwner(lctById(ui.viewScreen)) || deviceOfCard(ui.mSender || 0);
+    if (!d || !d.hw) return toast('Link this screen’s processor first (Processors ▸ Hardware)');
+    hwCompare(d);
   };
   $('btnZoomFit').onclick = function () { fitView(); renderCanvas(allCells()); };
   $('btnZoomIn').onclick = function () { zoom(1 / 1.3); };

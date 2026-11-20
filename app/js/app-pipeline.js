@@ -10,21 +10,23 @@
 // or Shift-click (the tree's Processors view, or the Device tile's right-click switcher; ui.devMulti, app-devices.js).
 // Refresh: renderAll calls renderPipe(use, cellsBy); renderUnsaved, renderDisplayBar, rdVerifyBar and watchAlert call
 // renderPipe() (safety / Save states change at once); a 1 s tick covers monitoring results that don't re-render. Classic
-// look: nothing is drawn (the status lines are hidden there); only the Pattern tile's click is bound (hidden there too).
+// look: only Send / Save name their processors (pipeSendSave); the Pattern tile's click is bound (hidden there).
+// Send / Save (user decision D1, one action per tile): the tile sends / saves the processors it names (pipeAct, asks first);
+// the ▾ beside it (#btnSendMenu / #btnSaveMenu) opens the menu — all processors, one, Compare (app-save.js).
 // Pictograms (DESIGN_SYSTEM.md item 1): each tab tile also carries a small picture drawn from the same data (.tpic, pro look
 // only; looks/pro-tiles.css): Device the rear panel with its ports lit, Layout the screen shown in port colours, Correction
 // that wall by calibration state, Screen Settings the gamma curve at the brightness, Backup the pair with its check, Preset
 // the scene number, Monitor a heat map or a pulse (red on an error), Schedule the next event.
 // Owns: pipe, PIPE_LED, PIPE_HEAT, proLook, setLook, mountHeader, fitPipe, pipeActive, pipeScope, pipeUse, pipeSwitcher, pipeAct,
 // pipeScreenDevs, pipeN, pipeSvg, pipeRect, pipePic, pipeShown, pipeWall, pipeRear, pipeLayoutPic, pipeCorPic, pipeGammaPic, pipeBackupPic,
-// pipePresetPic, pipeMonitorPic, pipeSchedulePic, pipeNextEvent, pipeTabSet, renderTabs, pipeSet, pipeStatic, renderPipe, pipeTick, bindPipeline.
+// pipePresetPic, pipeMonitorPic, pipeSchedulePic, pipeNextEvent, pipeTabSet, renderTabs, pipeSet, pipeStatic, pipeSendSave, renderPipe, pipeTick, bindPipeline.
 // Depends on: app-core ($, ui, P, log, toast), app-geometry (allCells), app-capacity (portUsage, problems, portsOfSender,
 // portColor), app-processors (deviceOfCard, deviceById, deviceLabel, cardsOfDevice, procModel), app-devices (devShow, devSelected, devMultiPick, devMultiClear,
 // ui.devMulti), app-tree (activateCard), app-context-menu (openMenu, ui.menuEvent), app-hardware (hw, hwPairs, hwSendAll),
 // app-save (hwUnsaved, hwSaveDevices), app-screen (scr, scrLc, scrColor, scrField, scrFmt, scrSupports, scrApplied, scrKey,
-// scrRead), app-correction (cor, COR_WORDS), app-presets (scn, sceneById), app-schedule (sch), app-display (disp, dispLinked,
+// scrRead), app-correction (cor, COR_WORDS), app-presets (scn, sceneById), app-schedule (sch), app-display (disp,
 // openTestMenu), app-redundancy (rd), app-health (hlt), app-heat (heatMax, heatItems), app-watch (watch, watchAck), drv-core (DRV), app-shell
-// (setTab), app-forms (uiZoom), all at run time.
+// (setTab), app-forms (uiZoom), app-alpha (alphaOwn), all at run time.
 // Classic script, not an ES module (see app-core.js); every top-level name is a shared global.
 'use strict';
 
@@ -62,10 +64,11 @@ function fitPipe() {
 // ------------------------------------------------------------------ scope: the processor being worked on, or several
 function pipeActive() {
   var d = ui.tab === 'layout' ? deviceOfCard(ui.mSender || 0) : null;
+  if (d && typeof olShown === 'function' && !olShown(d)) d = null;   // online: only connected ones (app-online.js)
   return d || (P.devices.length ? devSelected() : null) || null;
 }
 function pipeScope() {
-  var m = (ui.devMulti || []).map(deviceById).filter(Boolean);
+  var m = (ui.devMulti || []).map(deviceById).filter(function (d) { return d && (typeof olShown !== 'function' || olShown(d)); });
   if (m.length > 1) return m;
   var a = pipeActive(); return a ? [a] : [];
 }
@@ -84,6 +87,7 @@ function pipeSwitcher(btn, at) {
   var r = at || btn.getBoundingClientRect(), multi = ui.devMulti && ui.devMulti.length > 1 ? ui.devMulti : [], act = pipeActive();
   var items = [{ header: P.devices.length > 1 ? 'Processor worked on — Ctrl / Shift: several' : 'Processor' }];
   P.devices.forEach(function (d) {
+    if (typeof olShown === 'function' && !olShown(d)) return;   // online: not connected (Device lists them)
     var on = multi.length ? multi.indexOf(d.id) >= 0 : d === act;
     items.push({ label: (on ? (multi.length ? '✓ ' : '● ') : '    ') + deviceLabel(d) + (d.hw ? '' : ' (not linked)'), title: 'Work on ' + deviceLabel(d) + ' (Send / Save act on it)', act: function () {
       var e = ui.menuEvent;
@@ -96,12 +100,14 @@ function pipeSwitcher(btn, at) {
   items.push({ sep: true }, { label: 'Open Device', act: function () { devShow(act || P.devices[0]); } });
   openMenu(r.left, r.bottom + 4, items);
 }
-// the Send / Save tiles' own click: the processors worked on (the ▾ label keeps the menu: all, or one); the usual
-// confirmation names exactly which processors
+// the Send / Save tiles' click (both looks): the processors worked on, named on the tile (the ▾ beside it has the menu: all,
+// or one); the usual confirmation names exactly which processors
 function pipeAct(what) {
   var list = pipeScope().filter(function (d) { return d.hw && (what === 'send' || DRV.caps(d).save); });
   log('pipe_click', { tile: what, processors: list.map(deviceLabel) });
-  if (!list.length) return toast((what === 'send' ? 'Send' : 'Save') + ': ' + (pipeScope().map(deviceLabel).join(', ') || 'no processor') + ' isn’t linked — the ▾ menu has the others');
+  var sc = pipeScope();
+  if (!list.length) return toast(!sc.length ? 'No processor yet — add one on Device' : (what === 'send' ? 'Send' : 'Save') + ': ' + sc.map(deviceLabel).join(', ') +
+    (sc.some(function (d) { return d.hw; }) ? ' can’t store to flash' : ' isn’t linked') + ' — ▾ has the others');
   if (what === 'save') return hwSaveDevices(list);
   return hwSendAll(list);
 }
@@ -274,24 +280,24 @@ function pipeTabSet(id, text, cls, tip) {
   if (b.dataset.st !== (cls || '')) b.dataset.st = cls || '';   // the tile's lit bar (looks/pro.css)
 }
 function renderTabs(scope) {
-  var by = pipe.by, use = pipe.use, linked = (P.devices || []).filter(function (d) { return d.hw; });
+  // online: only the connected processors and their screens count (app-online.js)
+  var gone = typeof olGone === 'function' ? olGone() : [], by = pipe.by, use = pipe.use, linked = (P.devices || []).filter(function (d) { return d.hw && gone.indexOf(d) < 0; });
   var mute = function (d) { return (hlt.watch[d.id] || {}).err || (hw.watch[d.id] || {}).err; };
   // Device: the processor worked on (or how many are picked)
   var d0 = scope[0], shown = pipeShown();
-  // ports of the processor worked on: used (and backup) of all ("H5 · 8/36")
-  var pu = 0, pt = 0, bks = {}, bb = P.backup || {};
-  if (bb.mode === 'port') (bb.pairs || []).forEach(function (p) { bks[p.bs + ':' + p.bp] = 1; });
-  if (d0) cardsOfDevice(d0).forEach(function (i) { var n = portsOfSender(i) || 0; pt += n; for (var p = 0; p < n; p++) if (use[i + ':' + p] || bks[i + ':' + p]) pu++; });
+  var pc = d0 ? devPortCount(d0, use) : null;   // app-devices.js: the same meaning as the Device card ("4 of 36 · 4 backup")
   if (scope.length > 1) pipeTabSet('tabDevices', scope.length + ' processors', '', 'Picked together (Send / Save act on them): ' + scope.map(deviceLabel).join(', ') + ' · Esc = one again');
-  else if (d0) pipeTabSet('tabDevices', deviceLabel(d0) + (pt ? ' · ' + pu + '/' + pt : ''), !d0.hw ? 'dim' : mute(d0) ? 'bad' : 'ok',   // the bar: green linked, red not answering, dark not linked
-    deviceLabel(d0) + ' · ' + (!d0.hw ? 'not linked' : mute(d0) ? 'not answering' : 'linked') + (pt ? ' · ' + pu + ' of ' + pt + ' ports used (backup included)' : '') + ' · the processor worked on (Send / Save act on it) · right-click: another, or several');
-  else pipeTabSet('tabDevices', 'none yet', 'dim');
+  else if (d0) pipeTabSet('tabDevices', deviceLabel(d0) + (pc.total ? ' · ' + pc.used + '/' + pc.total : ''), !d0.hw ? 'dim' : mute(d0) ? 'bad' : 'ok',   // the bar: green linked, red not answering, dark not linked
+    deviceLabel(d0) + ' · ' + (!d0.hw ? 'not linked' : mute(d0) ? 'not answering' : 'linked') + (pc.total ? ' · ' + devPortWords(pc) : '') + ' · the processor worked on (Send / Save act on it) · right-click: another, or several');
+  else pipeTabSet('tabDevices', gone.length ? 'none connected' : 'none yet', 'dim', gone.length ? gone.length + ' not connected — Device lists them' : '');
   pipePic('tabDevices', pipeRear(d0, !d0 || !d0.hw ? 'off' : mute(d0) ? 'bad' : 'ok'));
   // Layout: screens, cabinets, ports over capacity
-  var cab = 0; Object.keys(by).forEach(function (k) { cab += by[k].cells; });
-  var over = Object.keys(use).filter(function (k) { return use[k].load > use[k].cap; }).length, probs = problems(pipe.cellsBy, use) || [];
-  pipeTabSet('tabLayout', over ? over + ' port' + (over === 1 ? '' : 's') + ' over' : cab ? cab + ' cab' : P.lct.length + ' screen' + (P.lct.length === 1 ? '' : 's'),
-    over ? 'bad' : probs.length ? 'warn' : cab ? '' : 'dim', (probs.length ? probs[0] + ' · ' : '') + P.lct.length + ' screen' + (P.lct.length === 1 ? '' : 's') + ' · ' + cab + ' cabinets placed');
+  var nLc = gone.length ? P.lct.filter(function (l) { return olLcShown(l, gone); }).length : P.lct.length, cab = 0, off = function (k) { return gone.length && by[k] && by[k].devs.some(function (x) { return gone.indexOf(x) >= 0; }); };
+  Object.keys(by).forEach(function (k) { if (!off(k)) cab += by[k].cells; });
+  var hid = function (k) { var dk = gone.length && deviceOfCard(+k.split(':')[0]); return !!dk && gone.indexOf(dk) >= 0; };
+  var over = Object.keys(use).filter(function (k) { return !hid(k) && use[k].load > use[k].cap; }).length, probs = gone.length ? [] : problems(pipe.cellsBy, use) || [];
+  pipeTabSet('tabLayout', over ? over + ' port' + (over === 1 ? '' : 's') + ' over' : cab ? cab + ' cab' : nLc + ' screen' + (nLc === 1 ? '' : 's'),
+    over ? 'bad' : probs.length ? 'warn' : cab ? '' : 'dim', (probs.length ? probs[0] + ' · ' : '') + nLc + ' screen' + (nLc === 1 ? '' : 's') + ' · ' + cab + ' cabinets placed');
   pipePic('tabLayout', pipeLayoutPic(shown));
   // Correction: what the processors reported (read on the Correction tab), on or off
   var modes = {};
@@ -302,7 +308,7 @@ function renderTabs(scope) {
   // Screen Settings: brightness · gamma · colour temperature of the screen shown, only what is set here or read
   var lc = scrLc(), sv = [], amber = false, val = null;
   if (lc && by[lc.id]) {
-    var devs = by[lc.id].devs, lnk = devs.filter(function (d) { return d.hw; }), want = lc.color || {};
+    var devs = by[lc.id].devs, lnk = devs.filter(function (d) { return d.hw && gone.indexOf(d) < 0; }), want = lc.color || {};
     val = scrColor(lc);
     ['brightness', 'gamma', 'colorTemp'].forEach(function (k) {
       var f = scrField(k), held = lnk.some(function (d) { return scrSupports(d, f) && scrApplied(d, lc)[k] !== undefined; });
@@ -313,32 +319,27 @@ function renderTabs(scope) {
     var rk = lc.id + '|' + lnk.map(function (d) { return scrKey(d, lc); }).join(',');
     if (lnk.length && rk !== pipe.readKey) { pipe.readKey = rk; setTimeout(function () { if (!scr.busy) scrRead(lc); }, 0); }
   }
+  // online with no processor connected: the tiles say nothing about the hidden ones (app-online.js)
+  var empty = typeof olMode === 'function' && olMode() === 'online' && typeof olShownDevices === 'function' && !olShownDevices().length;
+  if (empty) sv = [];
   // the tile shows brightness · gamma; the tooltip all three
   pipeTabSet('tabScreen', sv.slice(0, 2).join(' · '), amber ? 'warn' : '', lc ? lc.name + (sv.length ? ': ' + sv.join(' · ') : '') + (amber ? ' · not applied everywhere yet' : '') : '');
   pipePic('tabScreen', pipeGammaPic(val || {}));
   // Backup: the plan, verify on, verified this session
-  var b = P.backup || {}, mode = b.mode || 'none', n = mode === 'port' ? (b.pairs || []).length : mode === 'card' ? (b.cards || []).length : 0;
+  var b = P.backup || {}, mode = b.mode || 'none', n = empty ? 0 : mode === 'port' ? (b.pairs || []).length : mode === 'card' ? (b.cards || []).length : 0;
   var verifying = Object.keys(rd.state).filter(function (k) { return rd.state[k]; }), ver = Object.keys(rd.verified).length;
   var cross = (P.devices || []).some(function (d) { return hwPairs(d).cross.length; });
-  pipeTabSet('tabBackup', verifying.length ? 'verify on' : mode === 'none' || !n ? 'none' : n + (mode === 'port' ? (n === 1 ? ' pair' : ' pairs') : (n === 1 ? ' card' : ' cards')) + (ver ? ' ✓' : ''),
+  pipeTabSet('tabBackup', verifying.length ? 'verify on' : empty ? '' : mode === 'none' || !n ? 'none' : n + (mode === 'port' ? (n === 1 ? ' pair' : ' pairs') : (n === 1 ? ' card' : ' cards')) + (ver ? ' ✓' : ''),
     verifying.length || cross ? 'warn' : mode === 'none' || !n ? 'dim' : ver ? 'ok' : '', verifying.length ? 'Verify is on: runs on the backup ports' : cross ? 'Pairs reach across processors' : ver ? 'Verified this session' : '');
   pipePic('tabBackup', pipeBackupPic(mode === 'none' || !n ? 'none' : verifying.length || cross ? 'warn' : ver ? 'ok' : 'plan'));
   // Preset: the scene recalled last (this session)
-  var sc = scn.last && typeof sceneById === 'function' ? sceneById(scn.last) : null, scs = P.scenes || [];
+  var sc = !empty && scn.last && typeof sceneById === 'function' ? sceneById(scn.last) : null, scs = empty ? [] : P.scenes || [];
   pipeTabSet('tabPresets', sc ? sc.name : scs.length ? scs.length + ' scene' + (scs.length === 1 ? '' : 's') : '', sc ? '' : 'dim', sc ? 'Last recalled: ' + sc.name : '');
   pipePic('tabPresets', pipePresetPic(sc ? scs.indexOf(sc) + 1 : 0, scs.length));
-  // Monitor: errors held until Clear, processors not answering, warnings, cabinets on backup; the helper missing first
-  var held = Object.keys(hlt.held).map(function (k) { return hlt.held[k]; }).filter(function (r) { return !r.ended; });
-  var errs = held.filter(function (r) { return r.level === 'error'; }).length, warns = held.length - errs, bk = 0, quiet = linked.filter(mute);
-  linked.forEach(function (d) { var h = hlt.by[d.id]; if (h && h.sum) bk += h.sum.backup; });
-  var hot = typeof heatMax === 'function' && linked.length ? heatMax() : null;
-  var hoff = hw.helper === false && !(typeof olMode === 'function' && olMode() === 'offline');   // offline: simulated processors need no helper
-  var mv = hoff ? 'helper off' : !linked.length ? '' : errs ? errs + ' ERR' : quiet.length ? quiet.length + ' no reply' : warns ? warns + ' warn' : bk ? bk + ' on backup' : 'OK';
-  var ml = hoff || errs || quiet.length ? 'bad' : warns || bk ? 'warn' : linked.length ? 'ok' : '';
-  pipeTabSet('tabHealth', mv, ml, hoff ? 'The helper isn’t running: no processor can be reached' :
-    errs + ' error' + (errs === 1 ? '' : 's') + ' · ' + warns + ' warning' + (warns === 1 ? '' : 's') + (bk ? ' · ' + bk + ' cabinets on backup' : '') +
-    (quiet.length ? ' · not answering: ' + quiet.map(deviceLabel).join(', ') : '') + (hot ? ' · hottest ' + hot.text + ' (' + hot.label + ')' : '') + ' · errors stay until you clear them on Monitor');
-  pipePic('tabHealth', pipeMonitorPic(linked.length ? shown : [], ml || 'none'));
+  // Monitor: the same counts and words as Monitor, its map and the Dashboard (app-health.js hltTile)
+  var ms = hltTile(linked);
+  pipeTabSet('tabHealth', ms.text, ms.cls, ms.tip);
+  pipePic('tabHealth', pipeMonitorPic(linked.length ? shown : [], ms.pic));
   var mt = $('tabHealth');
   if (mt && watch.alerts > pipe.alerts) { mt.classList.remove('flash'); void mt.offsetWidth; mt.classList.add('flash'); }
   pipe.alerts = watch.alerts;
@@ -358,23 +359,30 @@ function pipeSet(b, v, led) {
   if (l) { var c = 'led' + (led ? ' ' + led : ''); if (l.className !== c) l.className = c; }
 }
 function pipeStatic(scope) {
-  var ids = scope.map(function (d) { return d.id; }), linked = scope.filter(function (d) { return d.hw; }), none = !dispLinked().length, who = scope.map(deviceLabel).join(', ');
-  var tp = $('btnTestHdr');
-  if (tp) { tp.disabled = none || !!tp.dataset.ro; pipeSet(tp, disp.pattern || '', disp.pattern ? 'bad' : ''); tp.classList.toggle('on', !!disp.pattern); }
+  var tp = $('btnTestHdr');   // enabled / greyed: app-display.js dispTiles
+  if (tp) { pipeSet(tp, disp.pattern || '', disp.pattern ? 'bad' : ''); tp.classList.toggle('on', !!disp.pattern); }
   ['btnBlackout', 'btnFreeze'].forEach(function (id) { var b = $(id); pipeSet(b, b.classList.contains('on') ? 'On' : '', b.classList.contains('on') ? 'bad' : ''); });
-  // Save: what Open Nova sent and the processors worked on haven't stored in flash ("2 of 3 not saved"); the tile stays amber
-  // while any processor has something not saved (renderUnsaved sets .warn: the save state is never hidden, §2.3)
-  var all = hwUnsaved(), un = all.filter(function (d) { return ids.indexOf(d.id) >= 0; }), others = all.length - un.length, sv = $('btnSaveHw');
-  pipeSet(sv, hw.busy === 'save' ? 'Saving…' : !linked.length ? (others ? others + ' other' + (others === 1 ? '' : 's') + ' not saved' : '—') :
-    un.length ? (scope.length > 1 ? un.length + ' of ' + linked.length + ' not saved' : 'Not saved') : others ? others + ' other' + (others === 1 ? '' : 's') + ' not saved' : 'Saved', all.length ? 'warn' : '');
-  if (sv && !sv.dataset.ro) { var st = 'Save ' + (who || 'the processor worked on') + ' (click; asks first) · Save ▾: all processors, or one · stores the settings in flash; never part of Send'; if (sv.title !== st) sv.title = st; }
+  pipeSendSave(scope);
+}
+// Send / Save (both looks): each tile names what its click acts on — the processor worked on, or "N processors"; the tooltip
+// says what isn't saved. The Save tile stays amber while any processor has something not saved (renderUnsaved sets .warn:
+// the save state is never hidden, §2.3); its light is amber when one it names is.
+function pipeSendSave(scope) {
+  var ids = scope.map(function (d) { return d.id; }), linked = scope.filter(function (d) { return d.hw; }), who = scope.map(deviceLabel).join(', ');
+  var none = typeof olGone === 'function' && olGone().length ? 'No processor connected — Device lists the ones not connected' : 'No processor yet — add one on Device';
+  var name = scope.length > 1 ? scope.length + ' processors' : who || '—', why = !scope.length ? none : who + (scope.length > 1 ? ' aren’t' : ' isn’t') + ' linked — ▾ has the others';
+  var all = hwUnsaved(), un = all.filter(function (d) { return ids.indexOf(d.id) >= 0; }), oth = all.filter(function (d) { return ids.indexOf(d.id) < 0; }), sv = $('btnSaveHw');
+  pipeSet(sv, hw.busy === 'save' ? 'Saving…' : name, un.length ? 'warn' : '');
+  alphaOwn(sv, false, linked.length ? 'Save ' + who + ' to flash (asks first)' + (un.length ? ' · not saved: ' + un.map(deviceLabel).join(', ') : '') +
+    (oth.length ? ' · also not saved: ' + oth.map(deviceLabel).join(', ') + ' (▾)' : '') + ' · never part of Send' : why);
   var live = linked.length && linked.every(function (d) { return DRV.caps(d).applyMode === 'live' && d.hw.kind !== 'offline' && d.hw.liveApply !== false; });
   var sd = $('btnSendHdr');
-  pipeSet(sd, hw.busy === 'send' ? 'Sending…' : !linked.length ? 'Not linked' : live ? 'Live' : scope.length > 1 ? 'These ' + linked.length : 'This one', linked.length ? 'blue' : '');
-  if (sd && !sd.dataset.ro) { var tt = 'Send the layout to ' + (who || 'the processor worked on') + ' (click; asks first) · Send ▾: all processors, one, or Compare'; if (sd.title !== tt) sd.title = tt; }
+  pipeSet(sd, hw.busy === 'send' ? 'Sending…' : name, linked.length ? 'blue' : '');
+  alphaOwn(sd, false, linked.length ? 'Send the layout to ' + who + ' (asks first)' + (live ? ' · its edits already apply live' : '') : why);
 }
 function renderPipe(use, cellsBy) {
-  if (!proLook() || !$('pipe')) return;
+  if (!$('pipe')) return;
+  if (!proLook()) return pipeSendSave(pipeScope());   // classic: the Send / Save buttons name their processors
   if (use && cellsBy) { pipe.use = use; pipe.cellsBy = cellsBy; pipe.snap = ui.lastSnap; pipe.by = pipeScreenDevs(cellsBy); }
   else if (!pipe.use || pipe.snap !== ui.lastSnap) { pipe.cellsBy = allCells(); pipe.use = portUsage(pipe.cellsBy); pipe.snap = ui.lastSnap; pipe.by = pipeScreenDevs(pipe.cellsBy); }
   var scope = pipeScope();
@@ -394,15 +402,6 @@ function bindPipeline() {
   $('tabDevices').oncontextmenu = function (e) { e.preventDefault(); pipeSwitcher(this); };
   // the Monitor tile carries the alarm count: opening it clears the "new since you looked" count (never the errors: only Clear)
   $('tabHealth').addEventListener('click', function () { if (watch.alerts) watchAck(); });
-  // Send / Save: a click on the tile = the processors worked on (asks first); the "Send ▾" / "Save ▾" label, the keyboard and
-  // the UI checks (no pointer) = the menu as before (all processors, or one)
-  ['btnSendHdr', 'btnSaveHw'].forEach(function (id) {
-    var b = $(id), menu = b.onclick;
-    b.onclick = function (e) {
-      if (!e.detail || e.target.closest('.t')) return menu.call(this, e);
-      e.stopPropagation(); pipeAct(id === 'btnSendHdr' ? 'send' : 'save');
-    };
-  });
   pipe.tick = setInterval(pipeTick, 1000);
   if (typeof fitHeader === 'function') fitHeader();
 }

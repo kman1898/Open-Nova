@@ -222,8 +222,8 @@ function mbHelp(which) {
       '<dt>View</dt><dd>' + esc(keysText('What the Layout canvas shows, Live colours, zoom; Interface Size (Ctrl+Alt+= / − / 0) and Text Size')) + '</dd>' +
       '<dt>Tools</dt><dd>Dashboard, Maintain, Cabinet Library, finding processors, test patterns, Diagnostics, pre-show check, offline mode</dd>' +
       '<dt>Settings</dt><dd>The log, theme, interface and text size, °C / °F, alarm limits, H series logins</dd></dl>' +
-      '<h3>Always in view</h3><dl><dt>Blackout · Freeze · Normal</dt><dd>' + esc(keysText('Every linked processor (Alt+B / Alt+F / Alt+N)')) + '</dd>' +
-      '<dt>Send ▾ · Save ▾</dt><dd>Send puts the layout on the processors; Save stores it in their flash (always separate)</dd></dl>' +
+      '<h3>Always in view</h3><dl><dt>Override</dt><dd>' + esc(keysText('Pattern, Blackout, Freeze and Normal on every linked processor (Alt+B / Alt+F / Alt+N)')) + '</dd>' +
+      '<dt>Send · Save</dt><dd>Send puts the layout on the processors; Save stores it in their flash (always separate)</dd></dl>' +
       '<p class="hint">Keyboard shortcuts: Help ▸ Keyboard Shortcuts (?). More in docs/RUNNING.md in the Open Nova folder.</p>';
   }
   $('helpBody').innerHTML = h; $('helpDlg').hidden = false;

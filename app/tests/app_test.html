@@ -662,6 +662,24 @@ function run(w) {
       return on && off && P().devices.length === 0 || 'online ' + on + ', offline ' + off + ', devices ' + P().devices.length;
     } finally { w.devClosePicker(); w.hw.found = keepFound; w.hw.helper = keepHelper; w.replaceProject(w.ensureLct(w.newProject())); w.pullProject = keepPull; }
   });
+  t('Add processor: an empty search says why in one line (firewall, a program holding a search port, the adapters searched; the rest in the tooltip)', function () {
+    var keep = { found: w.hw.found, why: w.DRV.why, at: w.ol.at, busy: w.ol.searching, helper: w.hw.helper };
+    try {
+      w.DRV.why = null; w.hw.helper = true;   // as if the helper answered (without one, in CI, the list says that instead)
+      w.DRV.noteWhy({ platform: 'win32', problems: [{ code: 'port', text: 'VMP_XCenter.exe on this computer holds UDP 54622' }], searched: [{ name: 'Ethernet 2', ip: '192.0.2.10' }] });
+      w.DRV.noteWhy({ platform: 'win32', problems: [{ code: 'port', text: 'VMP_XCenter.exe on this computer holds UDP 54622' }, { code: 'bind', text: 'can’t search on USB LAN (192.0.2.77): denied' }],
+        searched: [{ name: 'Ethernet 2', ip: '192.0.2.10' }] });
+      var merged = w.DRV.why.problems.length === 2 && w.DRV.why.searched.length === 1;
+      w.hw.found = []; w.ol.searching = false; w.ol.at = Date.now();
+      var box = w.document.createElement('div'); box.innerHTML = w.olFoundHtml();
+      var why = box.querySelector('.ol-why'), line = why ? why.textContent : '', tip = why ? why.title : '';
+      var win = /Windows Firewall/.test(line) && /Private and Public/.test(line) && /VMP_XCenter\.exe holds UDP 54622/.test(line) && /searched Ethernet 2 \(192\.0\.2\.10\)/.test(line) &&
+        /can’t search on USB LAN/.test(line) && /USB LAN/.test(tip);
+      var mac = /Local Network/.test(w.olWhy({ platform: 'darwin', problems: [{ code: 'noroute', text: 'the search couldn’t be sent on en7: No route to host' }], searched: [] }).line);
+      w.ol.searching = true; box.innerHTML = w.olFoundHtml(); var quiet = !box.querySelector('.ol-why');
+      return merged && win && mac && quiet || 'merged ' + merged + ', windows line ' + win + ' (' + line + ' | ' + tip + '), mac ' + mac + ', none while searching ' + quiet;
+    } finally { w.hw.found = keep.found; w.DRV.why = keep.why; w.ol.at = keep.at; w.ol.searching = keep.busy; w.hw.helper = keep.helper; }
+  });
   // ---------------------------------------------------------------- online / offline workspaces (as VMP; user, 2026-10-28)
   t('Exit offline mode: the offline project goes out of view and is kept; Enter offline mode brings it back (this browser only)', function () {
     var keep = { shared: w.projShared, pull: w.pullProject, confirm: w.confirm, toast: w.toast }, ls = w.localStorage, K = w.WS_KEY, kept = {}, asked = [], said = [];
@@ -709,6 +727,7 @@ function run(w) {
   heatTest();
   pipeTest();
   controlsTest();
+  phaseATest();
   previewTest();
   lctGroupTest();
   networkDialogTest(w, NW_DEMO);
@@ -827,6 +846,13 @@ function lctGroupTest() {
       if (plan(A) !== before) bad.push('A’s Send after read-back differs from before');
       if (plan(B) !== bBefore || !w.screenById(b1.id)) bad.push('reading A changed B');
       if (w.ui.viewScreen !== lc0.id) bad.push('read-back shows ' + (w.lctById(w.ui.viewScreen) || {}).name);
+      // a processor with no screen yet: what it holds goes on the empty screen, none is left behind
+      var keepPj = JSON.parse(JSON.stringify(P())), bTabs = P().lct.filter(function (l) { return (w.lctOwner(l) || {}).id === B.id; });
+      P().screens = P().screens.filter(function (s) { return bTabs.some(function (l) { return l.id === s.screenId; }); });
+      P().lct = bTabs.concat([{ id: 'spareTab', name: 'Spare' }]); w.commit();
+      w.rbApply([{ d: A, r: r, bk: null }], 'test');
+      if (!w.lctById('spareTab') || (w.lctOwner(w.lctById('spareTab')) || {}).id !== A.id) bad.push('read-back left the empty screen behind: ' + P().lct.map(function (l) { return l.name; }).join());
+      w.replaceProject(keepPj); A = w.deviceById(A.id); B = w.deviceById(B.id); w.ui.viewScreen = lc0.id; w.renderAll();
       // read-back of B holding NovaLCT's own two screens (unknown UUIDs, listed out of order): B's tab first, then a new one
       // after it
       var cab = function (dev, port, k, x) { return { DevID: dev, NetPort: port, ConnectID: k, XPos: x, YPos: 0, Width: 128, Height: 128, GroupID: 0, RowIndexInScreen: 0, ColIndexInScreen: k, DviIndex: 1 }; };
@@ -953,7 +979,12 @@ function pipeTest() {
     ['btnSendHdr', 'btnSaveHw'].forEach(function (id) { if (!$(id).closest('.pg-pin[data-pg="system"]')) bad.push(id + ' not in System'); });
     if ($('btnExport').parentNode !== pipe) bad.push('Export moved');
     if (d.querySelector('.bar-view, #pgProc, #pgImage, #pgMonitor')) bad.push('old strip parts still in the page');
-    ['Send', 'Save', 'Pattern'].forEach(function (n) { var b = $(n === 'Send' ? 'btnSendHdr' : n === 'Save' ? 'btnSaveHw' : 'btnTestHdr'); if (b.textContent.indexOf('▾') < 0) bad.push(n + ' lost its ▾'); });
+    if ($('btnTestHdr').textContent.indexOf('▾') < 0) bad.push('Pattern lost its ▾');
+    // Send / Save: one action per tile (decision D1), the menu behind the ▾ right beside it
+    [['btnSendHdr', 'btnSendMenu'], ['btnSaveHw', 'btnSaveMenu']].forEach(function (p) {
+      if ($(p[0]).textContent.indexOf('▾') >= 0) bad.push(p[0] + ' still carries a ▾');
+      if (!$(p[1]) || $(p[0]).nextElementSibling !== $(p[1]) || $(p[1]).textContent.trim() !== '▾' || $(p[1]).getAttribute('aria-haspopup') !== 'menu') bad.push(p[1] + ' not the ▾ beside ' + p[0]);
+    });
     // Alt+3 still opens the third bar tab
     var was = w.ui.tab; w.dispatchEvent(new w.KeyboardEvent('keydown', { key: '3', code: 'Digit3', altKey: true, bubbles: true }));
     if (w.ui.tab !== 'correction') bad.push('Alt+3 → ' + w.ui.tab);
@@ -992,14 +1023,19 @@ function pipeTest() {
       w.disp.mode = 'normal'; w.renderDisplayBar();
       if (v('btnBlackout') !== '' || v('btnFreeze') !== '') bad.push('off shows "' + v('btnBlackout') + '"');
       if (w.dispLinked().length && $('btnNormalHdr').disabled && !$('btnNormalHdr').dataset.ro) bad.push('Normal greyed with a processor linked');
-      if (!/every linked processor/.test($('btnBlackout').dataset.roTitle || $('btnBlackout').title)) bad.push('Blackout tooltip doesn’t say it is global');
-      // something not saved on the processor worked on → amber Save "Not saved"; saved → back
-      var d0 = w.pipeScope().filter(function (x) { return x.hw; })[0], keepUn = JSON.stringify(w.hw.unsaved);
+      if (!/every linked processor/.test(w.disp.tips.btnBlackout) || (w.dispLinked().length && ($('btnBlackout').dataset.roTitle || $('btnBlackout').title) !== w.disp.tips.btnBlackout)) bad.push('Blackout tooltip doesn’t say it is global');
+      // a password box never reaches the log (README: passwords are never recorded)
+      var pwBox = w.document.createElement('input'), pwLog = [], keepLog = w.log; pwBox.type = 'password'; pwBox.id = 'pwTest'; pwBox.value = 'zz-not-logged';
+      w.document.body.appendChild(pwBox); w.log = function (a, d) { pwLog.push(JSON.stringify(d)); };
+      pwBox.dispatchEvent(new w.Event('change', { bubbles: true })); w.log = keepLog; pwBox.remove();
+      if (!pwLog.length || pwLog.join().indexOf('zz-not-logged') >= 0) bad.push('password box logged: ' + pwLog.join());
+      // something not saved on the processor worked on → Save amber, its light amber, the tile names it; saved → back
+      var d0 = w.pipeScope().filter(function (x) { return x.hw; })[0], keepUn = JSON.stringify(w.hw.unsaved), led = function (id) { return $(id).querySelector('.led').className; };
       if (d0) {
         w.hw.unsaved[d0.id] = { why: 'test', at: Date.now() }; w.renderUnsaved();
-        if (!$('btnSaveHw').classList.contains('warn') || v('btnSaveHw') !== 'Not saved') bad.push('unsaved: ' + v('btnSaveHw'));
+        if (!$('btnSaveHw').classList.contains('warn') || led('btnSaveHw') !== 'led warn' || v('btnSaveHw') !== w.deviceLabel(d0) || !/not saved: /.test($('btnSaveHw').dataset.roTitle || $('btnSaveHw').title)) bad.push('unsaved: ' + v('btnSaveHw') + ' / ' + led('btnSaveHw'));
         w.hw.unsaved = JSON.parse(keepUn); w.renderUnsaved();
-        if ($('btnSaveHw').classList.contains('warn') || v('btnSaveHw') === 'Not saved') bad.push('saved: still amber');
+        if ($('btnSaveHw').classList.contains('warn') || led('btnSaveHw') !== 'led') bad.push('saved: still amber');
       }
       // status lines: Layout counts the cabinets (the screens when empty); Device names the processor worked on; every tab
       // tile carries its pictogram (DESIGN_SYSTEM.md item 1)
@@ -1021,7 +1057,12 @@ function pipeTest() {
         w.ui.devMulti = []; w.ui.devSel = devs[0].id; w.setTab('devices'); w.devMultiPick(devs[1], false);
         if (st('tabDevices') !== '2 processors' || (!d.querySelector('#devList .dv-li.multi') && w.ui.treeView === 'procs')) bad.push('multi: "' + st('tabDevices') + '"');
         var lk = [devs[0], devs[1]].filter(function (x) { return x.hw && w.DRV.caps(x).save; }), keepU = JSON.stringify(w.hw.unsaved);
-        if (lk.length === 2) { w.hw.unsaved = {}; w.hw.unsaved[lk[0].id] = { why: 'test', at: 1 }; w.renderUnsaved(); if (v('btnSaveHw') !== '1 of 2 not saved') bad.push('multi save: ' + v('btnSaveHw')); w.hw.unsaved = JSON.parse(keepU); w.renderUnsaved(); }
+        if (lk.length === 2) {
+          w.hw.unsaved = {}; w.hw.unsaved[lk[0].id] = { why: 'test', at: 1 }; w.renderUnsaved();
+          var svt = $('btnSaveHw').dataset.roTitle || $('btnSaveHw').title;
+          if (v('btnSaveHw') !== '2 processors' || svt.indexOf('not saved: ' + w.deviceLabel(lk[0])) < 0 || svt.indexOf(w.deviceLabel(lk[1])) < 0) bad.push('multi save: ' + v('btnSaveHw') + ' / ' + svt);
+          w.hw.unsaved = JSON.parse(keepU); w.renderUnsaved();
+        }
         w.dispatchEvent(new w.KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
         if ((w.ui.devMulti || []).length || st('tabDevices') === '2 processors') bad.push('Esc: still several');
       }
@@ -1033,12 +1074,134 @@ function pipeTest() {
       var keepHelper = w.hw.helper; w.hw.helper = false;
       w.replaceProject(w.ensureLct(w.newProject())); w.setTab('layout'); w.renderAll();
       ['btnBlackout', 'btnFreeze', 'btnNormalHdr', 'btnSendHdr', 'btnSaveHw'].forEach(function (id) { if (!$(id).offsetWidth) bad.push(id + ' hidden with nothing linked'); });
-      if (!$('btnBlackout').disabled) bad.push('Blackout not greyed with nothing linked');
+      if (!$('btnBlackout').disabled || (!$('btnBlackout').dataset.ro && $('btnBlackout').title !== 'Link a processor first')) bad.push('Blackout not greyed with its reason with nothing linked: "' + $('btnBlackout').title + '"');
       if (st('tabHealth') !== 'helper off' || !$('tabHealth').querySelector('.tab-st.bad')) bad.push('helper down: Monitor says "' + st('tabHealth') + '"');
       w.hw.helper = keepHelper;
     } catch (e) { bad.push('threw ' + e.message); }
     w.scrRead = keepRead; w.disp.mode = keepMode; w.renderAll();
-    row(!bad.length, 'header tiles: Blackout lit + "On" (no "OFF"), global tooltips, Save amber "Not saved", status lines (Layout, Device), right-click switcher, Ctrl-pick = "2 processors" + "1 of 2 not saved", Esc = one, Monitor keeps errors, nothing linked + helper down' + (bad.length ? ' — ' + bad.join('; ') : ''));
+    row(!bad.length, 'header tiles: Blackout lit + "On" (no "OFF"), global tooltips, Save amber + named, status lines (Layout, Device), right-click switcher, Ctrl-pick = "2 processors" (tooltip: which isn’t saved), Esc = one, Monitor keeps errors, nothing linked + helper down' + (bad.length ? ' — ' + bad.join('; ') : ''));
+    done();
+  });
+}
+// Phase A "trust" (docs/UI_ANALYSIS_2026-11.md §3): Blackout / Freeze / Normal live from the first render (alpha greying
+// neither sticking nor lost), Send / Save one action per tile with the menu behind ▾, the "not saved" chip's Save, the state
+// chips never moving the workspace. Own projects; the helper and the confirmations are stubs (nothing leaves the frame).
+function phaseATest() {
+  var w = f.contentWindow, d = w.document, $ = function (id) { return d.getElementById(id); }, tiles = ['btnBlackout', 'btnFreeze', 'btnNormalHdr'];
+  var v = function (id) { return ($(id).querySelector('.v') || {}).textContent; };
+  var real = function (dv, i) { return { kind: 'lct', host: '192.0.2.5' + (i || 0), port: 5200, name: 'H5', senders: [0x7B48] }; };
+  var mk = function (n, link) {   // n H5s, each with 2 × 2 cabinets on its own screen; link(d, i) = its link (none: not linked)
+    w.replaceProject(w.ensureLct(w.newProject()));
+    var out = [];
+    for (var i = 0; i < n; i++) {
+      var dv = w.addProcessor('h5', 'h20'), lc = i ? w.lctNew(dv) : w.P.lct[0], s = w.newScreen(0, 0);
+      s.screenId = lc.id; s.cols = 2; s.rows = 2; s.wiring.sender = w.cardsOfDevice(dv)[0]; s.wiring.port = 0; w.P.screens.push(s);
+      if (link) dv.hw = link(dv, i);
+      out.push(dv);
+    }
+    w.commit(); w.setTab('layout'); w.ui.devMulti = []; w.ui.mSender = w.cardsOfDevice(out[0])[0]; w.renderAll();
+    return out;
+  };
+  atEnd(function (done) {   // 1. the panic tiles
+    var bad = [], keepSt = w.alpha.st, keepRDB = w.renderDisplayBar, ALPHA = /Writing to processors is off/;
+    try {
+      // start-up: drawn before the project arrived (nothing linked) → greyed, the tooltip says why
+      mk(1, null);
+      tiles.forEach(function (id) { if (!$(id).disabled || $(id).title !== 'Link a processor first') bad.push(id + ' not linked: ' + $(id).disabled + ' "' + $(id).title + '"'); });
+      // the project with a linked processor arrives: an ordinary render (no display-bar redraw) makes them live
+      w.renderDisplayBar = function () {};
+      mk(1, function (dv) { return w.simLink(dv); });
+      tiles.forEach(function (id) { if ($(id).disabled || $(id).title !== w.disp.tips[id]) bad.push(id + ' linked: disabled ' + $(id).disabled + ' "' + $(id).title + '"'); });
+      w.renderDisplayBar = keepRDB;
+      // the alpha, read-only and locked: greyed while the project is still empty (as at start-up) ...
+      w.alpha.st = { ok: true, alpha: true, readOnly: true, version: 't', build: 't', unlock: null, policy: { read: [] } };
+      mk(1, null); w.alphaApplyRO();
+      if (!$('btnBlackout').disabled || !ALPHA.test($('btnBlackout').title)) bad.push('alpha, empty: "' + $('btnBlackout').title + '"');
+      // ... simulated processors only: live (nothing leaves the app), the earlier greying doesn't stick
+      mk(1, function (dv) { return w.simLink(dv); });
+      tiles.forEach(function (id) { if ($(id).disabled || $(id).dataset.ro || $(id).title !== w.disp.tips[id]) bad.push(id + ' alpha + simulated: disabled ' + $(id).disabled + ' "' + $(id).title + '"'); });
+      // ... a real processor: greyed with the alpha's reason
+      mk(1, real);
+      tiles.forEach(function (id) { if (!$(id).disabled || !ALPHA.test($(id).title)) bad.push(id + ' alpha + real: disabled ' + $(id).disabled + ' "' + $(id).title + '"'); });
+    } catch (e) { bad.push('threw ' + e.message); }
+    w.renderDisplayBar = keepRDB; w.alpha.st = keepSt; mk(1, null); w.alphaApplyRO();
+    row(!bad.length, 'Blackout / Freeze / Normal: greyed with "Link a processor first" when nothing is linked, live from the first render once one is (no display-bar redraw needed); alpha read-only: greyed empty, live with simulated only (no stale greying), greyed with its reason on a real link' + (bad.length ? ' — ' + bad.join('; ') : ''));
+    done();
+  });
+  atEnd(function (done) {   // 2. Send / Save: the tile = one action on the processor it names, the ▾ = the menu
+    var bad = [], keepConfirm = w.confirm, keepPost = w.DRV.post, keepToast = w.toast, asked = [], posts = [], toasts = [], menu = $('ctxMenu');
+    w.confirm = function (t) { asked.push(t); return false; };   // cancelled: nothing is sent or saved
+    w.DRV.post = function (fam, path) { posts.push(path); return Promise.resolve({ ok: true, frames: 1, log: [] }); };
+    w.toast = function (t) { toasts.push(t); };
+    var items = function () { return Array.prototype.map.call(d.querySelectorAll('#ctxMenu .ctx-i'), function (x) { return x.textContent; }).join(' | '); };
+    try {
+      var ds = mk(2, real), n0 = w.deviceLabel(ds[0]), n1 = w.deviceLabel(ds[1]);
+      if (v('btnSendHdr') !== n0 || v('btnSaveHw') !== n0) bad.push('tiles say "' + v('btnSendHdr') + '" / "' + v('btnSaveHw') + '", not ' + n0);
+      // the tile's click (mouse or keyboard alike): the one action, asked first, no menu
+      menu.hidden = true; $('btnSendHdr').click();
+      if (asked.length !== 1 || asked[0].indexOf('Send the layout to ' + n0 + '?') !== 0 || !menu.hidden) bad.push('Send tile: ' + JSON.stringify(asked) + (menu.hidden ? '' : ' + a menu') + ' ' + toasts.join(' | '));
+      asked.length = 0; $('btnSaveHw').click();
+      if (asked.length !== 1 || asked[0].indexOf('Save to ' + n0 + '?') !== 0 || !menu.hidden) bad.push('Save tile: ' + JSON.stringify(asked));
+      // the ▾: the menu (all, one, Compare), nothing asked
+      asked.length = 0; $('btnSendMenu').click();
+      if (menu.hidden || asked.length || !/Send to all processors \(2\)/.test(items()) || items().indexOf('Compare with ' + n0) < 0) bad.push('Send ▾: ' + items());
+      menu.hidden = true; $('btnSaveMenu').click();
+      if (menu.hidden || asked.length || !/Save all processors \(2\)/.test(items())) bad.push('Save ▾: ' + items());
+      menu.hidden = true;
+      // two processors worked on: the tile says so, the confirm names both
+      w.ui.devMulti = [ds[0].id, ds[1].id]; w.renderAll();
+      if (v('btnSaveHw') !== '2 processors') bad.push('several: "' + v('btnSaveHw') + '"');
+      asked.length = 0; $('btnSaveHw').click();
+      if (asked.length !== 1 || asked[0].indexOf('Save to ' + n0 + ', ' + n1 + '?') !== 0) bad.push('several, Save: ' + JSON.stringify(asked));
+      if (posts.length) bad.push('reached the helper: ' + posts.join());
+    } catch (e) { bad.push('threw ' + e.message); }
+    w.ui.devMulti = []; w.confirm = keepConfirm; w.DRV.post = keepPost; w.toast = keepToast; menu.hidden = true;
+    row(!bad.length, 'Send / Save tiles: name the processor worked on ("2 processors" when several), a click = that one action (asked first, naming them; no menu), ▾ = the menu (all, one, Compare)' + (bad.length ? ' — ' + bad.join('; ') : ''));
+    done();
+  });
+  atEnd(function (done) {   // 3. the "not saved" chip's Save: enabled, greyed only with a reason while busy, saves what it names
+    var bad = [], keepConfirm = w.confirm, keepPost = w.DRV.post, asked = [], keepUn = JSON.stringify(w.hw.unsaved || {}), sb = $('btnSaveBar');
+    w.confirm = function (t) { asked.push(t); return true; };
+    w.DRV.post = function () { return Promise.resolve({ ok: true, frames: 1, log: [] }); };
+    var fin = function () {
+      w.confirm = keepConfirm; w.DRV.post = keepPost; w.hw.unsaved = JSON.parse(keepUn); w.hwUnsavedStore(); w.renderUnsaved();
+      row(!bad.length, '"Not saved" chip: names the processor, its Save enabled (tooltip says what), greyed with "Wait — a send…" only while a send runs and live again after, a click saves exactly those (asked first) and the chip goes' + (bad.length ? ' — ' + bad.join('; ') : ''));
+      done();
+    };
+    try {
+      var ds = mk(1, real), n0 = w.deviceLabel(ds[0]);
+      w.hw.unsaved = {}; w.hw.unsaved[ds[0].id] = { at: Date.now(), why: 'test' }; w.renderUnsaved();
+      if ($('unsavedBar').hidden || $('unsavedText').textContent.indexOf(n0) < 0) bad.push('chip: ' + $('unsavedText').textContent);
+      if (sb.disabled || sb.title.indexOf('Save ' + n0) !== 0) bad.push('Save disabled ' + sb.disabled + ' "' + sb.title + '"');
+      w.hwBegin('send');
+      if (!sb.disabled || !/^Wait — a send/.test(sb.title)) bad.push('busy: disabled ' + sb.disabled + ' "' + sb.title + '"');
+      w.hwEnd('send');
+      if (sb.disabled) bad.push('still greyed after the send');   // the stale state the audit saw
+      sb.click();
+      setTimeout(function () {
+        if (asked.length !== 1 || asked[0].indexOf('Save to ' + n0 + '?') !== 0) bad.push('asked: ' + JSON.stringify(asked));
+        if (w.hw.unsaved[ds[0].id] || !$('unsavedBar').hidden) bad.push('after Save: still not saved');
+        fin();
+      }, 300);
+    } catch (e) { bad.push('threw ' + e.message); fin(); }
+  });
+  atEnd(function (done) {   // 4. Blackout + not saved: the chips sit on the menu bar's line, the workspace doesn't move
+    var bad = [], keepUn = JSON.stringify(w.hw.unsaved || {}), keepMode = w.disp.mode;
+    try {
+      var ds = mk(1, real), top = function () { var m = d.querySelector('main:not([hidden])'); return m ? Math.round(m.getBoundingClientRect().top) : -1; }, t0 = top();
+      w.disp.mode = 'blackout'; w.renderDisplayBar();
+      w.hw.unsaved = {}; w.hw.unsaved[ds[0].id] = { at: Date.now(), why: 'test' }; w.renderUnsaved();
+      var t1 = top();
+      if (t1 !== t0) bad.push('workspace moved ' + t0 + ' → ' + t1);
+      ['displayBar', 'unsavedBar'].forEach(function (id) { if ($(id).hidden || !$(id).offsetWidth || !$(id).closest('#menuBar')) bad.push(id + ' not shown on the menu bar'); });
+      var mb = $('menuBar').getBoundingClientRect(), r = $('displayBar').getBoundingClientRect();
+      if (r.top < mb.top - 1 || r.bottom > mb.bottom + 1) bad.push('the red chip leaves the menu bar\'s line');
+      if (!/blacked out/i.test($('displayText').textContent)) bad.push('chip says "' + $('displayText').textContent + '"');
+      w.disp.mode = 'normal'; w.renderDisplayBar(); w.hw.unsaved = {}; w.renderUnsaved();
+      if (top() !== t0) bad.push('after Normal + saved: ' + top());
+    } catch (e) { bad.push('threw ' + e.message); }
+    w.disp.mode = keepMode; w.renderDisplayBar(); w.hw.unsaved = JSON.parse(keepUn); w.renderUnsaved();
+    row(!bad.length, 'Blackout + not saved: both chips on the menu bar\'s line, the workspace top doesn\'t move (on and off)' + (bad.length ? ' — ' + bad.join('; ') : ''));
     done();
   });
 }
@@ -1127,6 +1290,28 @@ function alphaTest() {
         });
       }).catch(function (e) { fin(false, 'alpha read-only threw ' + e.message); });
     } catch (e) { fin(false, 'alpha read-only threw ' + e.message); }
+  });
+  // Report a problem: the GitHub issue link only once version.json says the repository is public (a 404 before); the
+  // files the size cap left out are counted. The helper is a stand-in: nothing is made or sent.
+  atEnd(function (done) {
+    var keep = { st: w.alpha.st, post: w.alphaPost, gather: w.supGather }, seen = [];
+    var fin = function (ok, text) { w.alpha.st = keep.st; w.alphaPost = keep.post; w.supGather = keep.gather; w.alphaDlgClose(); row(ok, text); done(); };
+    var once = function (pub) {
+      w.alpha.st = { ok: true, alpha: true, readOnly: true, version: 't', build: 't', unlock: null, reportContact: 'reports@example.invalid', repoPublic: pub, policy: keep.st && keep.st.policy };
+      w.supGather = function () { return Promise.resolve({ files: [], reads: {} }); };
+      w.alphaPost = function (p) { return Promise.resolve(p === '/api/hw/report' ? { ok: true, name: 'OpenNova-report-t.zip', path: '/x/OpenNova-report-t.zip', bytes: 2048, files: 9, leftOut: 3 } : { ok: true }); };
+      w.alphaReportOpen(); w.alphaReportGo();
+      return new Promise(function (ok) { setTimeout(ok, 150); }).then(function () {
+        var d = w.document, body = d.getElementById('alBody').textContent;
+        seen.push({ gh: !!d.getElementById('rpGh'), left: /3 older files left out/.test(body), to: /reports@example\.invalid/.test(body) });
+        w.alphaDlgClose();
+      });
+    };
+    try {
+      once(false).then(function () { return once(true); }).then(function () {
+        fin(!seen[0].gh && seen[1].gh && seen[0].left && seen[0].to, 'Report a problem: no GitHub link while the repository is private, the link once it is public; "3 older files left out" said; the contact kept ' + JSON.stringify(seen));
+      }).catch(function (e) { fin(false, 'report dialog threw ' + e.message); });
+    } catch (e) { fin(false, 'report dialog threw ' + e.message); }
   });
 }
 // App actions (app-log.js logAct): a user action's id goes with every helper call it makes, also from a step chained on
@@ -1313,14 +1498,14 @@ function screenReadTest(n) {
       var v = w.scrColor(lc), ap = w.scrApplied(d, lc), rd = w.scr.read[w.scrKey(d, lc)];
       if (asked.join() !== '/api/hw/color-read') return finish(false, 'Screen read: asked ' + asked.join());
       if (v.brightness !== 55 || v.gamma !== 2.2 || v.colorTemp !== 3200) return finish(false, 'Screen read: controls ' + JSON.stringify(v) + ' devs ' + w.scrDevices(lc).length + ' same project ' + (P() === proj) + ' ap ' + JSON.stringify(ap) + ' read ' + JSON.stringify(rd));
-      if (ap.gamut !== undefined || rd.values.gamut !== 'original') return finish(false, 'Screen read: gamut (not settable on NovaLCT) ' + ap.gamut + ' / ' + rd.values.gamut);
+      if (ap.gamut !== 'original' || rd.values.gamut !== 'original') return finish(false, 'Screen read: gamut ' + ap.gamut + ' / ' + rd.values.gamut);
       lc.color = { brightness: 70 };
       if (w.scrColor(lc).brightness !== 70) return finish(false, 'Screen read: the wanted value didn’t win');
       w.setTab('screen');
       setTimeout(function () {
         var cell = Array.prototype.filter.call(w.document.querySelectorAll('#scBody .sc-tbl td'), function (td) { return /^55 %/.test(td.textContent); })[0];
         finish(!!cell && /Wanted 70/.test(cell.title) && asked.filter(function (p) { return p === '/api/hw/color-read'; }).length >= 2 && !asked.some(function (p) { return /run|gamma|calib|send/.test(p); }),
-          'Screen Settings reads the processor (55 %, γ 2.2, 3200 K; NovaLCT gamut shown only), wanted value wins, nothing written (' + (cell ? cell.title : 'no 55 % cell') + ')');
+          'Screen Settings reads the processor (55 %, γ 2.2, 3200 K, gamut off), wanted value wins, nothing written (' + (cell ? cell.title : 'no 55 % cell') + ')');
       }, 150);
     } catch (e) { finish(false, 'Screen read threw ' + e.message); }
   }, 100);

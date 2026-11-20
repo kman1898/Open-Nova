@@ -5,13 +5,15 @@
 PACKAGE.zip = what tools/make_package.py built. The zip itself: the launchers, licences (LICENSE-MIT, LICENSE-APACHE,
 NOTICE), the fonts with their OFL texts, the helper and the app are in it, nothing private (recordings, captures, vendor
 files, project data), the .command / .sh launchers stored executable; --alpha: README-ALPHA.md, no test pages, version.json
-stamped (channel alpha, build date-hash, an unlock of salt / sha256 / tokenSha256). Then the unzipped folder (--dir = one
+stamped (channel alpha, build date-hash, an unlock of salt / sha256 / tokenSha256, a real reportContact: not the
+placeholder of a build without --contact). Then the unzipped folder (--dir = one
 unzipped by the system's own tool, else this unzips it into a temporary folder) is started as a user would:
 python opennova.py --no-browser --local-only on free ports with a temporary data folder, and probed: / (the page),
 /version.json (the version: --version, else this checkout's app/version.json), /api/projects, /js/app-core.js,
 /fonts/fonts.css and a .woff2 (font/woff2), the helper through the server (/api/hw/ping, /api/hw/diag/status: reads only,
 no processor). Then it is stopped (with its helper and server). Exit 0 = all passed.
 """
+import hashlib
 import json
 import os
 import re
@@ -87,14 +89,55 @@ def main(argv):
         names = {i.filename[len(top) + 1:]: i for i in infos if not i.is_dir()}
         need = ['opennova.py', 'Start Open Nova.command', 'Start Open Nova.bat', 'start-open-nova.sh', 'LICENSE-MIT', 'LICENSE-APACHE', 'NOTICE',
                 'RUNNING.md', 'app/index.html', 'app/serve.py', 'app/serve.ps1', 'app/version.json', 'app/js/main.js', 'app/fonts/fonts.css',
-                'tools/novalink.py', 'tools/wirelog.py', 'tools/alpha.py', 'tools/tg_registers.json', 'tools/wireshark/novastar.lua']
+                'tools/novalink.py', 'tools/wirelog.py', 'tools/usbcap.py', 'tools/usbauto.py', 'tools/netcap.py', 'tools/netcap_worker.py', 'tools/usbpcap.json', 'USB_CAPTURE.md', 'tools/alpha.py', 'tools/tg_registers.json', 'tools/wireshark/novastar.lua', 'tools/get-python.ps1', 'tools/get-python.sh']
         if alpha: need.append('README-ALPHA.md')
         miss = [n for n in need if n not in names]
         ok(not miss, 'the launchers, licences, app and helper are in it (%d files)%s' % (len(names), ': missing ' + ', '.join(miss) if miss else ''))
         fonts = sorted({n.split('/')[-1].split('-')[0] for n in names if n.startswith('app/fonts/') and n.endswith('.woff2')})
         nofl = [f for f in fonts if 'app/fonts/OFL-%s.txt' % f not in names]
         ok(fonts and not nofl, 'every bundled font family ships with its OFL licence (%s)%s' % (', '.join(fonts), ': missing ' + ', '.join(nofl) if nofl else ''))
-        priv = [n for n in names if PRIVATE.search(n)]
+        # python-dist/: the official Python archives of a per-system package (make_package.py --python), named and hashed by
+        # the fetch scripts; checked here against make_package's own list, so nothing else can hide in that folder
+        import make_package as mp
+        pyd = {'python-dist/' + a[1]: a[3] for a in mp.python_archives()}
+        extra = [n for n in names if n.startswith('python-dist/') and n not in pyd]
+        ok(not extra, 'python-dist holds only the known Python archives%s' % (': ' + ', '.join(extra) if extra else ''))
+        bad = [n for n in names if n in pyd and hashlib.sha256(z.read(top + '/' + n)).hexdigest() != pyd[n]]
+        ok(not bad, 'the Python archives are the published files (SHA-256)%s' % (': ' + ', '.join(bad) if bad else ''))
+        # libusb/: NovaStar USB's library in the Windows / Mac packages (tools/usb_libs.json: paths + SHA-256), its licence in all
+        ul = mp.usb_libs()
+        usb = {e['path']: e['sha256'] for e in ul['files']}
+        base = os.path.basename(zp)[:-4]
+        only = 'aarch64 arm64' if base.endswith('-mac-apple-silicon') else 'x86_64' if base.endswith('-mac-intel') else ''   # one-Mac zips
+        system = 'mac' if only else next((s for s in ('windows', 'mac', 'linux') if base.endswith('-' + s)), '')   # make_package's names
+        mine = lambda n: not only or any(k in n for k in only.split())
+        extra = [n for n in names if n.startswith('libusb/') and n not in usb]
+        ok(not extra, 'libusb/ holds only the known libusb files%s' % (': ' + ', '.join(extra) if extra else ''))
+        want = [e['path'] for e in ul['files'] if e['system'] == system and mine(e['path'])]
+        if system:   # this system's Python archives (only this Mac's in a one-Mac zip), so a first start needs no download
+            pyw = [n for n, a in ((('python-dist/' + a[1]), a) for a in mp.python_archives()) if a[0] == system and mine(n)]
+            ok(pyw and all(n in names for n in pyw) and not [n for n in names if n.startswith('python-dist/') and n not in pyw],
+               "python-dist holds this system's Python: %s" % ', '.join(n.split('/')[-1] for n in pyw))
+        ok(not [n for n in names if n.startswith('libusb/') and n not in want], "libusb/ holds only this system's")
+        miss = [n for n in want if n not in names]
+        ok(not miss and (system or not any(n.startswith('libusb/') for n in names)),
+           'libusb for this system (%s): %s%s' % (system or 'any system: none', ', '.join(want) or '-', ': missing ' + ', '.join(miss) if miss else ''))
+        bad = [n for n in names if n in usb and hashlib.sha256(z.read(top + '/' + n)).hexdigest() != usb[n]]
+        ok(not bad, 'the libusb files are the published ones (SHA-256)%s' % (': ' + ', '.join(bad) if bad else ''))
+        lic = [n for n in ul['licenses'] if n not in names]
+        ok(not lic and b'libusb' in z.read(top + '/NOTICE'), 'libusb\'s licence (%s) is in it and NOTICE names it%s' % (', '.join(ul['licenses']), ': missing ' + ', '.join(lic) if lic else ''))
+        # usb-capture/: USBPcap's official installer + its source, Windows package only (tools/usbpcap.json), its licences in all
+        up = mp.usbpcap()
+        upk = {up['path']: up['sha256'], up['sourcePath']: up['sourceSha256']}
+        extra = [n for n in names if n.startswith('usb-capture/') and n not in upk]
+        ok(not extra, 'usb-capture/ holds only the pinned USBPcap files%s' % (': ' + ', '.join(extra) if extra else ''))
+        have = [n for n in upk if n in names]
+        ok(have == list(upk) if system == 'windows' else not have, 'USBPcap %s: %s' % (up['version'], 'in the Windows package' if system == 'windows' else 'not in this one (Windows package only)'))
+        bad = [n for n in have if hashlib.sha256(z.read(top + '/' + n)).hexdigest() != upk[n]]
+        ok(not bad, 'the USBPcap files are the published ones (SHA-256)%s' % (': ' + ', '.join(bad) if bad else ''))
+        lic = [n for n in up['licenses'] if n not in names]
+        ok(not lic and b'USBPcap' in z.read(top + '/NOTICE'), 'USBPcap\'s licences (%s) are in it and NOTICE names them%s' % (', '.join(up['licenses']), ': missing ' + ', '.join(lic) if lic else ''))
+        priv = [n for n in names if PRIVATE.search(n) and n not in pyd]
         ok(not priv, 'nothing private in it (recordings, captures, vendor files, project data)%s' % (': ' + ', '.join(priv[:10]) if priv else ''))
         bits = {n: (names[n].external_attr >> 16) & 0o777 for n in names if n.endswith(('.command', '.sh'))}
         ok(bits and all(b == 0o755 for b in bits.values()), 'the .command / .sh launchers are stored executable (%s)' % ', '.join('%s %o' % kv for kv in bits.items()))
@@ -106,6 +149,9 @@ def main(argv):
                'alpha stamp: channel %s, readOnly %s, build %s' % (v.get('channel'), v.get('readOnly'), v.get('build')))
             ok(all(re.match(r'^[0-9a-f]{16,}$', str(u.get(k, ''))) for k in ('salt', 'sha256', 'tokenSha256')), 'alpha unlock = salt / sha256 / tokenSha256 (hashes only)')
             ok(not any(n.startswith('app/tests/') for n in names), 'no test pages in the alpha package')
+            rc = str(v.get('reportContact') or '').strip()   # make_package.py --contact (or OPENNOVA_REPORT_CONTACT): where testers send reports
+            ok(bool(rc) and not rc.startswith('(') and ('@' in rc or '://' in rc),
+               'alpha reportContact is a real address, not a placeholder (%s)' % ('set' if rc and not rc.startswith('(') else repr(rc) + ': build with --contact ADDRESS'))
         if folder is None:
             z.extractall(tmp)
             folder = os.path.join(tmp, top)
@@ -115,6 +161,20 @@ def main(argv):
     ok(os.path.isfile(os.path.join(folder, 'opennova.py')), 'unzipped: %s' % folder)
     if os.name != 'nt':
         ok(os.access(os.path.join(folder, 'start-open-nova.sh'), os.X_OK), 'start-open-nova.sh is executable after unzipping')
+    # the package's own libusb loads here, through the package's novalink (libusb_init + the device list; nothing opened)
+    if system == {'win32': 'windows', 'darwin': 'mac'}.get(sys.platform) and want:
+        code = ('import sys; sys.path.insert(0, sys.argv[1]); import novalink as n, ctypes as C\n'
+                'l = n.libusb(); ctx, lst = C.c_void_p(), C.POINTER(C.c_void_p)()\n'
+                'rc = l.L.libusb_init(C.byref(ctx)); k = l.L.libusb_get_device_list(ctx, C.byref(lst)) if rc == 0 else -1\n'
+                'if k >= 0: l.L.libusb_free_device_list(lst, 1)\n'
+                'l.L.libusb_exit(ctx); print(l.path); print(rc, k)')
+        env = {k: v for k, v in os.environ.items() if k not in ('OPENNOVA_LIBUSB', 'PYTHONPATH')}
+        r = subprocess.run([sys.executable, '-I', '-c', code, os.path.join(folder, 'tools')], capture_output=True, text=True, timeout=60,
+                           env=dict(env, OPENNOVA_DIAG=os.path.join(tmp, 'diag')))
+        out = r.stdout.split('\n')
+        inpkg = len(out) > 1 and os.path.normcase(os.path.abspath(out[0])).startswith(os.path.normcase(os.path.abspath(os.path.join(folder, 'libusb'))))
+        ok(r.returncode == 0 and inpkg and out[1].split()[:1] == ['0'],
+           'the package\'s libusb loads (libusb_init, device list): %s' % (' / '.join(out[:2]) if r.returncode == 0 else r.stderr.strip()[-300:]))
 
     # ---- start it as a user would, probe, stop
     port, hport = port or free_port(), hport or free_port()

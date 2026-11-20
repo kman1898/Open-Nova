@@ -5,6 +5,14 @@ Open Nova is a web page plus two small Python programs that run on the computer 
 - **the hardware helper** (`tools/novalink.py`) talks to the processors.
 
 `opennova.py` starts both and opens the browser. Nothing else to install: Python 3.9 or newer (standard library only).
+The per-system packages (`…-windows.zip`, `…-mac.zip`, `…-linux.zip`, `make_package.py --python`) carry the Python
+archives in `python-dist/` and set up from them on the first start, with no internet; that Python is used even when the
+computer has its own. Without them, on Windows `Start Open Nova.bat` uses Python 3.9+ if the computer has it, and otherwise fetches python.org's embeddable
+Python into a `python` folder next to it on the first start (`tools/get-python.ps1`: about 12 MB, checked against the
+published SHA-256; no installer, no PATH change, no admin rights — delete the folder to remove it). macOS and Linux do the
+same (`tools/get-python.sh`) with python-build-standalone's relocatable CPython (the builds uv uses; 27-37 MB, SHA-256
+checked) when there is no Python 3.9+ with lzma. On a Mac without Apple's developer tools, `/usr/bin/python3` is only a
+placeholder that opens Apple's install dialog, so it is skipped then.
 
 ## Start it
 
@@ -24,22 +32,46 @@ Settings ▸ Network says), `--no-browser`, `--alpha` (behave as the alpha build
 DIAGNOSTICS.md "The alpha build"). The version is in Help ▸ About and the window title (`app/version.json`).
 
 ## First time on a Mac
-1. Python: macOS's built-in `python3` may lack a module Open Nova needs (it says so). Then install Python from
-   https://www.python.org/downloads/ and start again.
+1. Python: nothing to install. `Start Open Nova.command` uses the Mac's Python 3.9+ if it has one, else fetches one into
+   the folder on the first start (needs internet that once).
 2. Copy the whole Nova folder to the Mac (Documents is fine).
-3. Double-click `Start Open Nova.command`. If macOS refuses ("unidentified developer"), **right-click it ▸ Open ▸ Open**
-   once. If it says it has no permission, run `chmod +x "Start Open Nova.command"` in Terminal in that folder.
-4. When macOS asks whether Python may **find devices on your local network** and **accept incoming connections**, allow
-   both — otherwise the processor search finds nothing.
+3. Double-click `Start Open Nova.command`. If macOS refuses ("unidentified developer" / "Apple could not verify"), allow
+   it once: on **macOS 14 or older** right-click it ▸ **Open** ▸ **Open**; on **macOS 15 or newer** click **Done**, then
+   System Settings ▸ Privacy & Security, scroll down to *"Start Open Nova.command" was blocked* ▸ **Open Anyway**, and
+   confirm (password or Touch ID). Or, in Terminal: `xattr -dr com.apple.quarantine <the Open Nova folder>`, then
+   double-click again. If it says it has no permission, run `chmod +x "Start Open Nova.command"` in Terminal in that folder.
+4. When macOS asks whether Python (macOS 15 may name **Terminal** instead) may **find devices on your local network** and
+   **accept incoming connections**, allow both — otherwise the processor search finds nothing. Clicked Don't Allow?
+   System Settings ▸ Privacy & Security ▸ Local Network: switch on Terminal (or Python).
 
 ## Linux
 `chmod +x start-open-nova.sh` once. If a firewall is on, allow UDP 3800 replies (NovaLCT processors), UDP 5600 (Unico) and
-UDP 54622 (MX) for the search, and TCP 8765 for other devices.
+UDP 54622-54624 (MX / CX announcements) for the search, and TCP 8765 for other devices.
+
+## Windows Firewall
+When Windows asks whether Python may use the network, tick **both Private and Public**, then Allow: a show network with
+static addresses and no internet counts as **Public**. Clicked Cancel, or ticked Private only? Control Panel ▸ Windows
+Defender Firewall ▸ Allow an app through Windows Defender Firewall ▸ Change settings ▸ tick Private and Public for Python
+(the one in the Open Nova folder's `python` folder).
 
 ## Finding processors
 - The search asks every network the computer is on (Wi-Fi and Ethernet at the same time), not just the main one.
 - A processor on another subnet or over a VPN (Tailscale) doesn't hear the search: Processors ▸ Hardware ▸ **Add by
   address…** and type its IP; it is asked directly on every search from then on.
+
+## A controller on USB (its USB-B port, e.g. VX1000)
+Find lists it like a processor on the network. What each system needs (nothing for you to install on Windows or a Mac
+when you use that system's package, `…-windows.zip` / `…-mac.zip`: they carry libusb in their `libusb` folder):
+- **Windows:** a USB driver for the device. **Install NovaLCT once** (it installs NovaStar's USB driver; Open Nova then
+  talks to it through that driver's libusb0.dll), or set the device to **WinUSB** with Zadig (Options ▸ List all devices ▸
+  "Nova ProHD" / "NovaStar MTP"). Open Nova never installs drivers itself. Close NovaLCT / VMP while Open Nova uses USB.
+- **macOS:** nothing. The any-system package needs `brew install libusb`.
+- **Linux:** `sudo apt install libusb-1.0-0` (or your distribution's libusb package) and, so you don't need root, the
+  rule `SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="5720", MODE="0660", TAG+="uaccess"` in
+  `/etc/udev/rules.d/60-novastar.rules`; then unplug the controller and plug it in again.
+
+When it is plugged in but can't be used, Find says why and the one thing to do (the same text goes into the recording, so
+a problem report shows it).
 
 ## Networks (Settings ▸ Network…)
 Like Bitfocus Companion, Open Nova uses **every network interface at once** by default: each search goes out of every

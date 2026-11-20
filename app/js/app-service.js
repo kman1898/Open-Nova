@@ -1,18 +1,22 @@
-// app-service.js - Processors ▸ Service (folded under the Hardware card): restart the processor, factory reset it, restart its receiving cards.
+// app-service.js - Processors ▸ Service (folded under the Hardware card): restart the processor, factory reset it, restart its receiving cards;
+// and Restart cabinets: only the cabinets picked in Maintain's cabinet table or on the Layout canvas (right-click), as Unico's
+// and VMP's Maintain ▸ Cabinet ▸ Restart, on every processor they are on (svOpenCabinets); nothing picked = not offered.
 // User, 2026-10-11: "restart and factory reset need to be added but with caution menus aka ask before doing".
 // Every action goes through this dialog: what happens, what is lost, Cancel as the default; a factory reset also needs RESET
 // typed and offers a support bundle (read-back of every linked processor) first. Only what was seen working is offered:
 // NovaLCT factory reset (Restore Factory [R]) and receiving-card restart (NCP send's restarts [R]); Unico Device Restart and
 // Factory Reset (NovaStar's simulator [R]); COEX receiving-card restart (VMP on the emulator [R]). The rest is shown greyed
 // with the reason. A simulated processor (drv-offline.js) offers what its real model offers and only pretends.
-// Owns: sv, SV_ACTS, SV_LEVELS, svWhy, svHtml, svOpen, svRender, svRun, bindService.
+// Owns: sv, SV_ACTS, SV_LEVELS, svWhy, svHtml, svOpen, svCellKeys, svOpenCabinets, svRender, svRenderCabinets, svRun,
+// svRunCabinets, bindService.
 // Depends on: app-core (P, $, esc, toast), app-log (log), drv-core (DRV), app-hardware (hw, hwBegin, hwEnd, hwForget,
-// renderHwCard), app-save (hwUnsavedStore, liveSet, renderUnsaved), app-processors (deviceById, deviceLabel),
+// renderHwCard), app-save (hwUnsavedStore, liveSet, renderUnsaved), app-processors (deviceById, deviceLabel, deviceOfCard,
+// cardsOfDevice), app-capacity (portLabel), app-health (hltCellAt),
 // app-support (supportBundle), drv-offline (simFamily), all at run time.
 // Classic script, not an ES module (see app-core.js); every top-level name is a shared global.
 'use strict';
 
-var sv = { dev: '', act: '', level: '', text: '', bundle: true, busy: false };
+var sv = { dev: '', act: '', level: '', text: '', bundle: true, busy: false, by: null };   // by: Maintain's cabinets, {deviceId: [{card, port, index}]}
 var SV_ACTS = { restart: 'Restart processor', factory: 'Factory reset', panels: 'Restart cabinets' };
 // What each factory-reset level keeps and erases, per family (NovaLCT: CAPTURE_MCTRL4K_SEND "Restore Factory";
 // Unico: UNICO_OPERATIONS §6.3 and its own tooltip).
@@ -45,12 +49,35 @@ function svOpen(d, act) {
   var why = svWhy(d, act); if (why) return toast(why);
   if (hw.busy) return toast('Wait — ' + (HW_BUSY_WORDS[hw.busy] || hw.busy) + ' is still running');
   var lv = act === 'factory' ? DRV.of(d).caps(d).service.factory : [];
-  sv = { dev: d.id, act: act, level: lv[0] || '', text: '', bundle: true, busy: false };
+  sv = { dev: d.id, act: act, level: lv[0] || '', text: '', bundle: true, busy: false, by: null };
+  $('svcDlg').hidden = false; svRender();
+  var c = $('svcCancel'); if (c) c.focus();
+}
+// Layout canvas cells → the cabinet keys svOpenCabinets takes ('card:port:index', the cable order Send uses); unwired
+// cells and blanks have none.
+function svCellKeys(cells) {
+  var out = []; (cells || []).forEach(function (c) { var at = hltCellAt(c); if (at) out.push(at.card + ':' + at.port + ':' + at.index); });
+  return out;
+}
+// Maintain (and the Layout canvas): restart the cabinets `keys` ('card:port:index' of the cabinet table), grouped per processor. Processors that
+// aren't linked or can't restart cabinets are left out and named in the dialog.
+function svOpenCabinets(keys) {
+  if (hw.busy) return toast('Wait — ' + (HW_BUSY_WORDS[hw.busy] || hw.busy) + ' is still running');
+  var by = {}, skip = {}, first = null;
+  keys.forEach(function (k) {
+    var sp = k.split(':').map(Number), d = deviceOfCard(sp[0]); if (!d) return;
+    var why = svWhy(d, 'panels'); if (why) { skip[d.id] = why; return; }
+    (by[d.id] || (by[d.id] = [])).push({ card: cardsOfDevice(d).indexOf(sp[0]), port: sp[1], index: sp[2] });
+    if (!first) first = d;
+  });
+  if (!first) { var w = Object.keys(skip); return toast(w.length ? deviceLabel(deviceById(w[0])) + ': ' + skip[w[0]] : 'Pick cabinets on a linked processor first'); }
+  sv = { dev: first.id, act: 'cabs', level: '', text: '', bundle: true, busy: false, by: by, skip: skip };
   $('svcDlg').hidden = false; svRender();
   var c = $('svcCancel'); if (c) c.focus();
 }
 function svRender() {
   var d = deviceById(sv.dev), box = $('svcBody'); if (!d || !box) return;
+  if (sv.act === 'cabs') return svRenderCabinets(box);
   var sim = d.hw.kind === 'offline', name = deviceLabel(d) + ' (' + d.hw.name + (sim ? '' : ', ' + d.hw.host) + ')', fam = sim ? simFamily(d) : d.hw.kind, un = hw.unsaved && hw.unsaved[d.id], h = '';
   $('svcTitle').textContent = SV_ACTS[sv.act] + ': ' + deviceLabel(d);
   if (sv.act === 'restart') {
@@ -76,7 +103,42 @@ function svRender() {
   $('svcFoot').innerHTML = '<button id="svcCancel" class="primary-outline"' + (sv.busy ? ' disabled' : '') + '>Cancel</button>' +
     '<button id="svcGo" class="danger"' + (ok && !sv.busy ? '' : ' disabled') + '>' + (sv.act === 'factory' ? 'Factory reset' : sv.act === 'panels' ? 'Restart the cabinets' : 'Restart') + '</button>';
 }
+function svRenderCabinets(box) {
+  var ids = Object.keys(sv.by), n = ids.reduce(function (a, k) { return a + sv.by[k].length; }, 0), h = '', anyLct = false, anySim = false;
+  $('svcTitle').textContent = 'Restart ' + n + ' cabinet' + (n === 1 ? '' : 's');
+  h += '<p>These receiving cards restart' + (ids.length > 1 ? ', on ' + ids.length + ' processors' : '') + ':</p><ul>' + ids.map(function (k) {
+    var d = deviceById(k), fam = d.hw.kind === 'offline' ? simFamily(d) : d.hw.kind, t = sv.by[k];
+    if (fam === 'lct') anyLct = true; if (d.hw.kind === 'offline') anySim = true;
+    return '<li><b>' + esc(deviceLabel(d)) + '</b>: ' + (t.length > 6 ? t.length + ' cabinets' : t.map(function (x) { return esc(portLabel(cardsOfDevice(d)[x.card], x.port)) + ' #' + (x.index + 1); }).join(', ')) + '</li>';
+  }).join('') + '</ul>';
+  h += '<p>They go dark' + (anyLct ? ' for about 25 s' : ' for a moment') + ' and come back with what is stored on them, whether it came from an .rcfgx or an NCP. Changes not saved on the cards (brightness, colour, a file sent without Save) go back to what was saved.</p>';
+  Object.keys(sv.skip || {}).forEach(function (k) { h += '<p class="hint">Left out: ' + esc(deviceLabel(deviceById(k))) + ' — ' + esc(sv.skip[k]) + '</p>'; });
+  if (anySim) h += '<p class="hint">Simulated: nothing is sent; the simulated processor only pretends.</p>';
+  if (sv.busy) h += '<p class="hint">Working… keep it powered and connected.</p>';
+  box.innerHTML = h;
+  $('svcFoot').innerHTML = '<button id="svcCancel" class="primary-outline"' + (sv.busy ? ' disabled' : '') + '>Cancel</button>' +
+    '<button id="svcGo" class="danger"' + (sv.busy ? ' disabled' : '') + '>Restart ' + (n === 1 ? 'the cabinet' : 'the ' + n + ' cabinets') + '</button>';
+}
+// One processor after another, so each NovaLCT wait (≈25 s) shows in the recording as its own block.
+function svRunCabinets() {
+  var ids = Object.keys(sv.by), by = sv.by, res = [];
+  if (!hwBegin('service')) return;
+  sv.busy = true; svRender();
+  return ids.reduce(function (p, k) {
+    return p.then(function () {
+      var d = deviceById(k);
+      log('hw_service', { processor: deviceLabel(d), action: 'cabinets', cabinets: by[k].length, target: d.hw.host });
+      return DRV.of(d).restartPanels(d, by[k]).then(function (r) { return r; }, function (e) { return { ok: false, error: e.message }; }).then(function (r) {
+        log('hw_service_done', { processor: deviceLabel(d), action: 'cabinets', ok: r.ok, error: r.error }); r.d = d; res.push(r);
+      });
+    });
+  }, Promise.resolve()).then(function () {
+    hwEnd('service'); sv.busy = false; $('svcDlg').hidden = true;
+    toast(res.map(function (r) { return deviceLabel(r.d) + ': ' + (r.ok ? r.text || 'done' : r.error || 'failed'); }).join(' · '));
+  });
+}
 function svRun() {
+  if (sv.act === 'cabs') return sv.busy ? undefined : svRunCabinets();
   var d = deviceById(sv.dev); if (!d || sv.busy) return;
   if (sv.act === 'factory' && sv.text.trim().toUpperCase() !== 'RESET') return toast('Type RESET first');
   var why = svWhy(d, sv.act); if (why) return toast(why);

@@ -51,10 +51,10 @@ class Srv:
     def stop(self):
         self.p.kill(); self.p.wait()
 
-    def req(self, method, path, body=None, headers=None):
+    def req(self, method, path, body=None, headers=None, timeout=10):
         r = urllib.request.Request(self.base + path, data=body, method=method, headers=headers or {})
         try:
-            with urllib.request.urlopen(r, timeout=10) as res: return res.status, dict(res.headers), res.read()
+            with urllib.request.urlopen(r, timeout=timeout) as res: return res.status, dict(res.headers), res.read()
         except urllib.error.HTTPError as e:
             return e.code, dict(e.headers), e.read()
 
@@ -312,8 +312,48 @@ def workspaces(kind, tmp):
         s.stop()
 
 
+def helper_down():
+    """serve.py with no helper (port 1): Help > Report a problem still makes a .zip (tools/alpha.py run by the server), the
+    alpha state answers, the download works; everything goes into temporary folders (never Downloads / diagnostics)."""
+    print('--- serve.py without the helper: Report a problem')
+    tmp = tempfile.mkdtemp(prefix='on_nohelper_')
+    env = {'OPENNOVA_REPORT_DIR': 'reports', 'OPENNOVA_DIAG': 'diag', 'OPENNOVA_ALPHA_SETTINGS': 'alpha-settings.json',
+           'OPENNOVA_HELPER_LOGS': 'hlogs', 'OPENNOVA_CONSOLE_LOG': 'console.txt'}
+    old = {k: os.environ.get(k) for k in env}
+    for k, v in env.items(): os.environ[k] = os.path.join(tmp, v)
+    with open(os.environ['OPENNOVA_CONSOLE_LOG'], 'w', encoding='utf-8') as f: f.write("The hardware helper didn't start: it stopped with code 1\n")
+    s = None
+    try:
+        s = Srv('py', os.path.join(tmp, 'data'))
+        J = {'Content-Type': 'application/json'}
+        st, h, b = s.req('POST', 'api/hw/alpha/state', b'{}', J)
+        ok(st == 200 and json.loads(b).get('version') and 'not running' in json.loads(b).get('helperDown', ''), 'no helper: the server answers the alpha state, saying the helper is down')
+        body = {'text': 'nothing works', 'include': {'project': True, 'recordings': True, 'logs': True, 'processors': True, 'system': True},
+                'files': [{'name': 'project.json', 'text': '{"name":"Gig"}'}], 'summary': {'app': {'browser': 'TestBrowser/1'}}}
+        t0 = time.time(); st, h, b = s.req('POST', 'api/hw/report', json.dumps(body).encode('utf-8'), J, timeout=180)   # This computer: netsh, tasklist …
+        r = json.loads(b) if st == 200 else {}
+        ok(r.get('ok') and r.get('helperDown') and os.path.dirname(r.get('path', '')) == os.environ['OPENNOVA_REPORT_DIR'], 'no helper: Report a problem still makes the .zip (%.1f s; %s %s)' % (time.time() - t0, st, b[:200] if not r.get('ok') else ''))
+        if r.get('ok'):
+            import zipfile
+            z = zipfile.ZipFile(r['path']); T = {n.split('/', 1)[1]: z.read(n) for n in z.namelist()}; md = T['REPORT.md'].decode('utf-8')
+            ok('The hardware helper was not running' in md and 'nothing works' in md and 'app/project.json' in T and '## This computer' in md
+               and "didn't start" in T.get('logs/console.txt', b'').decode('utf-8'), 'no helper: REPORT.md says the helper part is missing; the app files, This computer and the start window are in it')
+            z.close()
+            st, h, b = s.req('GET', 'api/hw/report/download?name=' + quote(r['name']))
+            ok(st == 200 and b == open(r['path'], 'rb').read(), 'no helper: Download a copy works')
+        st, h, b = s.req('POST', 'api/hw/discover', b'{}', J)
+        ok(st == 502 and 'not running' in json.loads(b).get('error', ''), 'no helper: other hardware calls still say the helper is not running')
+    finally:
+        if s: s.stop()
+        for k, v in old.items():
+            if v is None: os.environ.pop(k, None)
+            else: os.environ[k] = v
+        shutil.rmtree(tmp, ignore_errors=True)
+
+
 def main(argv):
     run('py')
+    helper_down()
     if '--py-only' not in argv and shutil.which('powershell.exe'): run('ps1')
     print('%d failed' % len(fails) if fails else 'all passed')
     return 1 if fails else 0

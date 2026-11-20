@@ -21,11 +21,11 @@
 'use strict';
 
 // palettes, built from a few stops each (no files): iron (FLIR-like) and inferno for temperature, a diverging one for the
-// supply voltage (low = the danger, so the low end is the strong colour; neutral at the nominal 5.0 V)
+// supply voltage (low = the danger, so the low end is the strong colour; neutral from 3.9 to 5.0 V: cards run at 4.0-5.0 V)
 var HEAT_PAL = {
   iron: [[0, '#000000'], [0.1, '#12062e'], [0.24, '#3d0a6b'], [0.38, '#7c1384'], [0.5, '#b8226c'], [0.62, '#e04a2c'], [0.74, '#f6860f'], [0.86, '#fcc531'], [0.95, '#fff08a'], [1, '#ffffff']],
   inferno: [[0, '#000004'], [0.11, '#1b0c41'], [0.22, '#4a0c6b'], [0.33, '#781c6d'], [0.44, '#a52c60'], [0.55, '#cf4446'], [0.66, '#ed6925'], [0.77, '#fb9b06'], [0.88, '#f7d13d'], [1, '#fcffa4']],
-  volt: [[0, '#1d4fff'], [0.27, '#3f8cff'], [0.52, '#2a3646'], [0.667, '#30353d'], [0.76, '#4a2c26'], [0.88, '#e2603a'], [1, '#ff3b3b']]
+  volt: [[0, '#1d4fff'], [0.12, '#3f8cff'], [0.36, '#2a3646'], [0.8, '#30353d'], [0.88, '#4a2c26'], [0.94, '#e2603a'], [1, '#ff3b3b']]
 };
 // pal / scale: the user's picks (this browser); img[scope] = the image last built for a screen ({key, url, field…});
 // builds = how many fields were computed (tests); logged = the view whose timing was logged; snap / snapRev = layout changes
@@ -63,9 +63,10 @@ function heatItems(cells, mode) {
   });
 }
 // The colour scale: temperature Auto (the readings' min / max rounded out to 5 °C, at least 10 °C wide, so a uniform wall
-// isn't drawn as wild contrast) or Fixed (20 °C … the error limit + 10); voltage fixed 4.0–5.5 V around the nominal 5.0 V.
+// isn't drawn as wild contrast) or Fixed (20 °C … the error limit + 10); voltage fixed 3.0–5.5 V, so the low limit (3.3 V
+// default, NovaLCT's) is on the bar and a 4.1 V cabinet reads as normal.
 function heatScale(mode, items) {
-  if (mode === 'volt') return { lo: 4.0, hi: 5.5 };
+  if (mode === 'volt') return { lo: 3.0, hi: 5.5 };
   if (heat.scale === 'fixed') return { lo: 20, hi: (watch.set.tempErr || 80) + 10 };
   var vs = items.filter(function (i) { return i.w; }).map(function (i) { return i.v; });
   if (!vs.length) return { lo: 20, hi: 60 };
@@ -243,7 +244,7 @@ function heatAge(e) {
 // palette bar with ticks, the warning / error limits marked (temperature) or the low limit (voltage)
 function heatLegendBar(mode, lo, hi, width) {
   var volt = mode === 'volt', pal = volt ? 'volt' : heat.pal, span = hi - lo || 1, pos = function (v) { return Math.max(0, Math.min(100, (v - lo) / span * 100)); };
-  var step = volt ? 0.25 : span > 40 ? 10 : 5, s = '';
+  var step = volt ? 0.5 : span > 40 ? 10 : 5, s = '';
   for (var v = lo; v <= hi + 1e-6; v += step) s += '<span class="heat-tk" style="left:' + pos(v) + '%">' + (volt ? v.toFixed(2) : tempFmt(v, 0, true).replace('°', '')) + '</span>';
   var lim = volt ? [[watch.set.voltLow, 'warn', 'low ' + watch.set.voltLow + ' V']] : [[watch.set.tempWarn, 'warn', 'warning ' + tempFmt(watch.set.tempWarn, 0)], [watch.set.tempErr, 'bad', 'error ' + tempFmt(watch.set.tempErr, 0)]];
   lim.forEach(function (l) { if (l[0] > lo && l[0] < hi) s += '<i class="heat-lim ' + l[1] + '" style="left:' + pos(l[0]) + '%" title="' + esc(l[2]) + '"></i>'; });

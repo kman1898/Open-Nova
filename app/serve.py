@@ -59,12 +59,15 @@ Endpoints
   DELETE /api/logs          empty the current log file (archives kept) -> 204 (this computer only)
   POST /api/logs/reveal     open the log folder in Explorer / Finder / the file manager -> 204 (this computer only)
   *    /api/(hw|unico|coex|rcv)/…   passed to the hardware helper on 127.0.0.1:<helper-port>, only from the app's own
-                            page (Origin = http://<Host>) and only with a JSON body.
+                            page (Origin = http://<Host>) and only with a JSON body. While the helper isn't running, this
+                            server answers the alpha's state and Help > Report a problem itself (../tools/alpha.py: the
+                            report says the helper's part is missing; Show in folder and the download too).
 
 Log file: <DataDir>/logs/open_nova.log, one JSON object per line, as serve.ps1 writes it; rotated over --log-max-mb
 (the newest 2 archives are kept).
 """
 import datetime
+import errno
 import json
 import os
 import queue
@@ -80,12 +83,14 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from urllib.parse import parse_qs, unquote, urlsplit
 
 ROOT = os.path.realpath(os.path.dirname(os.path.abspath(__file__)))   # real path: requested files are compared with it
+TOOLS = os.path.join(os.path.dirname(ROOT), 'tools')   # tools/alpha.py: Report a problem while the helper is down (helper_down)
 MAX_BODY = 64 * 1024 * 1024
 LOG_TAIL = 4 * 1024 * 1024
 TYPES = {'.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css', '.json': 'application/json',
          '.md': 'text/plain; charset=utf-8', '.scr': 'application/octet-stream', '.svg': 'image/svg+xml', '.png': 'image/png', '.woff2': 'font/woff2', '.jpg': 'image/jpeg',
          '.ico': 'image/x-icon', '.txt': 'text/plain; charset=utf-8'}
 HELPER_TIMEOUT = 15 * 60          # a Save waits for the receiving cards (up to 10 min)
+LOCAL = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # the helper on 127.0.0.1: never through a (system) proxy
 HELPER_RX = re.compile(r'^api/(hw|unico|coex|rcv)/')
 TS_RX = re.compile(r'^\{\s*"timestamp"\s*:\s*"(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3})"')
 ID_RX = re.compile(r'^[a-z0-9]{1,32}$')
@@ -456,7 +461,7 @@ class Handler(BaseHTTPRequestHandler):
         req = urllib.request.Request('http://127.0.0.1:%d/%s%s' % (S.helper_port, rel, '?' + q if q else ''), data=data, method=self.command)
         if data is not None: req.add_header('Content-Type', 'application/json')
         try:
-            with urllib.request.urlopen(req, timeout=HELPER_TIMEOUT) as r:
+            with LOCAL.open(req, timeout=HELPER_TIMEOUT) as r:
                 return self.reply(r.status, 'application/json', r.read())
         except urllib.error.HTTPError as e:
             return self.reply(e.code, 'application/json', e.read())
@@ -464,7 +469,39 @@ class Handler(BaseHTTPRequestHandler):
             why = 'the hardware helper didn\'t answer within %d minutes (it may still be working)' % (HELPER_TIMEOUT // 60)
         except (urllib.error.URLError, OSError) as e:
             why = 'the hardware helper is not running (%s)' % str(getattr(e, 'reason', e)).replace('"', "'")
+            try:
+                done = self.helper_down(rel, data, why)
+                if done is not None: return done
+            except Exception as e2:  # noqa: BLE001 - the plain "not running" answer below
+                S.log('helper_down_error', {'path': rel, 'error': '%s: %s' % (type(e2).__name__, e2)})
         return self.json_reply(502, {'ok': False, 'error': why})
+
+    def helper_down(self, rel, data, why):
+        """The helper isn't running: Help > Report a problem still works (tools/alpha.py run here: what this server can
+        collect, the helper's part said to be missing), with the alpha's state, Show in folder and the download. None =
+        nothing to do here (the caller answers 502)."""
+        m = self.command
+        if rel not in ('api/hw/report', 'api/hw/alpha/state', 'api/hw/alpha/set', 'api/hw/alpha/reveal') and not rel.startswith('api/hw/report/download'): return None
+        if not os.path.isdir(TOOLS): return None
+        if TOOLS not in sys.path: sys.path.insert(0, TOOLS)
+        import alpha
+        body = json.loads(data.decode('utf-8-sig') or '{}') if data else {}
+        if rel == 'api/hw/alpha/state' and m == 'POST': return self.json_reply(200, dict(alpha.state(), helperDown=why))
+        if rel == 'api/hw/alpha/set' and m == 'POST': return self.json_reply(200, dict(alpha.set_settings(body), helperDown=why))
+        if rel == 'api/hw/report' and m == 'POST':
+            self.S.log('report_without_helper', {'why': why})
+            return self.json_reply(200, alpha.build_report(dict(body, helperDown=why)))
+        if rel == 'api/hw/alpha/reveal' and m == 'POST':
+            if not self.is_local(): return self.json_reply(403, {'ok': False, 'error': 'only on the computer running Open Nova'})
+            try: path = alpha.report_path(body['name']) if body.get('name') else alpha.report_dir()
+            except KeyError as e: return self.json_reply(404, {'ok': False, 'error': str(e)})
+            alpha.reveal(path); return self.json_reply(200, {'ok': True, 'path': path})
+        if rel.startswith('api/hw/report/download') and m == 'GET':
+            try: path = alpha.report_path((parse_qs(urlsplit(self.path).query).get('name') or [''])[0])
+            except KeyError as e: return self.json_reply(404, {'ok': False, 'error': str(e)})
+            with open(path, 'rb') as f: b = f.read()
+            return self.reply(200, 'application/zip', b, {'Content-Disposition': 'attachment; filename="%s"' % os.path.basename(path)})
+        return None
 
     # ---------------------------------------------------------------- logs
     def client_log(self):
@@ -693,7 +730,18 @@ def bind_plan(choice, local):
         return {'choice': 'all', 'hosts': None, 'note': 'network settings not read (%s): every interface' % e}
 
 
+def listen_error(port, e):
+    """One line in plain words for a port that can't be listened on (Windows says "access permissions", 10013, for a
+    port another program holds)."""
+    taken = e.errno in (errno.EADDRINUSE, errno.EACCES) or getattr(e, 'winerror', None) in (10048, 10013)
+    if taken: return "The app server can't use port %d: another program is using it. Close that program, or start Open Nova with --port <another port>." % port
+    return "The app server can't use port %d: %s. Start Open Nova with --port <another port>." % (port, e.strerror or e)
+
+
 def main(argv):
+    for s in (sys.stdout, sys.stderr):   # output redirected to a file in a code page without the folder's characters
+        try: s.reconfigure(errors='replace')
+        except (AttributeError, ValueError, OSError): pass
     port, a, opts = 8765, list(argv), {}
     if a and a[0].isdigit(): port = int(a.pop(0))
     while a:
@@ -706,15 +754,21 @@ def main(argv):
     S = Server(port, opts.get('--data-dir', ''), float(opts.get('--log-max-mb', 20)), int(opts.get('--helper-port', 8790)), plan['hosts'] == ['127.0.0.1'])
     Handler.S = S
     servers = []
-    if plan['hosts'] is None:
-        try: servers = [DualStackServer(('::', port), Handler)]
-        except OSError: servers = [ThreadingHTTPServer(('0.0.0.0', port), Handler)]
-    else:
-        for h in plan['hosts']:                    # loopback first: localhost always works
-            try: servers.append(ThreadingHTTPServer((h, port), Handler))
-            except OSError as e:
-                if h == '127.0.0.1': raise
-                plan['note'] = (plan['note'] + '; ' if plan['note'] else '') + 'cannot listen on %s (%s)' % (h, e)
+    try:
+        if plan['hosts'] is None:
+            try: servers = [DualStackServer(('::', port), Handler)]
+            except OSError: servers = [ThreadingHTTPServer(('0.0.0.0', port), Handler)]
+        else:
+            for h in plan['hosts']:                    # loopback first: localhost always works
+                try: servers.append(ThreadingHTTPServer((h, port), Handler))
+                except OSError as e:
+                    if h == '127.0.0.1': raise
+                    plan['note'] = (plan['note'] + '; ' if plan['note'] else '') + 'cannot listen on %s (%s)' % (h, e)
+    except OSError as e:                           # no traceback: one line the tester can act on
+        print(listen_error(port, e)); sys.stdout.flush()
+        S.log('server_listen_failed', {'port': port, 'error': str(e)})
+        for x in servers: x.server_close()
+        return 1
     for x in servers: x.daemon_threads = True
     httpd = servers[0]
     adds = [] if S.local_only else addresses(port) if plan['hosts'] is None else ['http://%s:%d/' % (h, port) for h in plan['hosts'][1:]]

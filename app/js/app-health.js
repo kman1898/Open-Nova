@@ -12,14 +12,16 @@
 // place (hlt.held) stays in the event list and marked on the map after the condition ends ("ended hh:mm", outlined mark);
 // only Clear (per cabinet, per processor, all) removes it, and zeroes the processor's bit-error counters where its clear
 // was seen live (drv clearErrors). Live values (temperature, link, feed side) keep following the readings.
-// Owns: HLT_MS, HLT_COL, HLT_ENDS, hlt, hltPoll, hltTick, hltNorm, hltKind, hltLatch, hltList, hltRanges, hltHeldAt,
+// Owns: HLT_MS, HLT_COL, HLT_ENDS, hlt, hltPoll, hltTick, hltNorm, hltKind, hltLatch, hltList, hltRanges, hltPlaces, hltCounts,
+// hltDevs, hltPl, hltCabClass, HLT_OPT, hltOptOf, hltCardModel, hltFiber, hltMapGap, hltTile, hltHeldAt,
 // hltHeldText, hltWhere, hltCellAt, hltClear, hltClearTip, hltClearMenu, hltBaseline, hltRedraw, hltCabinet, hltCellFill, hltHeat,
 // hltSrv, hltSrvOn, hltErrReady, hltErrMark, hltErrPush, hltErrLoad, hltErrReset, hltErrApply, hltErrEvent,
 // renderHealthOverlay, renderHealth, hltPortBad, hltDeviceHtml, hltState, hltMapHtml, bindHealth. Limits, °C/°F, history, bit-error
 // view and alerts: app-watch.js.
 // Depends on: app-core (P, ui, $, esc, toast), app-log (log), app-processors (cardsOfDevice, deviceOfCard, deviceById,
 // procModel), app-capacity (portLabel), app-hardware (hw, hwPairs, hwPortCells, setTab is app-devices), drv-core (DRV.of(d).monitor,
-// .clearErrors), app-render (el, renderAll), app-context-menu (openMenu), app-watch (watchText, watchAlert, watchAck), app-forms (viewLive), all at run time.
+// .clearErrors), app-render (el, renderAll), app-context-menu (openMenu), app-watch (watchText, watchAlert, watchAck), app-forms (viewLive),
+// app-heat (heatMax), app-online (olMode), all at run time.
 // Classic script, not an ES module: modules do not load from file://, and the app must run
 // when index.html is double-clicked. Every top-level var/function in these files is one
 // shared global, so a name must be defined in exactly one file (tests/check-modules.html checks).
@@ -27,7 +29,7 @@
 
 var HLT_MS = { unico: 3000, lct: 5000 };
 // status colours shared by all three systems (green / amber / red / grey, as Unico and VMP use them)
-var HLT_COL = { primary: '#2fae6a', none: '#2fae6a', backup: '#e0a84a', dark: '#e05252', warning: '#e0a84a', error: '#e05252', unknown: '#808080' };
+var HLT_COL = { primary: '#2fae6a', none: '#2fae6a', backup: '#e0a84a', dark: '#e05252', warning: '#e0a84a', error: '#e05252', unknown: '#808080', beyond: '#6b4a5a' };
 // by[device id] = normalised snapshot; log = the event list as shown (built from held by hltList); held[key] = one error
 // kept until Clear {key, dev, devName, card, port, index, kind, text, level, t, ended, n, pt}; base[dev|card|port|index] =
 // counter values a Clear couldn't zero on the processor (counted from there); gone[key] = newest processor alarm-log time
@@ -123,6 +125,8 @@ function hltNorm(d, h) {
     if (!p.cabinets) p.cabinets = h.cabinets.filter(function (c) { return c.card === p.card && c.port === p.port; }).length;
   });
   h.ports = h.ports.filter(function (p) { return p.cabinets || !/^(ok|redundant, ok)$/.test(p.link); });
+  hltFiber(d, h);    // a whole fibre (OPT) down: one event, not one per port (H cards with OPT outputs)
+  hltMapGap(d, h);   // the cables answer with more / fewer cabinets than the layout maps on a port
   var n ={ total: h.cabinets.length, backup: 0, dark: 0, warn: 0, err: 0 };
   h.cabinets.forEach(function (c) {
     if (c.dark) n.dark++; else if (c.side === 'backup') n.backup++;
@@ -130,6 +134,124 @@ function hltNorm(d, h) {
   });
   h.sum = n;
   return h;
+}
+// H output cards with fibre (OPT) outputs: which Ethernet ports one OPT carries (docs\H_SERIES_CARDS.md). [ports per OPT,
+// OPTs that carry ports]. H_16xRJ45+2xFiber (0x7B46, the H9's card): OPT1 copies ports 1–8, OPT2 ports 9–16 — run as
+// primary and backup when ports 9–16 back up 1–8 (an H9 tester, 2026-11-19: OPT1 = primary, OPT2 = backup). H_4xFiber
+// (0x7B4A): OPT1–4 = ports 1–8 … 25–32 (independent; copy / backup mode uses OPT1–2 = ports 1–16). H_8xFiber
+// (0x7B4F, 4xFiber Enhanced): OPT1–4 = ports 1–10 … 31–40 (OPT5–8 are its own backups: no ports of their own).
+var HLT_OPT = { 0x7B46: [8, 2], 0x7B4A: [8, 4], 0x7B4F: [10, 4] };
+function hltOptOf(modelId, port) {
+  var g = HLT_OPT[modelId]; if (!g || port == null || port < 0 || port >= g[0] * g[1]) return null;
+  var k = Math.floor(port / g[0]); return { opt: k + 1, from: k * g[0], to: k * g[0] + g[0] - 1 };
+}
+// The ModelID of a project sending card: what the link reported, else the card type placed in the chassis.
+function hltCardModel(d, card) {
+  var ci = cardsOfDevice(d).indexOf(card), s = d.hw && d.hw.senders && d.hw.senders[ci];
+  if (s) return s;
+  var t = P.processors[card] && P.processors[card].type;
+  return t && typeof OUTPUT_CARDS !== 'undefined' && OUTPUT_CARDS[t] ? OUTPUT_CARDS[t].modelId : null;
+}
+// A fibre down = every port of one OPT that carries cabinets has no link (the reader's "primary port failed, all cabinets
+// on backup", or "redundancy lost: backup port N has no link" on the backup side). Then ONE event for the card instead of
+// one per port, and those ports say so (no break mark at cabinet 1: nothing broke in the chain). Fewer than two carrying
+// ports, or only some of them down: the per-port events stay (that is a cable, not the fibre).
+function hltFiber(d, h) {
+  var groups = {}, order = [];
+  h.ports.forEach(function (p) {
+    if (!p.cabinets) return;
+    var o = hltOptOf(hltCardModel(d, p.card), p.port); if (!o) return;
+    var k = p.card + '|' + o.opt;
+    if (!groups[k]) { groups[k] = { card: p.card, o: o, ports: [] }; order.push(k); }
+    groups[k].ports.push(p);
+  });
+  var evAt = function (p, re) { return h.events.filter(function (e) { return e.card === p.card && e.port === p.port && re.test(e.text || ''); }); };
+  var drop = function (list) { h.events = h.events.filter(function (e) { return list.indexOf(e) < 0; }); };
+  order.forEach(function (k) {
+    var g = groups[k], ps = g.ports, o = g.o, range = 'ports ' + (o.from + 1) + '–' + (o.to + 1);
+    if (ps.length < 2) return;
+    // the backup ports' own OPT, when they are on this card and all in one (H9: ports 9–16 = OPT2)
+    var bks = ps.map(function (p) { var b = p.backup && p.backup.card === g.card ? hltOptOf(hltCardModel(d, g.card), p.backup.port) : null; return b ? 'OPT' + b.opt : ''; });
+    var bkOpt = bks[0] && bks.every(function (x) { return x === bks[0]; }) && bks[0] !== 'OPT' + o.opt ? bks[0] : '';
+    var dead = ps.map(function (p) { return evAt(p, /^primary port failed/); });
+    if (dead.every(function (l) { return l.length; })) {
+      drop([].concat.apply([], dead));
+      ps.forEach(function (p) { p.link = 'OPT' + o.opt + ' fiber: no link — running on backup' + (bkOpt ? ' (' + bkOpt + ')' : ''); p.opt = 'OPT' + o.opt; delete p.breakBefore; });
+      h.events.push({ level: 'error', card: g.card, port: null, index: null, cardWide: true,
+        text: 'OPT' + o.opt + ' fiber: no link — ' + range + ' running on backup' + (bkOpt ? ' (' + bkOpt + ')' : '') });
+      return;
+    }
+    if (!bkOpt) return;
+    var lost = ps.map(function (p) { return p.backup && p.backup.link === false ? evAt(p, /^redundancy lost/) : null; });
+    if (lost.every(function (l) { return l; })) {
+      drop([].concat.apply([], lost));
+      ps.forEach(function (p) { p.backupOpt = bkOpt; });
+      h.events.push({ level: 'warning', card: g.card, port: null, index: null, cardWide: true, text: bkOpt + ' fiber: no link — no backup for ' + range });
+    }
+  });
+}
+// Layout vs cables, per port: the detection found a different number of receiving cards than the project maps there. One
+// warning per port, kept like the others; the mapped cabinets past the cable's count are drawn "not answering — mapping has
+// more cabinets than the cable" (hltCabinet). Monitoring itself reads what the cables have (the detection), so nothing on
+// the wall goes unread.
+// Two ports whose cables answer with each other's mapped counts are SWAPPED cables (an H9 tester, 2026-11-19: OPT1 unplugged,
+// so the counts came through the backups; port 1 maps 10 and port 5 maps 5 — the user: "port 5 is the one that has 5
+// panels" — but backup port 9 reached 5 cards and port 13 reached 10). One error for the pair instead of two count
+// warnings, and each reading goes on the cabinet it came from: what was read for port 1 is port 5's run, and back.
+var HLT_CAB_EVENT = /^(temperature|supply voltage|bit errors|power supply|not answering)/;
+function hltViaOf(list) { return list && list.length && list.every(function (x) { return x.via === 'backup'; }) ? 'backup' : 'primary'; }
+// The port of the same card whose cable this port's cable is swapped with: the counts cross over exactly (and only one port
+// fits), both read the same way (primary / backup). Else null.
+function hltSwapOf(card, port) {
+  var cells = hwPortCells(), n = function (p) { return (cells[card + ':' + p] || []).length; };
+  var me = hwPortDetected(card, port);
+  if (!me || !n(port) || me.length === n(port)) return null;
+  var hits = Object.keys(cells).filter(function (k) { return +k.split(':')[0] === card; }).map(function (k) { return +k.split(':')[1]; })
+    .filter(function (q) {
+      var o = q !== port && hwPortDetected(card, q);
+      return o && n(q) && o.length !== n(q) && o.length === n(port) && me.length === n(q) && hltViaOf(o) === hltViaOf(me);
+    });
+  return hits.length === 1 ? { port: hits[0], backup: hltViaOf(me) === 'backup' } : null;
+}
+function hltMapGap(d, h) {
+  var cells = hwPortCells(), mine = cardsOfDevice(d), lv = hw.live && hw.live[d.id];
+  h.swapOf = {};
+  if (!lv || !lv.cards) return;
+  var keys = {}, done = {};
+  var bkPort = function (card, port) {
+    var p = h.ports.filter(function (x) { return x.card === card && x.port === port; })[0];
+    if (p && p.backup) return p.backup.port;
+    var q = ((P.backup && P.backup.mode === 'port' ? P.backup.pairs : []) || []).filter(function (x) { return x.ms === card && x.mp === port; })[0];
+    return q ? q.bp : null;
+  };
+  Object.keys(cells).forEach(function (k) { if (mine.indexOf(+k.split(':')[0]) >= 0) keys[k] = 1; });
+  lv.cards.forEach(function (c, ci) { Object.keys(c.ports || {}).forEach(function (p) { if ((c.ports[p] || []).length && mine[ci] != null) keys[mine[ci] + ':' + p] = 1; }); });
+  Object.keys(keys).sort(function (x, y) { return (+x.split(':')[0] - +y.split(':')[0]) || (+x.split(':')[1] - +y.split(':')[1]); }).forEach(function (k) {
+    var sp = k.split(':'), card = +sp[0], port = +sp[1], c = lv.cards[mine.indexOf(card)];
+    if (!c || !c.ports) return;
+    var mapped = (cells[k] || []).length, list = c.ports[port] || [], ans = list.length;
+    if (mapped === ans || !mapped) return;   // nothing mapped on that port: the layout isn't there yet (Quick add offers it)
+    var sw = hltSwapOf(card, port);
+    if (sw) {
+      h.swapOf[k] = sw.port;
+      if (done[card + ':' + sw.port]) return;
+      done[k] = 1;
+      var a = port, b = sw.port, ba = bkPort(card, a), bb = bkPort(card, b), nb = (cells[card + ':' + b] || []).length;
+      var text = sw.backup && ba != null && bb != null
+        ? 'Backup cables of ports ' + (a + 1) + ' and ' + (b + 1) + ' swapped: port ' + (ba + 1) + ' reaches port ' + (b + 1) + '’s ' + nb + ' cabinets, port ' + (bb + 1) + ' reaches port ' + (a + 1) + '’s ' + mapped
+        : 'Cables of ports ' + (a + 1) + ' and ' + (b + 1) + ' swapped: port ' + (a + 1) + '’s cable has port ' + (b + 1) + '’s ' + nb + ' cabinets, port ' + (b + 1) + '’s has port ' + (a + 1) + '’s ' + mapped;
+      h.events.push({ level: 'error', card: card, port: a, index: null, swap: true, text: text });
+      return;
+    }
+    var bp = hltViaOf(list) === 'backup' ? bkPort(card, port) : null;
+    h.events.push({ level: 'warning', card: card, port: port, index: null,
+      text: mapped + ' cabinet' + (mapped === 1 ? '' : 's') + ' mapped, ' + ans + ' answer' + (ans === 1 ? 's' : '') + (bp != null ? ' on its backup cable (port ' + (bp + 1) + ')' : '') });
+  });
+  if (!Object.keys(h.swapOf).length) return;
+  var move = function (x) { var q = h.swapOf[x.card + ':' + x.port]; if (q != null) { x.port = q; x.swapped = true; } };
+  h.cabinets.forEach(move);
+  h.events.forEach(function (e) { if (e.index != null && !e.swap && HLT_CAB_EVENT.test(e.text || '')) move(e); });
+  delete h.idx;
 }
 // What a condition is without its changing numbers: "temperature 68.0 °C" and "… 71.5 °C" are one condition, so are
 // "bit errors (3)" and "bit errors (40)".
@@ -154,7 +276,7 @@ function hltLatch(d, h) {
   });
   Object.keys(cur).forEach(function (k) {
     var e = cur[k].e, lv = cur[k].level, r = hlt.held[k], t0 = e.t ? e.t * 1000 : now, news = '';
-    if (!r) { r = hlt.held[k] = { key: k, dev: d.id, devName: deviceLabel(d), card: e.card, port: e.port, index: e.index, kind: hltKind(e.text), level: lv, t: t0, ended: null, n: 1 }; news = 'new'; }
+    if (!r) { r = hlt.held[k] = { key: k, dev: d.id, devName: deviceLabel(d), card: e.card, port: e.port, index: e.index, kind: hltKind(e.text), level: lv, t: t0, ended: null, n: 1 }; news = 'new'; if (e.cardWide) r.cardWide = true; }
     else if (r.ended) { r.ended = null; r.n++; r.t = t0; r.level = lv; news = 'again'; }
     else if (rank[lv] > rank[r.level]) { r.level = lv; news = 'worse'; }
     r.text = e.text;   // the live value while it lasts (temperature, count); frozen when it ends
@@ -189,7 +311,7 @@ function hltList() {
     out.push({ t: Math.min.apply(null, ts), last: Math.max.apply(null, ts), dev: f.devName, devId: f.dev, card: f.card, port: f.port, index: many ? null : f.index,
       level: rs.some(function (r) { return r.level === 'error'; }) ? 'error' : 'warning', n: Math.max.apply(null, rs.map(function (r) { return r.n; })),
       ended: f.ended ? Math.max.apply(null, rs.map(function (r) { return r.ended; })) : null,
-      where: hltWhere({ card: f.card, port: f.port, index: many ? null : f.index }),
+      where: hltWhere({ card: f.card, port: f.port, index: many ? null : f.index, cardWide: f.cardWide }),
       text: many ? 'cabinets ' + hltRanges(rs.map(function (r) { return r.index; })) + ' · ' + f.text.replace(/\s*\([\d+]+\)$/, '') : f.text });
   });
   out.sort(function (a, b) { return (a.ended ? 1 : 0) - (b.ended ? 1 : 0) || b.last - a.last; });
@@ -202,6 +324,57 @@ function hltRanges(a) {
   while (i < a.length) { var j = i; while (j + 1 < a.length && a[j + 1] === a[j] + 1) j++; s.push(j > i ? (a[i] + 1) + '–' + (a[j] + 1) : String(a[i] + 1)); i = j + 1; }
   return s.join(', ');
 }
+// One count per fact, computed here for every surface (Monitor tile, the per-processor counts, the cabinet map's badges,
+// the port table, Dashboard), always with the same words:
+//   errors / warnings = places (a cabinet, a port, a processor) with an error / only warnings going on NOW;
+//   to clear = places with errors kept until the user's Clear, going on or ended (they stay until he clears them).
+// Places are counted, not records: one cabinet with bit errors and a hot temperature is one warning. Only this project's
+// processors count. keep(r): only those kept records (one processor, one port, one screen's cabinets).
+function hltPlaces(keep) {
+  var at = {}, ids = {};
+  hltDevs().forEach(function (d) { ids[d.id] = 1; });
+  Object.keys(hlt.held).forEach(function (k) {
+    var r = hlt.held[k]; if (!ids[r.dev] || (keep && !keep(r))) return;
+    var p = r.dev + '|' + r.card + '|' + r.port + '|' + r.index, a = at[p] || (at[p] = { live: '' });
+    if (!r.ended && a.live !== 'error') a.live = r.level === 'error' ? 'error' : 'warning';
+  });
+  return at;
+}
+function hltCounts(keep) {
+  var at = hltPlaces(keep), n = { err: 0, warn: 0, clear: 0 };
+  Object.keys(at).forEach(function (p) { n.clear++; if (at[p].live === 'error') n.err++; else if (at[p].live) n.warn++; });
+  return n;
+}
+// The processors Monitor speaks of: online, the connected ones (app-online.js: one not connected is "not connected" on
+// Device, not a fault here; its kept errors wait until it is back), offline all.
+function hltDevs() { return typeof olShownDevices === 'function' ? olShownDevices() : (P.devices || []); }
+function hltPl(n, w) { return n + ' ' + w + (n === 1 ? '' : 's'); }   // "1 warning", "2 errors"
+// One cabinet's class for the counts: a kept error going on now, else what its reading says. pl = hltPlaces().
+function hltCabClass(devId, card, port, index, x, pl) {
+  var a = pl[devId + '|' + card + '|' + port + '|' + index];
+  if (a && a.live) return a.live === 'error' ? 'err' : 'warn';
+  var st = hltState(x); return st.backup ? 'backup' : st.cls;
+}
+// The Monitor tile's status line (app-pipeline.js renderTabs): {text, cls, tip, pic}. Nothing to say (no processor linked,
+// no cabinets, no reading yet) is an empty line, never "OK".
+function hltTile(linked) {
+  linked = linked || hltDevs().filter(function (d) { return d.hw; });
+  var mute = function (d) { return (hlt.watch[d.id] || {}).err || (hw.watch[d.id] || {}).err; };
+  var n = hltCounts(), quiet = linked.filter(mute), bk = 0, read = 0, cabs = 0, cells = hwPortCells();
+  linked.forEach(function (d) {
+    var h = hlt.by[d.id], mine = cardsOfDevice(d); if (h && h.sum) { bk += h.sum.backup; read++; }
+    Object.keys(cells).forEach(function (k) { if (mine.indexOf(+k.split(':')[0]) >= 0) cabs += cells[k].length; });
+  });
+  var hot = typeof heatMax === 'function' && linked.length ? heatMax() : null;
+  var hoff = hw.helper === false && !(typeof olMode === 'function' && olMode() === 'offline');   // offline: simulated processors need no helper
+  var text = hoff ? 'helper off' : !linked.length ? '' : n.err ? hltPl(n.err, 'error') : quiet.length ? quiet.length + ' no reply' : n.warn ? hltPl(n.warn, 'warning') :
+    n.clear ? n.clear + ' to clear' : bk ? bk + ' on backup' : cabs && read ? 'OK' : '';
+  var cls = hoff || n.err || quiet.length ? 'bad' : n.warn || n.clear || bk ? 'warn' : text ? 'ok' : linked.length && !cabs ? 'dim' : '';
+  var tip = hoff ? 'The helper isn’t running: no processor can be reached' : !linked.length ? 'No processor linked' : !cabs ? 'No cabinets placed' :
+    !read && !text ? 'No reading yet' : [hltPl(n.err, 'error'), hltPl(n.warn, 'warning'), n.clear + ' to clear (kept until you clear them on Monitor)'].join(' · ') +
+    (bk ? ' · ' + bk + ' cabinets on backup' : '') + (quiet.length ? ' · not answering: ' + quiet.map(deviceLabel).join(', ') : '') + (hot ? ' · hottest ' + hot.text + ' (' + hot.label + ')' : '');
+  return { text: text, cls: cls, tip: tip, pic: cls === 'ok' || cls === 'warn' || cls === 'bad' ? cls : 'none' };
+}
 // The held errors of one cabinet (card = the project's sending card), and their wording for a tooltip / table cell.
 function hltHeldAt(card, port, index) { return (hlt.heldIdx || {})[card + ':' + port + ':' + index] || []; }
 function hltHeldText(rs) {
@@ -209,7 +382,7 @@ function hltHeldText(rs) {
   return rs.map(function (r) { return watchText(r.text) + (r.ended ? ' (ended ' + tm(r.ended) + ')' : ' (since ' + tm(r.t) + ')'); }).join(' · ');
 }
 function hltWhere(e) {
-  if (e.port == null) return '';
+  if (e.port == null) return e.cardWide && e.card != null ? portLabel(e.card, 0).replace(/ ?P1$/, '') : '';   // a whole card (a fibre)
   // The event already names its processor: drop portLabel's processor prefix (fixed processors, several in the project).
   var pl = portLabel(e.card || 0, e.port), d = typeof deviceOfCard === 'function' ? deviceOfCard(e.card || 0) : null, pre = d ? deviceLabel(d) + ' ' : '';
   if (pre && pl.indexOf(pre) === 0) pl = pl.slice(pre.length);
@@ -220,9 +393,11 @@ function hltWhere(e) {
 // bit-error counters where that clear was seen live (drv clearErrors: NovaLCT protocol, COEX); elsewhere, or when it
 // fails, Open Nova counts from the values now (hltBaseline). Never saves.
 function hltClear(scope) {
-  var cab = scope && scope.cab, gone = 0;
+  var cab = scope && scope.cab, gone = 0, ids = {};
+  hltDevs().forEach(function (d) { ids[d.id] = 1; });
   Object.keys(hlt.held).forEach(function (k) {
     var r = hlt.held[k];
+    if (!scope && !ids[r.dev] && deviceById(r.dev)) return;   // online: a processor not connected keeps its own (app-online.js)
     if (scope && (r.dev !== scope.dev.id || cab && !(r.card === cab.card && r.port === cab.port && r.index === cab.index))) return;
     if (r.pt) { hlt.gone[k] = Math.max(hlt.gone[k] || 0, r.pt); hltErrMark('gone', k, true); }   // that alarm-log entry stays gone
     delete hlt.held[k]; gone++; hltErrMark('held', k, true);   // every browser's list (at once)
@@ -231,7 +406,7 @@ function hltClear(scope) {
   if (!scope && typeof watchAck === 'function') watchAck();
   var what = cab ? portLabel(cab.card, cab.port) + ' · cabinet ' + (cab.index + 1) : scope ? deviceLabel(scope.dev) : 'all';
   var said = 'Cleared ' + gone + ' error' + (gone === 1 ? '' : 's') + ' (' + what + ')';
-  var devs = (scope ? [scope.dev] : P.devices).filter(function (d) { return d && d.hw; });
+  var devs = (scope ? [scope.dev] : hltDevs()).filter(function (d) { return d && d.hw; });
   hltRedraw();
   if (!devs.length) { log('health_clear', { scope: what, held: gone, hw: false }); toast(said); return Promise.resolve(); }
   return Promise.all(devs.map(function (d) {
@@ -364,11 +539,11 @@ function hltClearTip(d) {
     'Open Nova’s record only (not linked).';
 }
 // Right-click on a cabinet (Monitor map, Maintain table, Layout canvas): clear it, or its whole processor.
-function hltClearMenu(x, y, cab) {
+function hltClearMenu(x, y, cab, more) {   // more: extra items after the clear ones (Maintain's Restart)
   var d = deviceOfCard(cab.card), rs = hltHeldAt(cab.card, cab.port, cab.index); if (!d) return;
   openMenu(x, y, [{ header: portLabel(cab.card, cab.port) + ' · cabinet ' + (cab.index + 1) + (rs.length ? ' · ' + rs.length + ' error' + (rs.length > 1 ? 's' : '') : '') },
     { label: 'Clear errors on this cabinet', act: function () { hltClear({ dev: d, cab: cab }); } },
-    { label: 'Clear errors on ' + deviceLabel(d), act: function () { hltClear({ dev: d }); } }]);
+    { label: 'Clear errors on ' + deviceLabel(d), act: function () { hltClear({ dev: d }); } }].concat(more || []));
 }
 function hltRedraw() {
   if (ui.tab === 'health') renderHealth();
@@ -381,6 +556,7 @@ function hltTick() {
   if (hwWriting()) return;
   (P.devices || []).forEach(function (d) {
     if (!d.hw || (hw.helper === false && d.hw.kind !== 'offline')) return;   // a simulated processor needs no helper
+    if (typeof olPolls === 'function' && !olPolls(d)) return;   // online, not connected: not asked until a search finds it (app-online.js)
     var w = hlt.watch[d.id] || (hlt.watch[d.id] = {}), gap = HLT_MS[d.hw.kind] || 5000;
     if (w.inflight || (w.done && Date.now() - w.done < (w.err ? gap * 3 : gap))) return;
     hltPoll(d);
@@ -401,7 +577,10 @@ function hltCabinet(c) {
   var h = d && hlt.by[d.id]; if (!h) return null;
   var i = at.index;
   if (!h.idx) { h.idx = {}; h.cabinets.forEach(function (x) { h.idx[x.card + ':' + x.port + ':' + x.index] = x; }); }
-  return h.idx[c.sender + ':' + c.port + ':' + i] || { missing: true };
+  var x = h.idx[c.sender + ':' + c.port + ':' + i];
+  if (x) return x;
+  var det = typeof hwPortDetected === 'function' ? hwPortDetected(c.sender, c.port) : null;
+  return det && i >= det.length ? { missing: true, beyond: true, det: det.length } : { missing: true };   // mapped past what the cable has
 }
 // -20 … 80 °C -> blue … red (the flat heat colours before app-heat.js; kept for callers outside this file)
 function hltHeat(t) {
@@ -415,7 +594,7 @@ function hltCellFill(c) {
   if (hlt.view === 'temp' || hlt.view === 'volt') return 'rgba(0,0,0,0)';   // the heat image shows through (app-heat.js); still hit-testable
   var x = hltCabinet(c); if (!x) return null;
   if (hlt.view === 'ber') return watchBerFill(x);   // bit errors: flat per cabinet (counts are events, not interpolated)
-  if (x.missing) return HLT_COL.unknown;
+  if (x.missing) return x.beyond ? HLT_COL.beyond : HLT_COL.unknown;
   if (x.dark) return HLT_COL.dark;
   if (x.tempStatus === 'error' || x.voltStatus === 'error' || (x.psu && x.psu.indexOf(0) >= 0)) return HLT_COL.error;
   if (x.tempStatus === 'warning' || x.voltStatus === 'warning') return x.side === 'backup' ? HLT_COL.backup : '#c8b400';
@@ -458,6 +637,7 @@ function renderHealthOverlay(svg, cellsBy, unit) {
 // chain splits between primary and backup (or the primary port is dead). Hover a cabinet for its details.
 function hltState(x) {
   if (!x) return { fill: '#3a4252', text: 'not linked / no reading', cls: 'na' };
+  if (x.missing && x.beyond) return { fill: HLT_COL.beyond, text: 'not answering — mapping has more cabinets than the cable (' + x.det + ' answer on this port)', cls: 'beyond' };
   if (x.missing) return { fill: '#4a5262', text: 'not answering (no reading)', cls: 'na' };
   if (x.dark) return { fill: HLT_COL.dark, text: 'DARK — not answering on either side', cls: 'err' };
   var t = x.side === 'backup' ? 'fed from BACKUP' : 'on primary';
@@ -467,10 +647,11 @@ function hltState(x) {
   return { fill: x.side === 'backup' ? HLT_COL.backup : HLT_COL.primary, text: t, cls: x.side === 'backup' ? 'warn' : 'ok', backup: x.side === 'backup' };
 }
 function hltMapHtml() {
-  var cellsBy = allCells(), ports = hwPortCells(), out = '';
-  var hs = P.devices.map(function (d) { return hlt.by[d.id]; }).filter(Boolean);
+  var cellsBy = allCells(), ports = hwPortCells(), out = '', pl = hltPlaces();   // the badges count as the Monitor tile does
+  var hs = hltDevs().map(function (d) { return hlt.by[d.id]; }).filter(Boolean), gone = typeof olGone === 'function' ? olGone() : [];
   var portInfo = function (card, port) { for (var i = 0; i < hs.length; i++) for (var j = 0; j < hs[i].ports.length; j++) { var p = hs[i].ports[j]; if (p.card === card && p.port === port) return p; } return null; };
   P.lct.forEach(function (lc) {
+    if (gone.length && !olLcShown(lc, gone)) return;
     var cells = [];
     P.screens.forEach(function (s) { if (s.screenId === lc.id) (cellsBy[s.id] || []).forEach(function (c) { if (!c.hole) cells.push(c); }); });
     if (!cells.length) return;
@@ -479,7 +660,7 @@ function hltMapHtml() {
     var W = x1 - x0, H = y1 - y0, pad = Math.max(W, H) * 0.03, u = Math.max(W, H) / 700;   // u = one screen pixel at ~700 px wide
     var svg = '<svg class="hm-svg" viewBox="' + (x0 - pad) + ' ' + (y0 - pad) + ' ' + (W + 2 * pad) + ' ' + (H + 2 * pad) + '" preserveAspectRatio="xMidYMid meet">' +
       '<defs><pattern id="hmHatch" width="' + 12 * u + '" height="' + 12 * u + '" patternUnits="userSpaceOnUse" patternTransform="rotate(45)"><rect width="' + 5 * u + '" height="' + 12 * u + '" fill="rgba(0,0,0,.30)"/></pattern><pattern id="hmHatchFine" width="' + 8 * u + '" height="' + 8 * u + '" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)"><rect width="' + 1.2 * u + '" height="' + 8 * u + '" fill="rgba(255,255,255,.32)"/></pattern></defs>';
-    var counts = { ok: 0, warn: 0, err: 0, na: 0, held: 0 }, seenPorts = {}, mv = hlt.mapView || 'status';
+    var counts = { ok: 0, warn: 0, err: 0, backup: 0, na: 0, beyond: 0, held: 0 }, seenPorts = {}, mv = hlt.mapView || 'status';
     // Temperature / Voltage: the same interpolated image as the Layout canvas (app-heat.js) under see-through cabinets
     var him = (mv === 'temp' || mv === 'volt') && typeof heatImage === 'function' ? heatImage('map:' + lc.id, cells, mv) : null, hset = {};
     if (him) { svg += '<defs><filter id="hmTxt" x="-30%" y="-40%" width="160%" height="180%"><feDropShadow dx="0" dy="' + u + '" stdDeviation="' + u + '" flood-color="#000" flood-opacity="1" result="a"/><feDropShadow in="a" dx="0" dy="0" stdDeviation="' + 1.5 * u + '" flood-color="#000" flood-opacity="1"/></filter></defs>' + heatImgTag(him);
@@ -487,15 +668,17 @@ function hltMapHtml() {
     cells.forEach(function (c) {
       var x = hltCabinet(c), st = hltState(x), view = mv, hit = him && hset[c.k + '@' + c.x + ',' + c.y];
       var fill = view === 'ber' ? watchBerFill(x) : hit ? 'rgba(0,0,0,0)' : st.fill;
-      counts[st.cls]++;
       var list = ports[c.sender + ':' + c.port] || [], idx = -1;
       for (var j = 0; j < list.length; j++) if (list[j].x === c.x && list[j].y === c.y) { idx = j; break; }
+      var dv = deviceOfCard(c.sender), pk = (dv && dv.id) + '|' + c.sender + '|' + c.port + '|' + idx;
+      counts[hltCabClass(dv && dv.id, c.sender, c.port, idx, x, pl)]++;
+      if (pl[pk]) counts.held++;
       var tip = portLabel(c.sender, c.port) + ' · cabinet ' + (idx + 1) + ' — ' + st.text + (x && x.temp != null && !x.missing ? ' · ' + tempFmt(x.temp) : '') + (x && x.voltage ? ' · ' + x.voltage.toFixed(2) + ' V' : '') + (x && x.bitErrors ? ' · bit errors ' + (x.bitErrors === 65535 ? '65535+ (counter full)' : x.bitErrors) : '') + (x && x.disconnects ? ' · ' + x.disconnects + ' disconnect' + (x.disconnects === 1 ? '' : 's') : '') + (x && x.psu ? ' · power ' + x.psu.map(function (v) { return v === 1 ? 'ok' : v === 0 ? 'FAILED' : '?'; }).join(' / ') : '');
       // errors kept until Clear: an outline and a corner dot, solid while it lasts, dashed / hollow once it ended
       var held = hltHeldAt(c.sender, c.port, idx), live = held.filter(function (r) { return !r.ended; }), mark = '';
       if (held.length) {
         var mc = held.some(function (r) { return r.level === 'error'; }) ? HLT_COL.error : '#f2b33d';
-        counts.held++; tip += '\nKept until Clear: ' + hltHeldText(held) + '\nRight-click to clear';
+        tip += '\nKept until Clear: ' + hltHeldText(held) + '\nRight-click to clear';
         var sw = Math.max(4 * u, Math.min(c.w, c.h) * 0.05), rr = Math.max(6 * u, Math.min(c.w, c.h) * 0.09);   // visible however small the map is drawn
         mark = '<rect x="' + (c.x + sw) + '" y="' + (c.y + sw) + '" width="' + Math.max(0, c.w - 2 * sw) + '" height="' + Math.max(0, c.h - 2 * sw) + '" fill="none" stroke="' + mc + '" stroke-width="' + sw + '"' + (live.length ? '' : ' stroke-dasharray="' + 2 * sw + ' ' + 1.5 * sw + '"') + '/>' +
           '<circle class="hm-mark" cx="' + (c.x + c.w - sw - rr * 1.4) + '" cy="' + (c.y + sw + rr * 1.4) + '" r="' + rr + '" fill="' + (live.length ? mc : 'none') + '" stroke="' + (live.length ? '#fff' : mc) + '" stroke-width="' + rr * 0.4 + '"/>';
@@ -525,8 +708,10 @@ function hltMapHtml() {
     });
     svg += '</svg>';
     out += '<div class="hm-screen"><div class="hm-h"><b>' + esc(lc.name) + '</b><span class="hint">' + cells.length + ' cabinets</span>' +
-      (counts.err ? '<span class="hm-pill err">' + counts.err + ' fault</span>' : '') + (counts.warn ? '<span class="hm-pill warn">' + counts.warn + ' on backup / warning</span>' : '') +
-      (counts.ok ? '<span class="hm-pill ok">' + counts.ok + ' ok</span>' : '') + (counts.na ? '<span class="hm-pill na">' + counts.na + ' no reading</span>' : '') +
+      (counts.err ? '<span class="hm-pill err">' + hltPl(counts.err, 'error') + '</span>' : '') + (counts.warn ? '<span class="hm-pill warn">' + hltPl(counts.warn, 'warning') + '</span>' : '') +
+      (counts.backup ? '<span class="hm-pill warn">' + counts.backup + ' on backup</span>' : '') +
+      (counts.ok ? '<span class="hm-pill ok">' + counts.ok + ' OK</span>' : '') + (counts.na ? '<span class="hm-pill na">' + counts.na + ' no reading</span>' : '') +
+      (counts.beyond ? '<span class="hm-pill beyond" title="Mapped in the layout, but the cable on that port has fewer cabinets: check the layout or which cable is in which port">' + counts.beyond + ' not on the cable</span>' : '') +
       (counts.held ? '<span class="hm-pill held" title="Cabinets with errors kept until you clear them: right-click a cabinet, or Clear all in Events">' + counts.held + ' to clear</span>' : '') + '</div>' + svg + '</div>';
   });
   if (!out) return '';
@@ -541,7 +726,7 @@ function hltMapHtml() {
     v === 'ber' ?'<div class="hm-legend"><span><i style="background:' + HLT_COL.primary + '"></i>none</span><span><i style="background:#d4a017"></i>1–9</span><span><i style="background:#e07a3a"></i>10–99</span><span><i style="background:' + HLT_COL.error + '"></i>100+</span><span><i style="background:#3a4252"></i>no reading</span></div>' :
     v === 'temp' ? '<div class="hm-legend"><span><i class="hm-heat"></i>' + tempFmt(-20, 0) + ' … ' + tempFmt(80, 0) + '</span><span><i style="background:' + HLT_COL.dark + '"></i>dark</span><span><b class="hm-x">✕</b>break</span></div>' :
     '<div class="hm-legend"><span><i style="background:' + HLT_COL.primary + '"></i>on primary</span><span><i class="hm-hatch" style="background:' + HLT_COL.backup + '"></i>fed from backup</span>' +
-    '<span><i style="background:' + HLT_COL.dark + '"></i>dark / fault</span><span><i style="background:#3a4252"></i>no reading</span><span><b class="hm-x">✕</b>break</span><span><b class="hm-dot">●</b>cable in</span>' +
+    '<span><i style="background:' + HLT_COL.dark + '"></i>dark / fault</span><span><i style="background:#3a4252"></i>no reading</span><span title="Mapped in the layout, but the cable on that port has fewer cabinets"><i style="background:' + HLT_COL.beyond + '"></i>not on the cable</span><span><b class="hm-x">✕</b>break</span><span><b class="hm-dot">●</b>cable in</span>' +
     '<span title="Errors stay marked until you clear them (right-click the cabinet); dashed once the problem stopped"><i class="hm-held"></i>error · <i class="hm-held ended"></i>ended, until Clear</span></div>') + '<div class="hm-screens">' + out + '</div></div>';
 }
 
@@ -559,13 +744,13 @@ function hltDeviceHtml(d) {
     ' <button class="mini hl-clr" data-hlclear="' + esc(d.id) + '" title="' + esc('Clear this processor’s errors: the events, the marks on the map. ' + hltClearTip(d)) + '">Clear errors</button></div>';
   if (w.err) out += '<p class="hl-err" title="' + esc(w.err) + '">⚠ ' + esc(hwErrText(w.err)) + ' — retrying</p>';   // the same words as the Hardware card (hwErrText, app-hardware.js)
   if (!h) return out + '<p class="hint">Reading…</p></section>';
-  var n = h.sum;
+  var n = h.sum, c = hltCounts(function (r) { return r.dev === d.id; });   // warnings / errors as the Monitor tile counts them
   out += '<div class="hl-tiles">' +
     '<div class="hl-tile ok"><b>' + (n.total - n.backup - n.dark) + '</b><span>on primary</span></div>' +
     '<div class="hl-tile' + (n.backup ? ' warn' : '') + '"><b>' + n.backup + '</b><span>on backup</span></div>' +
     '<div class="hl-tile' + (n.dark ? ' err' : '') + '"><b>' + n.dark + '</b><span>dark</span></div>' +
-    '<div class="hl-tile' + (n.warn ? ' warn' : '') + '"><b>' + n.warn + '</b><span>warnings</span></div>' +
-    '<div class="hl-tile' + (n.err ? ' err' : '') + '"><b>' + n.err + '</b><span>errors</span></div></div>' +
+    '<div class="hl-tile' + (c.warn ? ' warn' : '') + '"><b>' + c.warn + '</b><span>warnings</span></div>' +
+    '<div class="hl-tile' + (c.err ? ' err' : '') + '"><b>' + c.err + '</b><span>errors</span></div></div>' +
     (typeof watchHistHtml === 'function' ? watchHistHtml(d) : '');
   // the port table: the ports with a problem only (red / amber, first), the healthy ones behind "N ports OK ▸" (item 8)
   var bad = h.ports.filter(function (p) { return hltPortBad(h, p); }), okN = h.ports.length - bad.length, open = !!(hlt.okOpen || {})[d.id];
@@ -577,8 +762,8 @@ function hltDeviceHtml(d) {
       var tmax = cs.length ? Math.max.apply(null, cs.map(function (c) { return c.temp; })) : null;
       var linkBad = !/^(ok|redundant, ok)$/.test(p.link);
       var cls = bad.indexOf(p) < 0 ? '' : /failed|dark|no link|no signal/.test(p.link) || h.cabinets.some(function (c) { return c.card === p.card && c.port === p.port && c.dark; }) ? ' class="err"' : ' class="warn"';
-      var held = Object.keys(hlt.held).filter(function (k) { var r = hlt.held[k]; return r.card === p.card && r.port === p.port; }).length;
-      out += '<tr' + cls + '><td>' + esc(portLabel(p.card, p.port)) + '</td><td>' + esc(p.link) + (!linkBad && held ? ' · ' + held + ' error' + (held === 1 ? '' : 's') + ' to clear' : '') + '</td><td>' + (p.cabinets || cs.length || '') + '</td><td>' +
+      var held = hltCounts(function (r) { return r.dev === d.id && r.card === p.card && r.port === p.port; }).clear;
+      out += '<tr' + cls + '><td>' + esc(portLabel(p.card, p.port)) + '</td><td>' + esc(p.link) + (!linkBad && held ? ' · ' + held + ' to clear' : '') + '</td><td>' + (p.cabinets || cs.length || '') + '</td><td>' +
         (p.backup ? esc(portLabel(p.backup.card, p.backup.port)) + (p.backup.link === false ? ' (no link)' : '') : '—') + '</td><td>' + tempFmt(tmax) + '</td></tr>';
     });
     out += '</tbody></table>';
@@ -588,7 +773,7 @@ function hltDeviceHtml(d) {
 }
 function renderHealth() {
   var box = $('hlBody'); if (!box || ui.tab !== 'health') return;
-  var linked = P.devices.filter(function (d) { return d.hw; });
+  var linked = hltDevs().filter(function (d) { return d.hw; });
   var h = linked.length ? linked.map(hltDeviceHtml).join('') :
     '<p class="hint">No processor linked — link one in Device ▸ Hardware.</p>';
   box.innerHTML = (typeof preHtml === 'function' ? preHtml() : '') + h;   // the pre-show check's result on top (app-preshow.js)
@@ -596,11 +781,13 @@ function renderHealth() {
   var hm = $('hmBody');
   if (hm) {
     if (renderHealth.snap !== ui.lastSnap) { renderHealth.snap = ui.lastSnap; renderHealth.rev = (renderHealth.rev || 0) + 1; }   // any commit, even same-length
-    var key = (hlt.mapView || 'status') + '|' + watch.set.unit + '|' + (typeof heat !== 'undefined' ? heat.pal + heat.scale : '') + '|' + renderHealth.rev + '|' + hlt.rev + '|' + P.devices.map(function (d) { var x = hlt.by[d.id]; return x ? x.at : 0; }).join(',');
+    var key = (hlt.mapView || 'status') + '|' + watch.set.unit + '|' + (typeof heat !== 'undefined' ? heat.pal + heat.scale : '') + '|' + renderHealth.rev + '|' + hlt.rev + '|' + hltDevs().map(function (d) { var x = hlt.by[d.id]; return d.id + (x ? x.at : 0); }).join(',');
     if (hm.dataset.key !== key) { hm.dataset.key = key; hm.innerHTML = hltMapHtml(); }
   }
   // the held errors: still going first, then ended ("ended hh:mm", greyed) — all until the user's Clear
-  $('hlLog').innerHTML = hlt.log.length ? hlt.log.map(function (e) {
+  var ids = {}; hltDevs().forEach(function (d) { ids[d.id] = 1; });
+  var shownLog = hlt.log.filter(function (e) { return ids[e.devId] || !deviceById(e.devId); });   // online: not a processor that isn't connected
+  $('hlLog').innerHTML = shownLog.length ? shownLog.map(function (e) {
     var a = typeof alarmInfo === 'function' ? alarmInfo(e.text) : null;   // cause / suggestion (app-alarms.js)
     return '<li class="' + esc(e.level) + (e.ended ? ' ended' : '') + '"' + (a ? ' title="' + esc(a.cause + ' ' + a.suggestion) + '"' : '') + '><time>' + esc(new Date(e.t).toLocaleTimeString()) + '</time> <b>' + esc(e.dev) + '</b> ' + esc(e.where) + (e.where ? ' · ' : '') + esc(watchText(e.text)) +
       (e.n > 1 ? ' <span class="hl-n" title="Came back after it had ended">×' + e.n + '</span>' : '') +
@@ -612,7 +799,7 @@ function bindHealth() {
   var lv = $('liveView');
   if (lv) lv.onchange = function () {
     hlt.view = lv.value; log('live_view', { view: hlt.view }); renderAll();
-    if (hlt.view !== 'off') P.devices.forEach(function (d) { if (d.hw && !hlt.by[d.id]) hltPoll(d); });
+    if (hlt.view !== 'off') hltDevs().forEach(function (d) { if (d.hw && !hlt.by[d.id]) hltPoll(d); });
   };
   var sc = $('hlShowCanvas');
   if (sc) sc.onclick = function () {   // a shortcut to Layout's View ▸ Live ▸ status (app-forms.js viewLive)

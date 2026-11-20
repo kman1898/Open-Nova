@@ -49,7 +49,7 @@ function corCabinets(lc) {
 function corGroups(cabs) {
   var by = {};
   cabs.forEach(function (c) { (by[c.d.id] || (by[c.d.id] = [])).push(c); });
-  return P.devices.filter(function (d) { return by[d.id]; }).map(function (d) { return { d: d, cabs: by[d.id] }; });
+  return (typeof olShownDevices === 'function' ? olShownDevices() : P.devices).filter(function (d) { return by[d.id]; }).map(function (d) { return { d: d, cabs: by[d.id] }; });   // online: the connected ones
 }
 function corCab(c) { var x = cor.data[c.d.id]; return x && x.by ? x.by[c.card + ':' + c.port + ':' + c.index] : null; }
 // What a coefficient step works on: the picked cabinets of this screen, else all of them.

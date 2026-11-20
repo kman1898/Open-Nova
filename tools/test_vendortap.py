@@ -1,6 +1,7 @@
 """Tests for vendortap.py (Tools ▸ Vendor apps): detection parsing, the vendor logs (days, caps, scrubbing), capture import
 into vendor/, a stand-in dumpcap, and the relay byte for byte against stand-in processors (NovaLCT TG with discovery, Unico
-HTTP + WebSocket with discovery, COEX HTTP with the announcement), and that the relay records everything whole like
+HTTP + WebSocket with discovery, COEX HTTP with the announcement, NovaLCT bridged to a USB / COM controller through a
+stand-in link), and that the relay records everything whole like
 wirelog (5 MB bodies in side files, binary as base64, a 60 KB discovery answer, stray bytes, every ping, what is left at
 the close; only passwords / tokens / logins masked). Never touches a real processor: every stand-in listens on
 127.0.0.5, the relay on 127.0.0.42, on unusual ports.   python -I -X utf8 tools/test_vendortap.py   (exit 0 = all passed)
@@ -587,6 +588,151 @@ def t_relay_refusals():
     ok(st['ok'] and st['relays'] == [], 'nothing left running')
 
 
+# ------------------------------------------------------------------ relay as a USB / COM bridge (stand-in link, no hardware)
+class LinkBusy(Exception):
+    pass
+
+
+class FakeLinks:
+    """Stand-in for novalink's link layer: open_link -> a handle like PooledLink (tag, raw, read-less, close), close_links.
+    The controller behind it answers every request AA 55 with the LINK's serial (the link renumbers, as PooledLink.raw),
+    ModelID 0x6101 (NovaPro HD) at 0x00000002; `silent` addresses never answer (raw -> None), `busy` ones raise LinkBusy
+    (an Open Nova Send holds the device). fail: opening fails with that text (NovaLCT holds the device)."""
+    def __init__(self, fail=None, silent=(), busy=(), location='1-3'):
+        self.fail, self.silent, self.busy, self.loc = fail, set(silent), set(busy), location
+        self.got, self.opened, self.closed, self.cleared, self.serial, self.bad = [], [], 0, [], 0, []
+        self.lock = threading.Lock()
+
+    def open_link(self, host, port=None, timeout=3.0, wait=20.0, exclusive=None):
+        if self.fail: raise OSError(self.fail)
+        self.opened.append(host); return FakeHandle(self, host)
+
+    def close_links(self, idle=0.0, key=None, why='closed'):
+        self.cleared.append((key, why)); return [key]
+
+
+class FakeHandle:
+    def __init__(self, L, host):
+        self.L = L; self.tag = 'usb:0483:5720@' + L.loc if host == 'usb:' else host
+
+    def raw(self, frame, timeout=None):
+        L = self.L
+        if frame[:2] != b'\x55\xAA' or struct.unpack_from('<H', frame, len(frame) - 2)[0] != (0x5555 + sum(frame[2:-2])) & 0xFFFF: L.bad.append(frame)
+        with L.lock:
+            L.serial = (L.serial + 1) & 0xFF; f = bytearray(frame); f[3] = L.serial
+            struct.pack_into('<H', f, len(f) - 2, (0x5555 + sum(f[2:-2])) & 0xFFFF); L.got.append(bytes(f))
+        addr = struct.unpack_from('<I', frame, 12)[0]
+        if addr in L.busy: raise LinkBusy('busy: a send is running on %s' % self.tag)
+        if addr in L.silent: time.sleep(timeout or 0.1); return None
+        data = (b'\x01\x61' if addr == 2 else bytes(range(struct.unpack_from('<H', frame, 16)[0]))) if frame[10] == 0 else b''
+        return tg_frame(L.serial, addr, data, reply=True)
+
+    def close(self): self.L.closed += 1
+
+
+def t_bridge_parts():
+    ok([V.bridge_target(x) for x in ('USB', 'usb:', 'usb:0483:5720@1-3', 'COM7', 'serial:COM3@1048576', '/dev/cu.usbserial-1', '192.168.0.10', '')] ==
+       ['usb:', 'usb:', 'usb:0483:5720@1-3', 'serial:COM7', 'serial:COM3@1048576', 'serial:/dev/cu.usbserial-1', None, None], 'bridge targets: USB / COMx / serial: / /dev/… (an IP is not one)')
+    ok(V.model_name(0x6101) == 'NovaPro HD' and V.model_name(0x7B4A) and V.model_name(0x1234) == '', 'model names from the app’s own table (hwsend.js): 0x6101 = NovaPro HD')
+    a = V.lct_answer('NovaPro HD (USB via Open Nova relay)')
+    ok(a == b'rpProMI:NovaPro HD (USB via Open Nova relay)' and V.ports_from_reply('lct', a) == [5200], 'made discovery answer: rpProMI:<name>, one link on 5200 (no H_SUB_CARD)')
+    ok(V.ports_from_reply('lct', V.lct_answer('H_SUB_CARD@^^@5201 ü')) == [5200], 'a name can never smuggle H_SUB_CARD ports or non-ASCII in')
+    q = V.lct_read(0, 0, 2, 2)
+    ok(wirelog.decode(q) and wirelog.decode(q)[0]['kind'] == 'req' and q == tg_frame(0, 2, op=0), 'Open Nova’s own ModelID read is a proper request frame')
+    r = V.relay_start({'kind': 'unico', 'target': 'usb:'})
+    ok(not r['ok'] and 'NovaLCT only' in r['error'], 'USB / COM only for the NovaLCT relay: %s' % r.get('error'))
+    keep = V._links
+    class NL:
+        @staticmethod
+        def serial_ports(): return [{'name': 'COM7', 'label': 'COM7', 'driver': 'Silabser'}]
+        @staticmethod
+        def usb_devices(): return [{'host': 'usb:0483:5720@1-3', 'label': 'USB 1-3', 'location': '1-3'}], ''
+    V._links = lambda: NL
+    try: t = V.handle('/api/hw/vendor/relay-targets', {})
+    finally: V._links = keep
+    ok(t['ok'] and [x['host'] for x in t['usb']] == ['usb:0483:5720@1-3'] and [x['host'] for x in t['ports']] == ['serial:COM7'], 'relay-targets: USB devices and COM ports for the window: %s' % t)
+
+
+def t_bridge_usb():
+    L = FakeLinks(silent={0x0A000000}, busy={0x0B000000})
+    r = V.BridgeRelay('usb:', RIP, ports=[5241], disc_port=13821, reply_wait=0.4, links=L).start()
+    try:
+        ok(L.opened[0] == 'usb:' and r.key == 'usb:0483:5720@1-3' and r.status()['held'], 'the device is opened (and held) at start, by the link layer’s own target: %s' % r.key)
+        ok(r.model_id == 0x6101 and r.model == 'NovaPro HD', 'ModelID read over the link at start: 0x%04X %s' % (r.model_id or 0, r.model))
+        app = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); app.bind(('127.0.0.1', 0)); app.settimeout(3)
+        app.sendto(b'rqProMI:', ('127.0.0.1', 13821)); d, a = app.recvfrom(4096); app.close()
+        ok(d == b'rpProMI:NovaPro HD (USB via Open Nova relay)' and a[0] == RIP, 'NovaLCT’s search answered by the relay itself, from %s: %r' % (a[0], d))
+        S = [0x31, 0x32, 0x33, 0x34, 0x35]
+        frames = [tg_frame(S[0], 0x00000002, op=0), tg_frame(S[1], 0x02000001, b'\xFF\x00'), tg_frame(S[2], 0x0A000000, op=0),
+                  tg_frame(S[3], 0x0B000000, op=0), tg_frame(S[4], 0x00000010, op=0)]
+        blob = frames[0] + b'\x00\x13\x37' + frames[1] + tg_frame(0x77, 0x2, b'\x01\x02', reply=True) + frames[2] + frames[3] + frames[4]
+        c = socket.create_connection((RIP, 5241), 3); c.settimeout(4)
+        for a_, b_ in ((0, 5), (5, 23), (23, 24), (24, 41), (41, 77), (77, len(blob))):   # split anywhere
+            c.sendall(blob[a_:b_]); time.sleep(0.03)
+        want = [tg_frame(S[0], 2, b'\x01\x61', reply=True), tg_frame(S[1], 0x02000001, reply=True), tg_frame(S[4], 0x10, bytes(range(2)), reply=True)]
+        got = b''; end = time.time() + 6
+        while len(got) < sum(map(len, want)) and time.time() < end:
+            try: got += c.recv(65536)
+            except socket.timeout: break
+        ok(got == b''.join(want), 'NovaLCT got the replies in its order, with its own serial numbers (%d bytes; none for the silent / refused ones)' % len(got))
+        sent = L.got[1:]                                                  # the first one was Open Nova's own ModelID read
+        ok(not L.bad, 'only whole, well-summed request frames reached the link')
+        addrs = [struct.unpack_from('<I', x, 12)[0] for x in sent]
+        ok(addrs == [2, 0x02000001, 0x0A000000, 0x0B000000, 0x10], 'the controller got the 5 requests, in order, nothing else (no junk): %s' % ['0x%X' % x for x in addrs])
+        ok([x[3] for x in sent] == [2, 3, 4, 5, 6] and all(bytes(x[:3]) + bytes(x[4:-2]) == bytes(f[:3]) + bytes(f[4:-2]) for x, f in zip(sent, frames)),
+           'each request went over unchanged but for the link’s own serial number')
+        c.close()
+        recs = tape_records(r, lambda rs: any(x['kind'] == 'conn' and x.get('event') == 'close' for x in rs))
+        tg = [x for x in recs if x['kind'] == 'tg' and not x.get('note')]
+        ok(len([x for x in tg if x['dir'] == 'tx']) == 5 and len([x for x in tg if x['dir'] == 'rx']) == 3, 'recorded 5 requests and 3 replies (as NovaLCT saw them)')
+        ok(all(x.get('rtt') is not None for x in tg if x['dir'] == 'rx') and [x['d']['serial'] for x in tg if x['dir'] == 'rx'] == [S[0], S[1], S[4]], 'replies recorded with NovaLCT’s serials and round-trip times')
+        own = [x for x in recs if x['kind'] == 'tg' and 'own ask' in x.get('note', '')]
+        ok(len(own) == 2 and own[1]['dir'] == 'rx', 'Open Nova’s own ModelID read recorded, marked as its own')
+        j = [x for x in recs if x['kind'] == 'junk']
+        ok(any(x['hex'] == '001337' and 'not sent over USB' in x['note'] for x in j), 'stray bytes recorded as junk, marked not sent')
+        ok(any('reply-type' in x['note'] for x in j), 'a reply-type frame from NovaLCT recorded, not sent')
+        e = [x for x in recs if x['kind'] == 'err']
+        ok(any('no reply over USB within 0.4 s' in x['error'] and 'req' in x for x in e), 'a reply timeout recorded with its request')
+        ok(any('LinkBusy' in x['error'] for x in e) and r.status()['refused'] == 1, 'a request refused while an Open Nova Send holds the device: recorded, counted')
+        u = [x for x in recs if x['kind'] == 'udp' and x['dir'] == 'rx']
+        ok(u and u[0].get('made') == 'relay' and 'made by the relay' in u[0]['note'] and u[0]['text'].startswith('rpProMI:NovaPro HD'), 'the made discovery answer recorded, marked as made by the relay')
+        ok(any(x['kind'] == 'conn' and x['event'] == 'open' and 'over USB' in x.get('via', '') for x in recs), 'connection recorded with the bridge path')
+        loaded = wirelog.load(V._rel(r.tape.files[0]))
+        ok(len(loaded) >= len(recs) - 1 and wirelog.to_pcap(loaded)[:4] == b'\xd4\xc3\xb2\xa1', 'the bridge recording opens in Diagnostics and exports to Wireshark')
+        st = r.status()
+        ok(st['bridge'] == 'USB' and st['frames'] == 3 and st['timeouts'] == 1 and st['up'] == len(blob) and st['answers'] == 1 and st['device'] == r.key,
+           'status: %s' % {k: st[k] for k in ('bridge', 'frames', 'timeouts', 'refused', 'up', 'down', 'answers', 'device', 'model')})
+    finally:
+        r.stop()
+    ok(L.closed >= 6 and L.cleared == [('usb:0483:5720@1-3', 'the vendor relay stopped')] and not r.status()['held'], 'stopped: every handle let go, the device closed for NovaLCT')
+
+
+def t_bridge_more():
+    L = FakeLinks(fail='USB claim interface 0: LIBUSB_ERROR_BUSY (another program has it: close NovaLCT / VMP)')
+    try: V.BridgeRelay('usb:', RIP, ports=[5242], discovery=False, links=L).start(); ok(False, 'a device held elsewhere must not start')
+    except OSError as e:
+        ok('close NovaLCT, start the relay, then open NovaLCT again' in str(e) and 'LIBUSB_ERROR_BUSY' in str(e), 'held by NovaLCT: plain refusal: %s' % e)
+    try: socket.create_connection((RIP, 5242), 0.5).close(); ok(False, 'nothing listens after a refused start')
+    except OSError: ok(True, 'nothing listens after a refused start')
+    L = FakeLinks()
+    r = V.BridgeRelay('COM7', RIP, ports=[5243], discovery=False, reply_wait=0.3, links=L).start()
+    try:
+        ok(r.key == 'serial:COM7' and r.via == 'the COM port', 'a COM port target: serial:COM7')
+        c = socket.create_connection((RIP, 5243), 3); c.settimeout(3)
+        many = [tg_frame(0x40 + i, 0x02000000 + i, bytes([i]) * (i + 1)) for i in range(8)]
+        c.sendall(b''.join(many))                                      # several requests in a row, in one TCP write
+        want = b''.join(tg_frame(0x40 + i, 0x02000000 + i, reply=True) for i in range(8))
+        got = b''; end = time.time() + 4
+        while len(got) < len(want) and time.time() < end:
+            try: got += c.recv(65536)
+            except socket.timeout: break
+        c.close()
+        ok(got == want, 'COM: 8 requests in one write, 8 replies in order (%d bytes)' % len(got))
+        ok([struct.unpack_from('<I', x, 12)[0] for x in L.got[1:]] == [0x02000000 + i for i in range(8)], 'COM: the controller got them in NovaLCT’s order')
+    finally:
+        r.stop()
+
+
 def t_report():
     md = '\n'.join(V.report_md({'apps': [{'name': 'NovaLCT', 'version': '5.9.2', 'running': [1], 'service': '', 'talksTo': ['192.168.0.10:5200'], 'listens': []}],
                                  'capture': {'wireshark': '', 'dumpcap': '', 'tcpdump': '', 'npcap': {'installed': False}}, 'note': ''}))
@@ -594,7 +740,7 @@ def t_report():
 
 
 for t in (t_parsing, t_scrub, t_logs, t_import, t_dumpcap, t_relay_lct, t_relay_unico, t_relay_coex, t_relay_lossless_http, t_relay_lossless_lct,
-          t_relay_refusals, t_report):
+          t_relay_refusals, t_bridge_parts, t_bridge_usb, t_bridge_more, t_report):
     try: t()
     except Exception as e:  # noqa: BLE001
         import traceback; traceback.print_exc(); ok(False, '%s raised %s: %s' % (t.__name__, type(e).__name__, e))

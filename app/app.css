@@ -432,6 +432,26 @@ label.blk { margin-top: 6px; }
 .dp-found.in { border-style: dashed; }
 .dv-none { padding: 14px 12px; }
 .dv-none button { margin-top: 10px; }
+/* Online, processors not connected (app-online.js): the canvas's empty state; Device's one quiet fold under the cards */
+.ol-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; pointer-events: none; padding: 16px; }
+.ol-empty[hidden] { display: none; }
+.ol-empty p { margin: 0; display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 10px; color: var(--muted); pointer-events: auto; text-align: center; }
+.ol-gone { margin: 10px 0 0; }
+.ol-gone[hidden] { display: none; }
+:root .ol-gone .ol-g-head { background: none; border: 0; box-shadow: none; padding: 2px 0; min-width: 0; height: auto; color: var(--muted); cursor: pointer; font: inherit; text-transform: none; letter-spacing: normal; }
+:root .ol-gone .ol-g-head:hover { color: var(--ink); background: none; }
+.ol-g-list { display: flex; flex-direction: column; gap: 6px; margin-top: 6px; }
+.ol-g-row { display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
+.ol-g-row .hint { flex: 1 1 140px; min-width: 0; overflow-wrap: anywhere; }
+:root .ol-gone .ol-g-row button, :root .ol-gone .ol-g-foot button { flex: none; width: auto; }
+/* the USB coordinator's one line (app-vendor.js vndAutoHtml): Device panel, Add processor, Vendor apps */
+#usbAuto, #dpUsbAuto { margin: 8px 0 0; }
+#usbAuto[hidden], #dpUsbAuto[hidden] { display: none; }
+.usb-auto { margin: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 10px; min-width: 0; }
+.usb-auto span { flex: 1 1 160px; min-width: 0; overflow-wrap: anywhere; }
+:root .usb-auto button { flex: none; width: auto; }
+/* nothing connected: Layout's port list and side panel would only show a processor that isn't connected */
+body.ol-none #modLayout #portList, body.ol-none #modLayout > .panel.right > * { display: none; }
 
 @media (max-width: 1100px) {
   .layout { grid-template-columns: 210px minmax(0, 1fr) 280px; }
@@ -441,6 +461,7 @@ label.blk { margin-top: 6px; }
   .panel.left, .panel.right { border: 0; }
   .panel { overflow: visible; }
   .panel.left { max-height: calc(40vh / var(--uiz)); }
+  body.ol-none #modLayout > .panel.right { display: none; }   /* nothing connected: its contents are hidden; no empty 16 px strip under the canvas */
 }
 
 /* Hardware card (app-hardware.js) and detected-panel warnings on port tiles */
@@ -555,6 +576,13 @@ label.blk { margin-top: 6px; }
 .mt-tbl th, .mt-tbl td { text-align: left; padding: 4px 6px; border-top: 1px solid var(--line); white-space: nowrap; }
 .mt-tbl th { position: sticky; top: 0; background: var(--panel); color: var(--muted); font-weight: 600; cursor: pointer; }
 .mt-tbl tr.warn td { color: var(--warn, #e0a84a); } .mt-tbl tr.err td { color: var(--danger, #e05252); }
+.sc-lut { display: flex; align-items: center; gap: 8px; margin-top: 8px; min-width: 0; } .sc-lut .hint { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.gm-box { max-width: 680px; } .gm-name { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; } .gm-name input { flex: 1; min-width: 0; } .gm-type { margin-bottom: 8px; }
+.gm-scroll { overflow-x: auto; } .gm-tbl input { width: 72px; } .gm-tbl input[readonly] { opacity: .6; } .gm-tbl th, .gm-tbl td { white-space: nowrap; }
+.gm-cct { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: 8px 0; } .gm-cct span { flex: none; white-space: nowrap; } .gm-cct input { flex: 1 1 120px; width: auto; min-width: 120px; }
+.sc-lut { flex-wrap: wrap; }
+.lf-pics { display: flex; flex-wrap: wrap; gap: 12px; margin: 8px 0; } .lf-pics figure { margin: 0; } .lf-pics canvas { display: block; max-width: 100%; border-radius: 6px; } .lf-pics figcaption { font-size: calc(12px * var(--fs)); color: var(--muted); margin-top: 4px; } .lf-m td { text-align: right; }
+.mt-tbl tr[data-cab] { cursor: pointer; user-select: none; } .mt-tbl tr.sel td { background: var(--accent-soft, rgba(80, 140, 255, .16)); }
 .mt-panel { display: flex; flex-direction: column; }
 .mt-check { padding: 10px 12px; overflow: auto; font-size: calc(13px * var(--fs)); }
 .mt-check h4 { margin: 10px 0 4px; font-size: calc(12px * var(--fs)); text-transform: uppercase; letter-spacing: .04em; color: var(--muted); }

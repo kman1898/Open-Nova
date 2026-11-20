@@ -10,8 +10,8 @@ one, usually Wi-Fi), so the per-interface sockets are what reach a show network 
         name   what the system calls it: "Ethernet 2" (Windows), "en7" (macOS), "eth0" (Linux)
         label  Windows: the adapter's description; macOS: the hardware port ("USB 10/100/1000 LAN"); Linux: ''
         type   ethernet | wifi | vpn | loopback | virtual | bluetooth | other
-        Read from `ipconfig /all` (Windows), `ifconfig` + `networksetup -listallhardwareports` (macOS),
-        `ip -o link` + `ip -o -4 addr` (Linux; `ifconfig` when there is no `ip`); cached for REFRESH s.
+        Read from GetAdaptersAddresses (Windows, any language; `ipconfig /all` only when that can't be called),
+        `ifconfig` + `networksetup -listallhardwareports` (macOS), `ip -o link` + `ip -o -4 addr` (Linux; `ifconfig` when there is no `ip`); cached for REFRESH s.
     networks() / broadcasts() / addresses()    the older lists (every IPv4 network / broadcast / address but loopback)
     search_ifaces()     the interface addresses discovery searches on (up, not loopback, not switched off by the user)
     udp_search(...)     one discovery round over every interface (recorded whole, with the interface, in wirelog)
@@ -45,11 +45,26 @@ _cache = {'at': 0.0, 'ifs': [], 'aat': 0.0, 'addrs': [], 'ports_at': 0.0, 'ports
 _lock = threading.Lock()
 
 
-def _run(cmd):
+def _run(cmd, raw=False):
     try:
-        return subprocess.run(cmd, capture_output=True, timeout=5, **({'creationflags': 0x08000000} if sys.platform == 'win32' else {})).stdout.decode('utf-8', 'replace')
+        out = subprocess.run(cmd, capture_output=True, timeout=5, **({'creationflags': 0x08000000} if sys.platform == 'win32' else {})).stdout
+        return out if raw else out.decode('utf-8', 'replace')
     except (OSError, subprocess.SubprocessError):
-        return ''
+        return b'' if raw else ''
+
+
+def _decode(b, oem=None):
+    """Console-program output -> text: UTF-8 when it is (ASCII, or a console set to UTF-8), else the console's OEM code
+    page (Windows writes ipconfig in it: cp850, cp866, cp936 …), else UTF-8 with replacements."""
+    try: return b.decode('utf-8')
+    except UnicodeDecodeError: pass
+    if oem is None and sys.platform == 'win32':
+        try:
+            import ctypes
+            oem = 'cp%d' % ctypes.windll.kernel32.GetOEMCP()
+        except (OSError, AttributeError, ImportError): oem = None
+    try: return b.decode(oem or 'utf-8', 'replace')
+    except LookupError: return b.decode('utf-8', 'replace')
 
 
 def _addr(ip, mask, bcast=None):
@@ -85,15 +100,24 @@ def _kind(name, label='', hint=''):
 
 # ------------------------------------------------------------------ parsers (one per system's command output; tests feed them captured text)
 WIN_HEAD = re.compile(r'^(.*?)[\s-]?(?:adapter|Adapter)\s+(.+?)\s*:$')
-WIN_KEYS = (('ipv4', re.compile(r'IPv4', re.I)), ('mask', re.compile(r'Subnet ?Mask|Subnetzmaske|Masque', re.I)),
-            ('desc', re.compile(r'^(Description|Beschreibung)$', re.I)), ('mac', re.compile(r'Physical Address|Physische Adresse|Adresse physique', re.I)),
-            ('media', re.compile(r'Media State|Medienstatus|Statut du m', re.I)))
+WIN_LINE = re.compile(r'^\s{1,8}(\S.*?)\s*(?:\.\s*)*:\s?(.*)$')    # "   Key . . . : value" (3 spaces; a value's 2nd line is far right)
+WIN_IP = re.compile(r'^(\d{1,3}(?:\.\d{1,3}){3})(?:\s*\(.*\))?$')   # 192.168.0.10(Preferred) in any language
+WIN_MAC = re.compile(r'^[0-9A-Fa-f]{2}(?:-[0-9A-Fa-f]{2}){5}$')      # a 6-byte physical address (a DUID is longer)
+WIN_KEYS = (('desc', re.compile(r'^(Description|Beschreibung|Descripci.n|Descri..o|Beschrijving|Opis|Описание|描述|説明)$', re.I)),
+            ('media', re.compile(r'Media State|Medienstatus|Statut du m|Estado de los medios|Estado d[ao] m|Mediastatus|Stan no|Состояние среды|媒体状态|メディアの状態', re.I)))
+
+
+def _is_mask(v):
+    try: return v.startswith('255.') and ipaddress.IPv4Network('0.0.0.0/' + v).prefixlen >= 8
+    except ValueError: return False
 
 
 def parse_ipconfig(text):
-    """`ipconfig /all` (Windows) -> interfaces. One section per adapter ("Ethernet adapter Ethernet 2:"); English and German
-    headers give the name, other languages the whole header line. A "Media State" line = disconnected. No loopback (Windows
-    doesn't list it: interfaces() adds it)."""
+    """`ipconfig /all` (Windows) -> interfaces: the FALLBACK when GetAdaptersAddresses can't be called (_read). One section
+    per adapter ("Ethernet adapter Ethernet 2:"); English and German headers give the name, other languages the whole
+    header line. The addresses are found by their shape, not the (translated) words: an IPv4 value followed by a 255.x
+    mask value; the physical address by its 6 bytes. A "Media State" line (some languages) = disconnected. No loopback
+    (Windows doesn't list it: interfaces() adds it)."""
     out, cur = [], None
     for raw in text.splitlines():
         line = raw.rstrip()
@@ -103,31 +127,119 @@ def parse_ipconfig(text):
             m = WIN_HEAD.match(line)
             head = m.group(1).strip() if m else ''
             name = m.group(2) if m else line[:-1].strip()
-            cur = {'name': name, 'label': '', 'type': '', 'up': True, 'mac': '', 'ipv4': [], '_head': head, '_ip': None}
+            cur = {'name': name, 'label': '', 'type': '', 'up': True, 'mac': '', 'ipv4': [], '_head': head if m else name, '_ip': None}
             out.append(cur); continue
-        if cur is None or ' : ' not in line: continue
-        key, val = line.split(' : ', 1)
-        key, val = key.strip().rstrip('. ').strip(), val.strip()
+        m = WIN_LINE.match(line) if cur is not None else None
+        if not m: continue
+        key, val = m.group(1).strip(), m.group(2).strip()
+        ip, cur['_ip'] = cur['_ip'], None
+        if ip and _is_mask(val.split()[0] if val else ''):
+            a = _addr(ip, val.split()[0])
+            if a: cur['ipv4'].append(a)
+            continue
+        v = WIN_IP.match(val)
+        if v: cur['_ip'] = v.group(1); continue
+        if WIN_MAC.match(val): cur['mac'] = val.replace('-', ':').lower(); continue
         for k, rx in WIN_KEYS:
             if not rx.search(key): continue
-            if k == 'ipv4':
-                ip = re.match(r'([\d.]+)', val)
-                cur['_ip'] = ip.group(1) if ip else None
-            elif k == 'mask' and cur['_ip']:
-                a = _addr(cur['_ip'], val.split()[0] if val else '')
-                if a: cur['ipv4'].append(a)
-                cur['_ip'] = None
-            elif k == 'desc': cur['label'] = val
-            elif k == 'mac': cur['mac'] = val.replace('-', ':').lower()
+            if k == 'desc': cur['label'] = val
             elif k == 'media': cur['up'] = False
             break
     res = []
     for c in out:
         head = c.pop('_head').lower(); c.pop('_ip')
-        if not head and not c['label'] and not c['ipv4']: continue          # "Windows IP Configuration" (the host part)
-        if 'tunnel' in head and not c['ipv4']: continue                      # isatap / Teredo pseudo-adapters: noise
-        hint = 'wifi' if re.search(r'wireless|drahtlos|wlan', head) else 'vpn' if re.search(r'ppp|unknown|unbekannt', head) else 'ethernet' if 'ethernet' in head else ''
+        if not c['label'] and not c['ipv4'] and not c['mac']: continue     # "Windows IP Configuration" (the host part)
+        if re.search(r'tunnel|túnel|tunel|туннел|隧道|トンネル', head) and not c['ipv4']: continue   # isatap / Teredo pseudo-adapters: noise
+        hint = ('wifi' if re.search(r'wireless|drahtlos|wlan|sans fil|inal.mbrica|sem fio|bezprzewod|беспровод|无线|ワイヤレス', head)
+                else 'vpn' if re.search(r'ppp|unknown|unbekannt|desconocido|inconnu', head) else 'ethernet' if 'ethernet' in head else '')
         c['type'] = _kind(c['name'], c['label'], hint)
+        if c['type'] == 'ethernet' and c['ipv4'] and all(a['prefix'] == 32 for a in c['ipv4']): c['type'] = 'vpn'
+        res.append(c)
+    return res
+
+
+# ------------------------------------------------------------------ Windows: GetAdaptersAddresses (iphlpapi; no language, no parsing)
+IF_ETHERNET, IF_PPP, IF_LOOPBACK, IF_WIFI, IF_TUNNEL = 6, 23, 24, 71, 131
+_GAA = {}
+
+
+def gaa_structs():
+    """The ctypes layouts of IP_ADAPTER_ADDRESSES_LH / IP_ADAPTER_UNICAST_ADDRESS_LH (iptypes.h), up to the fields read
+    here (the system fills the whole buffer; nothing past OperStatus / OnLinkPrefixLength is looked at)."""
+    if _GAA: return _GAA
+    import ctypes as C
+    u32 = C.c_uint32
+
+    class SOCKET_ADDRESS(C.Structure):
+        _fields_ = [('lpSockaddr', C.c_void_p), ('iSockaddrLength', C.c_int)]
+
+    class UNICAST(C.Structure): pass
+    UNICAST._fields_ = [('Length', u32), ('Flags', u32), ('Next', C.POINTER(UNICAST)), ('Address', SOCKET_ADDRESS),
+                        ('PrefixOrigin', C.c_int), ('SuffixOrigin', C.c_int), ('DadState', C.c_int), ('ValidLifetime', u32),
+                        ('PreferredLifetime', u32), ('LeaseLifetime', u32), ('OnLinkPrefixLength', C.c_uint8)]
+
+    class ADAPTER(C.Structure): pass
+    ADAPTER._fields_ = [('Length', u32), ('IfIndex', u32), ('Next', C.POINTER(ADAPTER)), ('AdapterName', C.c_char_p),
+                        ('FirstUnicastAddress', C.POINTER(UNICAST)), ('FirstAnycastAddress', C.c_void_p),
+                        ('FirstMulticastAddress', C.c_void_p), ('FirstDnsServerAddress', C.c_void_p), ('DnsSuffix', C.c_wchar_p),
+                        ('Description', C.c_wchar_p), ('FriendlyName', C.c_wchar_p), ('PhysicalAddress', C.c_uint8 * 8),
+                        ('PhysicalAddressLength', u32), ('Flags', u32), ('Mtu', u32), ('IfType', u32), ('OperStatus', C.c_int)]
+    _GAA.update(SOCKET_ADDRESS=SOCKET_ADDRESS, UNICAST=UNICAST, ADAPTER=ADAPTER)
+    return _GAA
+
+
+def gaa_rows(api=None):
+    """Every adapter from GetAdaptersAddresses (AF_UNSPEC; IPv4 unicast addresses only) -> [{name, label, iftype, up, mac,
+    ipv4: [(ip, prefix)]}] in the system's (= ipconfig's) order; None when it can't be called. api: a stand-in with
+    GetAdaptersAddresses(family, flags, reserved, buffer, POINTER(c_uint32) size) (tests); default Windows' IP helper library (iphlpapi)."""
+    import ctypes as C
+    import struct
+    try:
+        if api is None:
+            api = C.WinDLL('iphlpapi')
+            api.GetAdaptersAddresses.argtypes = [C.c_uint32, C.c_uint32, C.c_void_p, C.c_void_p, C.POINTER(C.c_uint32)]
+            api.GetAdaptersAddresses.restype = C.c_uint32
+        T = gaa_structs()
+        size = C.c_uint32(16384)
+        for _ in range(4):                          # ERROR_BUFFER_OVERFLOW (111): the size it needs is in size
+            buf = C.create_string_buffer(size.value)
+            r = api.GetAdaptersAddresses(0, 0x2 | 0x4 | 0x8, None, buf, C.pointer(size))   # skip anycast, multicast, DNS servers
+            if r == 0: break
+            if r == 232: return []                  # ERROR_NO_DATA: no adapters
+            if r != 111: return None
+        else:
+            return None
+        rows, p = [], C.cast(buf, C.POINTER(T['ADAPTER']))
+        while p:
+            a = p.contents
+            ips, u = [], a.FirstUnicastAddress
+            while u:
+                sa = u.contents.Address
+                if sa.lpSockaddr and sa.iSockaddrLength >= 8:
+                    raw = C.string_at(sa.lpSockaddr, 8)
+                    if struct.unpack('=H', raw[:2])[0] == 2 and u.contents.OnLinkPrefixLength <= 32:   # AF_INET
+                        ips.append(('%d.%d.%d.%d' % tuple(bytearray(raw[4:8])), int(u.contents.OnLinkPrefixLength)))
+                u = u.contents.Next
+            n = min(int(a.PhysicalAddressLength), 8)
+            rows.append({'name': a.FriendlyName or '', 'label': a.Description or '', 'iftype': int(a.IfType), 'up': a.OperStatus == 1,
+                         'mac': ':'.join('%02x' % b for b in list(a.PhysicalAddress)[:n]) if n else '', 'ipv4': ips})
+            p = a.Next
+        return rows
+    except (OSError, AttributeError, ValueError, TypeError):
+        return None
+
+
+def from_gaa(rows):
+    """gaa_rows() -> interfaces, as parse_ipconfig would give them: the loopback left out (interfaces() adds it), a tunnel
+    pseudo-adapter (isatap / Teredo) without IPv4 left out; the type from the adapter's own IfType (ipconfig's header:
+    Ethernet / Wireless LAN / PPP / Tunnel / Unknown) plus its name and description."""
+    res = []
+    for r in rows or ():
+        if r['iftype'] == IF_LOOPBACK: continue
+        addrs = [a for a in (_addr(ip, str(pre)) for ip, pre in r['ipv4']) if a]
+        if r['iftype'] == IF_TUNNEL and not addrs: continue
+        hint = {IF_ETHERNET: 'ethernet', IF_WIFI: 'wifi', IF_PPP: 'vpn', IF_TUNNEL: ''}.get(r['iftype'], 'vpn')
+        c = {'name': r['name'], 'label': r['label'], 'type': _kind(r['name'], r['label'], hint), 'up': bool(r['up']), 'mac': r['mac'], 'ipv4': addrs}
         if c['type'] == 'ethernet' and c['ipv4'] and all(a['prefix'] == 32 for a in c['ipv4']): c['type'] = 'vpn'
         res.append(c)
     return res
@@ -216,7 +328,10 @@ def _wireless(name):
 
 def _read():
     if sys.platform == 'win32':
-        ifs = parse_ipconfig(_run(['ipconfig', '/all']))
+        ifs = from_gaa(gaa_rows())                # the system's own list, the same in every language
+        _cache['src'] = 'GetAdaptersAddresses'
+        if not ifs:                               # not callable here: ipconfig's text (decoded with the console code page)
+            ifs, _cache['src'] = parse_ipconfig(_decode(_run(['ipconfig', '/all'], raw=True))), 'ipconfig'
         if ifs: ifs.append({'name': 'Loopback Pseudo-Interface 1', 'label': 'this computer', 'type': 'loopback', 'up': True, 'mac': '', 'ipv4': [_addr('127.0.0.1', '255.0.0.0')]})
         return ifs
     if sys.platform.startswith('linux'):
@@ -376,9 +491,10 @@ def connect(addr, timeout=3.0, zone=None):
 
 def urlopen(req, timeout, zone=None):
     """urllib.request.urlopen, through interface `zone` when given (Unico / COEX REST to a processor that shares its IP
-    with one on another network)."""
+    with one on another network). Never through a proxy: a corporate laptop's system proxy (or HTTP_PROXY) can't reach a
+    processor on a show network, nor this computer's 127.0.0.1."""
     import urllib.request
-    if not zone: return urllib.request.urlopen(req, timeout=timeout)
+    if not zone: return urllib.request.build_opener(urllib.request.ProxyHandler({})).open(req, timeout=timeout)
     import http.client
 
     class Conn(http.client.HTTPConnection):
@@ -387,7 +503,7 @@ def urlopen(req, timeout, zone=None):
 
     class Handler(urllib.request.HTTPHandler):
         def http_open(self, r): return self.do_open(Conn, r)
-    return urllib.request.build_opener(Handler).open(req, timeout=timeout)
+    return urllib.request.build_opener(urllib.request.ProxyHandler({}), Handler).open(req, timeout=timeout)
 
 
 # ------------------------------------------------------------------ Settings ▸ Network (this computer only)
@@ -502,7 +618,9 @@ def udp_search(port, payload, proto, timeout=2.0, targets=('255.255.255.255', '1
     routes it through ('' unknown)."""
     import select
     import wirelog
-    plan, socks = search_ifaces(), []
+    plan, socks, probs, searched = search_ifaces(), [], [], []
+    if plan is None: probs.append(problem('noifaces', 'this computer’s network adapters couldn’t be read'))
+    elif not [a for a in plan if a['broadcast']]: probs.append(problem('noifaces', 'no network adapter is connected (or all are switched off in Settings ▸ Network)'))
     lo = [t for t in targets if t.startswith('127.')]
     common = [t for t in targets if not t.startswith('127.')]
     try:
@@ -520,13 +638,16 @@ def udp_search(port, payload, proto, timeout=2.0, targets=('255.255.255.255', '1
                 pinned = bind_device(s, a['name'])
                 s.bind((a['ip'], 0))
             except OSError as e:
-                s.close(); wirelog.record('err', link='%s:%d' % (a['ip'], port), error='discovery on %s (%s) not possible: %s' % (a['name'], a['ip'], e), iface=a['name']); continue
-            socks.append((s, a)); tied.append(pinned)
+                s.close(); wirelog.record('err', link='%s:%d' % (a['ip'], port), error='discovery on %s (%s) not possible: %s' % (a['name'], a['ip'], e), iface=a['name'])
+                probs.append(problem('bind', 'can’t search on %s (%s): %s' % (a['name'], a['ip'], e), e, a['name'])); continue
+            socks.append((s, a)); tied.append(pinned); searched.append({'name': a['name'], 'ip': a['ip']})
             # 255.255.255.255 only where the socket is tied to its interface (else it may leave through another one and
             # its answer be put down to the wrong network); the network's own broadcast is routed by its subnet anyway
             for t in ([] if not pinned else [x for x in common if x == '255.255.255.255']) + ([a['broadcast']] if a['broadcast'] else []):
                 try: s.sendto(payload, (t, port)); wirelog.udp('tx', (t, port), payload, proto, iface=a['name'], via=a['ip'])
-                except OSError as e: wirelog.record('err', link='%s:%d' % (t, port), error='discovery send on %s failed: %s' % (a['name'], e), iface=a['name'])
+                except OSError as e:
+                    wirelog.record('err', link='%s:%d' % (t, port), error='discovery send on %s failed: %s' % (a['name'], e), iface=a['name'])
+                    probs.append(problem('send', 'the search couldn’t be sent on %s: %s' % (a['name'], e), e, a['name']))
         # the unbound socket: loopback, typed addresses; everything (the old way) when the interfaces can't be read, and
         # 255.255.255.255 when some searched interface couldn't be tied (the system's choice of interface, as before)
         legacy = plan is None
@@ -535,7 +656,9 @@ def udp_search(port, payload, proto, timeout=2.0, targets=('255.255.255.255', '1
         elif plan and not all(tied): out = [x for x in common if x == '255.255.255.255'] + out
         for t in out:
             try: d.sendto(payload, (t, port)); wirelog.udp('tx', (t, port), payload, proto, iface=owner(t) if t.startswith('127.') else '')
-            except OSError as e: wirelog.record('err', link='%s:%d' % (t, port), error='discovery send failed: %s' % e)
+            except OSError as e:
+                wirelog.record('err', link='%s:%d' % (t, port), error='discovery send failed: %s' % e)
+                if not t.startswith('127.'): probs.append(problem('send', 'the search couldn’t be sent to %s: %s' % (t, e), e))
         got, end = [], time.time() + timeout
         while time.time() < end:
             try: r, _, _ = select.select([s for s, _ in socks], [], [], min(0.25, max(0.0, end - time.time())))
@@ -547,6 +670,7 @@ def udp_search(port, payload, proto, timeout=2.0, targets=('255.255.255.255', '1
                 name = a['name'] if a else route_iface(addr[0])
                 wirelog.udp('rx', addr, data, proto, iface=name)
                 got.append((data, addr, name))
+        note_search(proto, probs, searched, len(got))
         return got
     finally:
         for s, _ in socks:
@@ -554,24 +678,130 @@ def udp_search(port, payload, proto, timeout=2.0, targets=('255.255.255.255', '1
             except OSError: pass
 
 
+# ------------------------------------------------------------------ why a search found nothing (the app's empty list says it)
+NOROUTE = {65, 113, 51, 101}        # EHOSTUNREACH / ENETUNREACH (macOS 65 / 51, Linux 113 / 101): macOS refusing Local Network
+_searches = {}                      # proto -> {at, problems, searched, answers}: the last round of each search
+_owners = {'at': 0.0, 'v': None}
+
+
+def problem(code, text, err=None, iface=''):
+    """One thing that went wrong in a search: {code, text, iface, errno}. code: noifaces | bind | send | noroute (macOS
+    without Local Network permission, or no route) | listen (a UDP port that can't be listened on) | port (another
+    program here holds a search port)."""
+    n = getattr(err, 'errno', None)
+    if code == 'send' and n in NOROUTE: code = 'noroute'
+    return {'code': code, 'text': text, 'iface': iface, 'errno': n}
+
+
+def note_search(proto, problems, searched=None, answers=0):
+    """Keep what a search round met (udp_search does; coexlink for its listening sockets)."""
+    with _lock: _searches[proto] = {'at': time.time(), 'problems': list(problems), 'searched': list(searched or []), 'answers': answers}
+
+
+def port_owners(max_age=30.0):
+    """The other programs on this computer that hold a search port (NovaLCT UDP 3800, Unico 5600, VMP's XCenter
+    54622-54624): [{port, pid, name}], cached for max_age s (tools/sysdiag.py; [] when it can't be read)."""
+    if _owners['v'] is not None and time.time() - _owners['at'] < max_age: return _owners['v']
+    out = []
+    try:
+        import sysdiag
+        for p, rows in sysdiag.udp_owners().items():
+            if not isinstance(p, int): continue
+            for r in rows:
+                if r.get('pid') and int(r['pid']) != os.getpid() and not any(o['port'] == p and o['pid'] == r['pid'] for o in out):
+                    out.append({'port': p, 'pid': r['pid'], 'name': r.get('name') or 'pid %s' % r['pid']})
+    except Exception:  # noqa: BLE001 - only a hint for an empty search
+        out = []
+    _owners.update(at=time.time(), v=out)
+    return out
+
+
+def search_report(owners=False, max_age=60.0):
+    """What the searches of the last max_age s met, for the app's "No processors found" line: {platform, problems (each
+    once), searched [{name, ip}], answers}; owners=True adds the other programs holding a search port (a problem 'port'
+    each)."""
+    now, probs, seen, searched = time.time(), [], set(), []
+    with _lock: rounds = [r for r in _searches.values() if now - r['at'] < max_age]
+    for r in rounds:
+        for x in r['problems']:
+            if x['text'] not in seen: seen.add(x['text']); probs.append(x)
+        for a in r['searched']:
+            if a not in searched: searched.append(a)
+    if owners:
+        for o in port_owners():
+            probs.append(problem('port', '%s on this computer holds UDP %d' % (o['name'], o['port'])))
+    return {'platform': sys.platform, 'problems': probs, 'searched': searched, 'answers': sum(r['answers'] for r in rounds)}
+
+
 def same_ip_text(ip, names, what='a processor'):
     return 'Two networks each have %s at %s (%s) — Open Nova reaches each through its own network' % (what, ip, ', '.join(names))
 
 
-def same_ip(out, what='a processor'):
-    """Discovery entries [{ip, iface, ...}]: one IP heard on more than one interface (two isolated show networks with the
-    same addresses) -> each entry's ip becomes "ip%interface" (novalink / unicolink / coexlink then connect through that
-    interface only), addr = the plain IP, and 'conflict' says so (the app shows it). -> out"""
-    lo = {i['name'] for i in interfaces() if i['type'] == 'loopback'} | {'loopback'}
-    by = {}
+MAC_RE = re.compile(r'([0-9a-f]{1,2}(?:[:-][0-9a-f]{1,2}){5})', re.I)
+
+
+def _mac(m):
+    return ':'.join('%02x' % int(x, 16) for x in re.split('[:-]', m))
+
+
+def parse_arp(text, ip, by_addr=None):
+    """The ARP / neighbour table text -> {interface name: MAC} for ip. macOS / BSD `arp -an` ("? (ip) at mac on en0 …"),
+    Linux /proc/net/arp ("ip 0x1 0x2 mac * eth0"), Windows `arp -a` (an "Interface: <local ip> --- 0x7" heading per
+    interface; by_addr maps that local address to the interface's name). Incomplete entries are left out."""
+    out, cur = {}, None
+    for line in text.splitlines():
+        m = re.match(r'\s*Interface:\s*([\d.]+)', line)
+        if m: cur = (by_addr or {}).get(m.group(1), m.group(1)); continue
+        if not re.search(r'(^|[\s(])%s([\s)]|$)' % re.escape(ip), line): continue
+        mac = MAC_RE.search(line)
+        if not mac or _mac(mac.group(1)) in ('00:00:00:00:00:00', 'ff:ff:ff:ff:ff:ff'): continue
+        on = re.search(r' on (\S+)', line)
+        name = on.group(1) if on else cur if cur else line.split()[-1]   # macOS "on en0"; Windows: its heading; Linux: last column
+        if name: out[name] = _mac(mac.group(1))
+    return out
+
+
+def arp_macs(ip):
+    """{interface name: MAC} for ip from this computer's ARP table (read-only, nothing sent): which device answers at ip on
+    each interface."""
+    if sys.platform.startswith('linux'):
+        try:
+            with open('/proc/net/arp') as f: return parse_arp(f.read(), ip)
+        except OSError: return {}
+    if sys.platform == 'win32':
+        by = {a['ip']: i['name'] for i in interfaces() for a in i['ipv4']}
+        return parse_arp(_decode(_run(['arp', '-a', ip], raw=True)), ip, by)
+    return parse_arp(_run(['arp', '-an']), ip)
+
+
+def same_ip(out, what='a processor', macs=arp_macs):
+    """Discovery entries [{ip, iface, ...}]: one IP heard on more than one interface.
+    - The same device on one network reached twice (a Mac's Wi-Fi and Ethernet, or two adapters, on the same show network;
+      an H9 tester's en0 + en17, 2026-11-19): the ARP table names the same MAC for that IP on every interface -> one entry
+      (the wired one first), 'also' = the other interfaces. Listing it twice made every processor show up twice.
+    - Two isolated show networks with the same addresses (different MACs, or not known): each entry's ip becomes
+      "ip%interface" (novalink / unicolink / coexlink then connect through that interface only), addr = the plain IP, and
+      'conflict' says so (the app shows it). -> out"""
+    ifs = interfaces()
+    lo = {i['name'] for i in ifs if i['type'] == 'loopback'} | {'loopback'}
+    rank = {i['name']: (0 if i['type'] == 'ethernet' else 2 if i['type'] == 'wifi' else 1) for i in ifs}
+    by, drop = {}, set()
     for x in out: by.setdefault(x['ip'], []).append(x)
     for ip, g in by.items():
         names = sorted({x['iface'] for x in g if x.get('iface') and x['iface'] not in lo})   # this computer's own answers aside
         if len(names) < 2: continue
+        seen = macs(ip) if macs else {}
+        known = {seen.get(n) for n in names}
+        if None not in known and len(known) == 1:   # one MAC behind every interface: one device, one network
+            keep = sorted((x for x in g if x.get('iface') in names), key=lambda x: (rank.get(x['iface'], 1), names.index(x['iface'])))[0]
+            keep['also'] = [n for n in names if n != keep['iface']]
+            drop.update(id(x) for x in g if x is not keep and x.get('iface') in names)
+            continue
         for x in g:
             x['addr'] = ip
             if x.get('iface'): x['ip'] = zoned(ip, x['iface'])
             x['conflict'] = same_ip_text(ip, names, what)
+    if drop: out[:] = [x for x in out if id(x) not in drop]
     return out
 
 
@@ -622,13 +852,14 @@ def report():
         ifs = [{k: v for k, v in i.items() if k != 'mac'} for i in interfaces()]
     except Exception as e:  # noqa: BLE001 - a report is made anyway
         ifs = [{'error': '%s: %s' % (type(e).__name__, e)}]
-    return {'platform': sys.platform, 'interfaces': ifs, 'settings': load_settings(), 'changes': state()['events']}
+    return {'platform': sys.platform, 'source': _cache.get('src', ''), 'interfaces': ifs, 'settings': load_settings(), 'changes': state()['events']}
 
 
 def report_md():
     r = report()
-    L = ['', '## Networks', '', 'Searched: %s. App reachable from: %s.' % (
-        'all but ' + ', '.join(r['settings']['disabled']) if r['settings']['disabled'] else 'every interface', r['settings']['bind']), '']
+    L = ['', '## Networks', '', 'Searched: %s. App reachable from: %s.%s' % (
+        'all but ' + ', '.join(r['settings']['disabled']) if r['settings']['disabled'] else 'every interface', r['settings']['bind'],
+        ' Read with %s.' % r['source'] if r['source'] else ''), '']
     for i in r['interfaces']:
         if 'error' in i: L.append('- (interfaces not read: %s)' % i['error']); continue
         L.append('- %s%s · %s · %s · %s' % (i['name'], ' (%s)' % i['label'] if i['label'] else '', i['type'], 'up' if i['up'] else 'down',

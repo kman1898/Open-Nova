@@ -131,11 +131,13 @@ var DRV_OFFLINE = {
   screenSet: function (d, action, value) {
     var k = DRV_OFFLINE.ACTS[action], col = DRV_OFFLINE.caps(d).color || {};
     if (!k || !col[k]) return DRV.unsupported('That setting');
+    if (k === 'gamut' && col.gamuts && col.gamuts.indexOf(value) < 0 && !gmEntry(value)) return DRV.unsupported('That colour space on a NovaLCT processor');
     if (k === 'gamma' && simFamily(d) === 'lct' && (P.bitDepth || 8) !== 8) return DRV.unsupported('Gamma on NovaLCT processors with a ' + P.bitDepth + '-bit source (confirmed for 8-bit only)');
     if (k === 'colorTemp' && simFamily(d) === 'lct') value = Math.max(1700, Math.min(9900, Math.round(value / 100) * 100));
     DRV_OFFLINE.state(d).color[k] = value;
     return DRV_OFFLINE.ok(action + ' ' + value, { writes: 0 });
   },
+  lutApply: function (d, ports, fit) { DRV_OFFLINE.state(d).color.gamut = fit.matrix ? 'custom' : 'original'; return DRV_OFFLINE.ok('LUT', { writes: 0 }); },
   lowLatency: function (d, which, on) {
     var c = DRV_OFFLINE.caps(d);
     if (!c.lowLatency || (which !== 'sender' && c.lowLatencyOne)) return DRV.unsupported('A separate receiving-card switch');
@@ -162,7 +164,7 @@ var DRV_OFFLINE = {
   },
   restart: function () { return DRV_OFFLINE.ok('restart'); },
   factoryReset: function (d) { var keep = DRV_OFFLINE.st[d.id] && DRV_OFFLINE.st[d.id].ber; delete DRV_OFFLINE.st[d.id]; DRV_OFFLINE.state(d).ber = keep; return DRV_OFFLINE.ok('factory reset'); },
-  restartPanels: function () { return DRV_OFFLINE.ok('cabinets restarted'); },
+  restartPanels: function (d, targets) { var n = targets && targets.length; return DRV_OFFLINE.ok(n ? n + ' cabinet' + (n === 1 ? '' : 's') + ' restarted' : 'cabinets restarted'); },
   sendRcvFile: function (d, o) { return DRV_OFFLINE.ok((o.kind === 'ncp' ? 'NCP' : '.rcfgx') + ' “' + o.name + '” to ' + (o.targets || []).length + ' target(s)'); },
   // ---------------------------------------------------------------- monitor
   // Temperature and supply voltage as smooth functions of the cabinet's place (the same for every processor, so a wall

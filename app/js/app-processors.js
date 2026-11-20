@@ -10,7 +10,7 @@
 //   custom  - "Pick a model": the model isn't known yet (a .scr import, a project from before processors existed); its
 //             cards take any port count 1-40. Never offered as a choice (user, 2026-10-11: "I should only be able to put
 //             possible processors"); Send is refused until a real model is set (procUnset). A new project has no processor.
-// Owns: cardIsReal, cardName, procUnset, PROC_MODELS, PROC_ORDER, OUTPUT_CARDS, H_CARDS, fixedModel, hChassis, procModel, procFamily,
+// Owns: cardIsReal, cardName, procUnset, PROC_MODELS, PROC_ORDER, OUTPUT_CARDS, NON_LED_CARDS, H_CARDS, fixedModel, hChassis, procModel, procFamily,
 // procFreeTopology, loadModeOfCard,
 // procModelOptions, chassisCardType, remapProjectSenders, ensureDevices, newProcName, deviceById,
 // deviceOfCard, cardsOfDevice, deviceLabel, cardTypeLabel, screenProcessorRule, lctCabDevs, lctOwner, lctDevMap, lctScreensOf,
@@ -41,6 +41,10 @@ var OUTPUT_CARDS = {
   hp20:      { name: 'H Planar 20-port', ports: 20, modelId: 0x9048 },
   hp4fiber:  { name: 'H Planar 4× fiber (32 ports)', ports: 32, modelId: 0x904A }
 };
+// H cards that answer on a TG port but aren't LED outputs (never a processor of their own, never asked for a sending card's
+// tables). 0x7B47 = 31559, the H's MVR (preview) card: an H9 tester's showed up at its own address on TCP 5200, answering
+// the search with "App,01 61" and no H_SUB_CARD list (2026-11-19).
+var NON_LED_CARDS = { 0x7B47: 'H MVR card (preview) — not an LED output' };
 // Cards offered in the H chassis. Unico's chassis files allow only 0x7B40-0x7B4E in output slots
 // (16-port, 20-port, 4× fiber …). The 8× fiber card (0x7B4F) is known to NovaLCT but not to
 // Unico's slot lists, so it is offered with "(LCT)". The Planar cards stay only in the legacy
@@ -413,7 +417,8 @@ function applyCards(cards) {
   var snap = snapshotAutoSections(), map = {}, oldLen = P.processors.length;
   cards.forEach(function (c, i) { if (c.old != null) map[c.old] = i; });
   var m = remapSenders(map, oldLen, cards.length);
-  P.processors = cards.map(function (c) { var o = { ports: c.ports, dev: c.dev }; if (c.type) o.type = c.type; return o; });
+  var was = P.processors;
+  P.processors = cards.map(function (c) { var o = { ports: c.ports, dev: c.dev }, k = c.old != null && was[c.old]; if (c.type) o.type = c.type; if (k && k.screen) o.screen = k.screen; return o; });
   var pinned = keepAutoWiring(snap, m);
   if (ui.mSender == null || ui.mSender >= P.processors.length) ui.mSender = Math.max(0, P.processors.length - 1);
   if ((ui.mPort || 0) >= (P.processors[ui.mSender] || {}).ports) ui.mPort = 0;
@@ -515,6 +520,7 @@ function removeProcessor(d) {
   var was = ui.mSender;   // before applyCards renumbers it (a later card's new number may fall inside the removed range)
   var pinned = applyCards(cardList().filter(function (c) { return c.dev !== d.id; }));
   P.devices.splice(P.devices.indexOf(d), 1);
+  if (hw.unsaved && hw.unsaved[d.id]) { delete hw.unsaved[d.id]; hwUnsavedStore(); }   // as hwUnlink: its "not saved" reminder goes with it
   // the active card was one of the removed ones: make the card before them active
   if (idx.length && was >= idx[0] && was < idx[0] + idx.length) { ui.mSender = Math.max(0, idx[0] - 1); ui.mPort = 0; }
   log('remove_processor', { processor: name, cards: idx.map(function (i) { return i + 1; }), panels: pp.n, screens_closed: gone.map(function (lc) { return lc.name; }),

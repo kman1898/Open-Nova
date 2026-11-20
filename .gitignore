@@ -12,6 +12,9 @@
 !/LICENSE-MIT
 !/LICENSE-APACHE
 !/NOTICE
+# third-party licence texts (libusb, which the Windows / Mac packages carry; USBPcap, which the Windows package carries)
+!/licenses/
+!/licenses/**
 !/opennova.py
 !/Start Open Nova.command
 !/Start Open Nova.bat
@@ -53,15 +56,24 @@
 !/tools/coexlink.py
 !/tools/hweb.py
 !/tools/netif.py
+!/tools/sysdiag.py
 !/tools/wirelog.py
 !/tools/alpha.py
 !/tools/alpha_unlock.json
 !/tools/vendortap.py
+!/tools/usbcap.py
+!/tools/usbauto.py
+!/tools/netcap.py
+!/tools/netcap_worker.py
+!/tools/usbpcap.json
 !/tools/rcvfile.py
 !/tools/rcvguard.py
 !/tools/rcvlib.py
 !/tools/vmpproject.py
+!/tools/get-python.ps1
+!/tools/get-python.sh
 !/tools/tg_registers.json
+!/tools/usb_libs.json
 !/tools/build_wireshark.py
 !/tools/make_package.py
 !/tools/wireshark/
@@ -70,7 +82,13 @@
 !/tools/test_projects.py
 !/tools/test_serial.py
 !/tools/test_usb.py
+!/tools/test_usbcap.py
+!/tools/test_usbauto.py
+!/tools/test_netcap.py
+!/tools/test_h9report.py
 !/tools/test_netif.py
+!/tools/test_sysdiag.py
+!/tools/test_starter.py
 # tests whose private parts (captures, Samples, recordings, research tools) SKIP when those aren't here (docs/TESTING.md)
 !/tools/test_alpha.py
 !/tools/test_vendortap.py
@@ -97,6 +115,7 @@
 !/docs/DIAGNOSTICS.md
 !/docs/README-ALPHA.md
 !/docs/VENDOR_CAPTURE.md
+!/docs/USB_CAPTURE.md
 !/docs/TESTING.md
 !/docs/DESIGN_SYSTEM.md
 

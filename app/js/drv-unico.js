@@ -19,6 +19,7 @@ var DRV_UNICO = {
   H_MODELS: [29965, 29963, 15728932, 15728931, 29966, 29968, 29982],
   discover: function (o) {
     return DRV.post('unico', '/api/unico/discover', { timeout: o.timeout || 2 }).then(function (r) {
+      DRV.noteWhy(r.search);   // found nothing: what the helper's searches met (app-online.js olWhy)
       return (r.devices || []).filter(function (x) { return DRV_UNICO.H_MODELS.indexOf(x.modelId) < 0; })
         .map(function (x) { x.kind = 'unico'; return x; });
     });

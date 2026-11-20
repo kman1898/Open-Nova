@@ -87,7 +87,7 @@ function dgDownload(fmt) {
   }).catch(function (e) { toast('Download failed: ' + e.message); });
 }
 function dgText(r) {
-  return r.kind === 'tg' ? r.sum || r.hex : r.kind === 'http' ? r.method + ' ' + (r.url || '') + (r.status != null ? ' → ' + r.status : '') :
+  return r.kind === 'tg' ? (r.sum || r.hex) + (r.nocard ? ' (no card here)' : '') : r.kind === 'http' ? r.method + ' ' + (r.url || '') + (r.status != null ? ' → ' + r.status : '') :
     r.kind === 'udp' ? (r.dir === 'tx' ? 'to ' : 'from ') + r.peer + (r.iface ? ' (' + r.iface + ')' : '') + ' ' + (r.text || r.n + ' B') : r.kind === 'err' ? (r.link === 'helper' ? 'helper bug: ' : '') + r.error + (r.req ? ' — ' + r.req : '') :
     r.kind === 'conn' ? r.event + (r.error ? ': ' + r.error : '') + (r.ms != null ? ' (' + r.ms + ' ms)' : '') : r.kind === 'op' ? r.route + ' ' + r.phase +
     (r.phase === 'end' ? (r.ok ? ' ok' : ' FAILED') + ' ' + r.ms + ' ms' + (r.error ? ' — ' + r.error : '') : r.req && r.req.host ? ' ' + r.req.host + (r.req.port ? ':' + r.req.port : '') : '') :
@@ -96,7 +96,8 @@ function dgText(r) {
     r.kind === 'usb' ? 'USB ' + r.what + (r.len != null ? ' ' + (r.read ? 'read' : 'write') + ' ' + r.len + ' B' : '') + (r.status != null ? ' status ' + r.status + (r.residue ? ' residue ' + r.residue : '') : '') + (r.tag != null ? ' tag ' + r.tag : '') :
     r.kind === 'ws' ? 'WebSocket ' + (r.dir === 'tx' ? '→ ' : '← ') + (r.nova ? r.nova.map(function (x) { return x[0] + ' ' + x[1].slice(0, 80); }).join(' | ') : r.text || (r.op === 9 ? 'ping' : r.op === 10 ? 'pong' : r.n + ' B')) : JSON.stringify(r);
 }
-function dgBad(r) { return r.kind === 'err' || r.kind === 'junk' || r.error || (r.d && (r.d.status || r.d.badsum)) || (r.kind === 'op' && r.phase === 'end' && !r.ok) || (r.kind === 'http' && r.status >= 400) || (r.kind === 'usb' && r.status); }
+// a reply marked nocard ("no receiving card answered here", ack 1: the end of a chain walk) is normal, not a problem
+function dgBad(r) { return r.kind === 'err' || r.kind === 'junk' || r.error || (r.d && ((r.d.status && !r.nocard) || r.d.badsum)) || (r.kind === 'op' && r.phase === 'end' && !r.ok) || (r.kind === 'http' && r.status >= 400) || (r.kind === 'usb' && r.status); }
 function dgMatch(r) {
   if (!dg.kinds[r.kind === 'junk' ? 'err' : r.kind === 'echo' || r.kind === 'usb' ? 'tg' : r.kind === 'ws' ? 'http' : r.kind]) return false;   // echoes / USB wrapper blocks are frames, stray bytes a problem, WebSocket frames (vendor relay) web
   if (dg.errOnly && !dgBad(r)) return false;

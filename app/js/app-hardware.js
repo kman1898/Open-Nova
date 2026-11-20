@@ -37,11 +37,12 @@ function hwPing() {
 }
 
 // Where a link goes, for people: "192.168.0.10:5200", "USB COM3" for a USB / serial link (host "serial:COM3", drv-lct.js),
-// "USB 1-3" for NovaStar's own USB device (host "usb:0483:5720@1-3": libusb's bus-ports).
+// "USB 1-3" for NovaStar's own USB device (host "usb:0483:5720@1-3": libusb's bus-ports; "@libusb0-0001" = "USB 1", a device
+// on NovaLCT's Windows driver, tools\novalink.py _Libusb0).
 function hwWhere(host, port) {
   var s = String(host || '');
   if (s === 'simulated') return 'simulated';   // drv-offline.js
-  if (s.indexOf('usb:') === 0) return ('USB ' + (s.split('@')[1] || '')).trim();
+  if (s.indexOf('usb:') === 0) return ('USB ' + (s.split('@')[1] || '').replace(/^libusb0-0*(?=\d)/, '')).trim();
   s = s.indexOf('serial:') === 0 ? s : s.split('%')[0];   // "ip%Ethernet 3": the interface is shown on its own (app-network.js nwOf)
   if (/[+*]/.test(String(port))) return s;   // an H over several output-slot links ("5201+5202", drv-lct.js)
   return s.indexOf('serial:') === 0 ? 'USB ' + s.slice(7).split('@')[0].replace(/^\/dev\//, '') : s + ':' + port;
@@ -114,6 +115,8 @@ function hwPortCells() {
 function hwTileProblem(card, port) {
   var det = hwPortDetected(card, port), cells = det ? (hwPortCells()[card + ':' + port] || []) : [];
   if (!det || !cells.length) return '';
+  var sw = typeof hltSwapOf === 'function' ? hltSwapOf(card, port) : null;   // its cable and another port's go to each other's runs
+  if (sw) return (sw.backup ? 'backup cable' : 'cable') + ' swapped with ' + portLabel(card, sw.port) + '’s';
   if (cells.length > det.length) return cells.length + ' cabinets placed, ' + det.length + ' detected';
   var bad = cells.filter(function (c, i) { var x = det[i]; return x && (x.w !== c.width || x.h !== c.height); });
   if (bad.length) { var c = bad[0], i = cells.indexOf(c), x = det[i];
@@ -159,13 +162,19 @@ function hwQuickAdd(g) {
 
 // ------------------------------------------------------------------ actions
 // One processor operation at a time (Find, Detect now, Send, Save, a receiving-card file): another is refused while one
-// runs, and only the one that started clears the flag — so monitoring never restarts in the middle of another.
+// runs, and only the one that started clears the flag — so monitoring never restarts in the middle of another. The "not
+// saved" bar's Save follows the flag at once (greyed with the reason while busy; app-save.js renderUnsaved).
 function hwBegin(what) {
   if (hw.busy) { toast('Wait — ' + (HW_BUSY_WORDS[hw.busy] || hw.busy) + ' is still running'); return false; }
   hw.busy = what; if (typeof dgMark === 'function') dgMark('App: ' + (HW_BUSY_WORDS[what] || what) + ' started');   // a note in the recording (app-diag.js)
+  if (typeof renderUnsaved === 'function') renderUnsaved();
   return true;
 }
-function hwEnd(what) { if (hw.busy === what) { hw.busy = ''; if (typeof dgMark === 'function') dgMark('App: ' + (HW_BUSY_WORDS[what] || what) + ' finished'); } }
+function hwEnd(what) {
+  if (hw.busy !== what) return;
+  hw.busy = ''; if (typeof dgMark === 'function') dgMark('App: ' + (HW_BUSY_WORDS[what] || what) + ' finished');
+  if (typeof renderUnsaved === 'function') renderUnsaved();
+}
 var HW_BUSY_WORDS = { find: 'the search', detect: 'a detection', send: 'a send', dry: 'a dry run', save: 'a save', service: 'a restart / reset' };
 // Background reads (live detect, health) pause while something writes to the processors.
 function hwWriting() { return hw.busy === 'send' || hw.busy === 'save' || hw.busy === 'service'; }   // background reads wait (a restart reads as "no panels")
@@ -265,7 +274,7 @@ function hwDetect(d, auto) {
   if (!auto && !hwBegin('detect')) return;
   w.inflight = true;
   if (!auto) renderHwCard(d);
-  var prev = hw.live[d.id], known = null;
+  var prev = hw.live[d.id], known = null, wasErr = !!w.err;
   if (auto && prev) {
     known = {}; prev.cards.forEach(function (c, i) { Object.keys(c.ports).forEach(function (p) { known[i + ':' + p] = c.ports[p]; }); });
   }
@@ -294,13 +303,17 @@ function hwDetect(d, auto) {
     if (!auto) toast('Detect failed: ' + e.message);
     if (w.err !== e.message) log('hw_detect', { processor: d.name, live: !!auto, error: e.message });
     w.err = e.message; renderHwCard(devSelected());
-  }).then(function () { w.inflight = false; w.done = Date.now(); if (!auto) { hwEnd('detect'); renderHwCard(devSelected()); } });
+  }).then(function () {
+    w.inflight = false; w.done = Date.now(); if (!auto) { hwEnd('detect'); renderHwCard(devSelected()); }
+    if (wasErr !== !!w.err) renderUnsaved();   // it stopped or started answering: the "not saved" bar follows
+  });
 }
 // Every second: re-check each linked processor whose live check is due (app visible, its Live switch on, no send running).
 function hwTick() {
   if (document.hidden || hwWriting()) return;
   (P.devices || []).forEach(function (d) {
     if (!d.hw || d.hw.live === false || !DRV.caps(d).live || (hw.helper === false && d.hw.kind !== 'offline')) return;   // simulated: no helper needed
+    if (typeof olPolls === 'function' && !olPolls(d)) return;   // online, not connected: not asked until a search finds it (app-online.js)
     var w = hw.watch[d.id] || (hw.watch[d.id] = {}), gap = DRV.of(d).liveMs || 4000;
     if (w.inflight || (w.done && Date.now() - w.done < (w.err ? gap * 3 : gap))) return;
     hwDetect(d, true);
@@ -376,7 +389,7 @@ function hwSend(d, dry, opts) {
 // only = [processor] (the pro look's Send tile: the processor shown, or the ones picked together): the same, for those.
 function hwSendAll(only) {
   only = Array.isArray(only) ? only : null;
-  var linked = (only || P.devices || []).filter(function (d) { return d.hw; });
+  var linked = (only || (typeof olShownDevices === 'function' ? olShownDevices() : P.devices) || []).filter(function (d) { return d.hw; });   // online: the connected ones (app-online.js)
   if (!linked.length) return toast('No processor linked — Device ▸ Hardware');
   var unset = linked.filter(procUnset);
   if (unset.length) return toast((only ? 'Send' : 'Send to all') + ' stopped — pick the model of ' + unset.map(deviceLabel).join(', ') + ' first (Device ▸ Processor properties)');

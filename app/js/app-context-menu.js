@@ -4,7 +4,7 @@
 // Registers at load a document pointerdown listener and a window blur listener that close
 // the menu.
 // Depends on: app-core, app-capacity, app-geometry, app-canvas-input (screenAt, cellAt),
-// app-manual-wiring, app-sections, app-render.
+// app-manual-wiring, app-sections, app-render, app-display, app-health, app-service (svCellKeys, svOpenCabinets).
 // Classic script, not an ES module: modules do not load from file://, and the app must run
 // when index.html is double-clicked. Every top-level var/function in these files is one
 // shared global, so a name must be defined in exactly one file (tests/check-modules.html checks).
@@ -83,10 +83,7 @@ function openCanvasMenu(cx, cy, pt) {
   var s = screenAt(pt), items = [];
   if (!s) {
     items.push({ header: (lctById(ui.viewScreen) || {}).name || 'Canvas' });
-    items.push({ label: '+ Cabinets here', act: function () {
-      var ns = newScreen(Math.max(0, Math.round(pt.x)), Math.max(0, Math.round(pt.y)));
-      P.screens.push(ns); ui.sel = ns.id; commit(); renderAll();
-    } });
+    items.push({ label: '+ Cabinets', act: function () { setSelfDraw(true); } });   // draw them (app-selfdraw.js); Quick add grows a block
     items.push({ label: '+ Screen', act: function () { addLctScreen(); } });   // the next screen of the active processor (app-sections.js)
     items.push({ sep: true }, { label: 'Fit view', act: function () { fitView(); renderCanvas(allCells()); } });
     return openMenu(cx, cy, items);
@@ -118,6 +115,10 @@ function openCanvasMenu(cx, cy, pt) {
     var hat = typeof hltCellAt === 'function' ? hltCellAt(full) : null, hd = hat && deviceOfCard(hat.card);   // errors kept until Clear (app-health)
     if (hd && hltHeldAt(hat.card, hat.port, hat.index).length) items.push({ label: 'Clear errors on this cabinet', act: function () { hltClear({ dev: hd, cab: hat }); } });
     items.push({ label: 'Test pattern', sub: dispMenuItems(testCells).filter(function (it) { return !it.header; }) });
+    // restart the receiving card (Maintain's Restart, app-service.js): this cabinet, or the selected ones it is among
+    var rsel = ui.selScreen === s.id && ui.selKeys && ui.selKeys.size > 1 && ui.selKeys.has(c.k) ? cellsOf(s).filter(function (x) { return ui.selKeys.has(x.k) && !x.hole; }) : null;
+    items.push({ label: 'Restart this cabinet…', act: function () { svOpenCabinets(svCellKeys([full])); } });
+    if (rsel) items.push({ label: 'Restart ' + rsel.length + ' selected cabinets…', act: function () { svOpenCabinets(svCellKeys(rsel)); } });
   }
   items.push({ sep: true });
   var select = function (keys) { if (!manual) ensureManual(s); ui.selScreen = s.id; ui.selKeys = new Set(keys); if (!manual) commit(); renderAll(); };

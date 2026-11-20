@@ -191,7 +191,7 @@ function rdSendBackup(d, opts) {
 // Every linked processor that takes a backup Send: all planned first (one that can't stops it before anything goes out),
 // one confirmation, then one after another. Never followed by a Save.
 function rdSendBackupAll() {
-  var list = P.devices.filter(rdBackupShown);
+  var list = (typeof olShownDevices === 'function' ? olShownDevices() : P.devices).filter(rdBackupShown);   // online: the connected ones (app-online.js)
   if (!list.length) return toast('No linked processor takes a backup Send');
   if (hw.busy) return toast('Wait — ' + (HW_BUSY_WORDS[hw.busy] || hw.busy) + ' is still running');
   var plans = list.map(function (d) { return { d: d, p: rdBackupPlan(d) }; }), bad = plans.filter(function (x) { return x.p.error; });
@@ -212,9 +212,9 @@ function renderRedundancy() {
   var box = $('rdBody'); if (!box || ui.tab !== 'backup') return;
   var h = '';
   if (iss.err.length) h += '<p class="rd-msg err">⚠ ' + iss.err.length + ' problem' + (iss.err.length === 1 ? '' : 's') + ' in the backup plan (listed on the right) — fix them before sending.</p>';
-  var sendable = P.devices.filter(rdBackupShown);
+  var devsOn = (typeof olShownDevices === 'function' ? olShownDevices() : P.devices), sendable = devsOn.filter(rdBackupShown);   // online: the connected ones (app-online.js)
   if (sendable.length > 1) h += '<div class="rd-act" style="margin:0 0 10px"><button data-rd="sendall"' + (hw.busy ? ' disabled' : '') + ' title="Send each linked processor its port backup, one after another (asks once). Nothing is saved.">Send backup to all (' + sendable.length + ')</button></div>';
-  h += P.devices.map(function (d) { return rdDeviceHtml(d, b); }).join('');
+  h += devsOn.map(function (d) { return rdDeviceHtml(d, b); }).join('');
   box.innerHTML = h;
 }
 // The bar under the header while Verify is on, on every tab (like the display bar; Unico: "Examining backup for …"):

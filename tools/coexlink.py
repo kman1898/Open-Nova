@@ -130,6 +130,20 @@ def cabinet_id(mac, output_id, index): return (mac24(mac) << 32) | (output_id <<
 
 
 # ------------------------------------------------------------------ discovery
+ANNOUNCE_PORTS = (54622, 54623, 54624)   # docs/VMP_COEX.md: a controller announces to all three (tests point them elsewhere)
+
+
+def _announced(data, addr, seen, macs):
+    """One announcement datagram into seen[(ip, apiPort)] / macs (one controller heard on two ports = once)."""
+    import vendortap
+    if vendortap.relayed(addr[0]): return   # a Tools ▸ Vendor Apps relay's announcement for XCenter, not a controller of ours
+    try:
+        for a in json.loads(data.decode('utf-8', 'replace')).get('data') or []:
+            seen.setdefault((addr[0], int(a['apiPort'])), a)
+            if a.get('mac'): macs.setdefault((addr[0], int(a['apiPort'])), set()).add(a['mac'])
+    except (ValueError, KeyError, TypeError, AttributeError): pass
+
+
 def discover(timeout=4.0, probe=()):
     """Controllers announce themselves every 3 s to UDP 54622-54624 (directed broadcast; emulators also multicast
     224.0.0.123): {"data":[{apiPort, mac, authType, workMode, https}]}. We listen on every interface, and also ask `probe`
@@ -137,29 +151,34 @@ def discover(timeout=4.0, probe=()):
     subnet holds its address (an announcement on a network switched off in Settings > Network is left out); the same
     address on two interfaces' networks with two MACs announcing = two isolated networks with the same address: each
     interface is asked through itself and each controller found is reached through its own (netif.same_ip)."""
+    import select
     import netif
     seen, macs = {}, {}   # macs[(ip, port)] = every MAC announcing from there: more than one = an IP conflict
-    s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    try:
-        s.bind(('0.0.0.0', 54622))
+    socks, probs = [], []
+    for port in ANNOUNCE_PORTS:   # VMP's XCenter holds 54622 (shared: SO_REUSEADDR); 54623 / 54624 are free beside it
+        s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        try:
+            s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            s.bind(('0.0.0.0', port))
+        except OSError as e:
+            s.close(); wirelog.record('err', link='0.0.0.0:%d' % port, error='MX / CX announcements on UDP %d can’t be heard: %s' % (port, e))
+            probs.append(netif.problem('listen', 'can’t listen on UDP %d (MX / CX announcements): %s' % (port, e), e)); continue
         try: s.setsockopt(socket.IPPROTO_IP, socket.IP_ADD_MEMBERSHIP, struct.pack('4s4s', socket.inet_aton('224.0.0.123'), socket.inet_aton('127.0.0.1')))
         except OSError: pass
-        s.settimeout(0.25); end = time.time() + timeout
+        socks.append(s)
+    try:
+        end = time.time() + (timeout if socks else 0)
         while time.time() < end:
-            try: data, addr = s.recvfrom(65535)   # a whole datagram, however big
-            except socket.timeout: continue
-            except OSError: continue                   # one bad datagram must not end the search
-            wirelog.udp('rx', addr, data, 'coex')
-            import vendortap
-            if vendortap.relayed(addr[0]): continue   # a Tools ▸ Vendor Apps relay's announcement for XCenter, not a controller of ours
-            try:
-                for a in json.loads(data.decode('utf-8', 'replace')).get('data') or []:
-                    seen.setdefault((addr[0], int(a['apiPort'])), a)
-                    if a.get('mac'): macs.setdefault((addr[0], int(a['apiPort'])), set()).add(a['mac'])
-            except (ValueError, KeyError, TypeError): pass
-    except OSError: pass
-    finally: s.close()
+            try: ready = select.select(socks, [], [], min(0.25, max(0.0, end - time.time())))[0]
+            except (OSError, ValueError): break
+            for s in ready:
+                try: data, addr = s.recvfrom(65535)   # a whole datagram, however big
+                except OSError: continue              # one bad datagram must not end the search
+                wirelog.udp('rx', addr, data, 'coex')
+                _announced(data, addr, seen, macs)
+    finally:
+        for s in socks: s.close()
+        netif.note_search('coex', probs, None, len(seen))
     typed = set()
     for p in probe or ():
         h, _, pt = p.partition(':'); seen.setdefault((h, int(pt or 8001)), {'apiPort': pt or '8001'}); typed.add((h, int(pt or 8001)))
@@ -456,7 +475,9 @@ def health(dev):
 # ------------------------------------------------------------------ helper routes (novalink.py serve)
 def handle(path, body, log):
     if path == '/api/coex/discover':
-        return {'ok': True, 'devices': discover(float(body.get('timeout', 4)), body.get('probe') or ())}
+        ds = discover(float(body.get('timeout', 4)), body.get('probe') or ())
+        import netif   # nothing found: what the searches met (bind / send errors, the adapters searched, who holds a search port)
+        return dict({'ok': True, 'devices': ds}, **({} if ds else {'search': netif.search_report(owners=True)}))
     dev = Coex(body['host'], int(body.get('port', 8001)))
     if path == '/api/coex/info':
         return {'ok': True, 'info': dev.info()}
@@ -465,7 +486,12 @@ def handle(path, body, log):
         log('# NCP %s -> %s, %d cabinet(s); guard %s' % (body.get('name'), body['host'], len(body.get('cabinetIds') or []), body.get('verdict')))
         return ncp_send(dev, base64.b64decode(body['data']), body.get('name', ''), body.get('cabinet') or 0, body.get('cabinetIds') or [], log)
     if path == '/api/coex/cabinet-restart':              # PUT device/cabinet/reboot {idList} [R VMP_TOUR]; no ids = every card found
-        ids = body.get('ids') or [c['cabinetId'] for c in identify(dev)]
+        tg = body.get('targets')                         # [{card, port, index}] = those cabinets (Maintain), as ber-clear
+        if tg:
+            info = dev.info()
+            ids = [cabinet_id(info['mac'], info['cards'][int(t['card'])]['ports'][int(t['port'])], int(t['index'])) for t in tg if int(t['card']) < len(info['cards'])]
+        else:
+            ids = body.get('ids') or [c['cabinetId'] for c in identify(dev)]
         log('# restart %d receiving card(s) on %s' % (len(ids), body['host']))
         if ids: dev.put('device/cabinet/reboot', {'idList': [int(x) for x in ids]})
         return {'ok': True, 'cards': len(ids)}

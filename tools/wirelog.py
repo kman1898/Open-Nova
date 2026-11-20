@@ -54,6 +54,7 @@ PREVIEW = 64 * 1024                # what a side-filed body keeps in the record 
 BACKLOG_MAX = 64 * 1024 * 1024     # records held in memory while the disk refuses them (then the oldest are counted lost)
 RING = 5000
 SENT_KEEP = 64                     # requests kept per link to recognise their echoes
+COEX_UDP = (54622, 54623, 54624, 54700)   # VMP / COEX announcements + backup discovery (VENDOR_CAPTURE.md §3)
 PROC_PORTS = range(5200, 5233)     # TG on TCP: 5200 MCTRL / VX, 5201+ per H output card (the Wireshark plug-in's ports)
 DEV_NAMES = {0: 'sender', 1: 'rx', 2: 'dev2', 3: 'distributor', 4: 'function'}
 # Names from captures that the doc tables don't carry ([R] in the docs); dev -> addr -> name
@@ -318,7 +319,13 @@ def record(kind, **f):
 
 
 def _link(link):
-    return _st['links'].setdefault(link, {'tx': 0, 'rx': 0, 'err': 0, 'rtt_sum': 0.0, 'rtt_n': 0, 'rtt_max': 0.0, 'last_err': '', 'last': 0})
+    return _st['links'].setdefault(link, {'tx': 0, 'rx': 0, 'err': 0, 'nocard': 0, 'rtt_sum': 0.0, 'rtt_n': 0, 'rtt_max': 0.0, 'last_err': '', 'last': 0})
+
+
+def nocard(d):
+    """A decoded reply that says "no receiving card answered here" (ack 1 to a receiving-card request): the expected end of a
+    chain walk, or a dead primary the backup serves (novalink.NoCard). Noted on the reply, never counted as an error."""
+    return bool(d) and d.get('kind') == 'reply' and d.get('status') == 1 and d.get('dev') == 1
 
 
 def tg(link, direction, frame, **extra):
@@ -338,6 +345,9 @@ def tg(link, direction, frame, **extra):
                 if not extra.get('late'): L['rtt_sum'] += rtt; L['rtt_n'] += 1; L['rtt_max'] = max(L['rtt_max'], rtt)
     if p:
         rec['d'] = p[0]; rec['sum'] = summary(*p)
+        if direction == 'rx' and nocard(p[0]):
+            rec['nocard'] = True
+            with _lock: _link(link)['nocard'] += 1
     rec.update(extra)
     r = record('tg', **rec)
     if direction == 'tx':
@@ -503,7 +513,7 @@ def set_enabled(on):
 # ------------------------------------------------------------------ reading back
 def status():
     with _lock:
-        links = {k: {'tx': v['tx'], 'rx': v['rx'], 'err': v['err'], 'last_err': v['last_err'],
+        links = {k: {'tx': v['tx'], 'rx': v['rx'], 'err': v['err'], 'nocard': v.get('nocard', 0), 'last_err': v['last_err'],
                      'rtt_avg': round(v['rtt_sum'] / v['rtt_n'], 2) if v['rtt_n'] else None, 'rtt_max': round(v['rtt_max'], 2),
                      'ago': round(time.time() - v['last'], 1) if v['last'] else None} for k, v in _st['links'].items()}
         w = _st['werr']
@@ -752,23 +762,30 @@ def from_capture(buf):
     HTTP request / status lines on other TCP streams. The processor is the side on TCP 5200-5232, else the side the first
     55 AA frame went to; 55 AA frames from the processor are echoes of our requests."""
     out, flows, http_seen, proc, sent, alias = [], {}, set(), {}, {}, {}
+    seen = collections.OrderedDict()   # the same IP packet logged twice (Windows pktmon: once per edge / adapter) counts once
     for t, lt, p in _packets(buf):
         ip = _ip_of(lt, p)
         if not ip or len(ip) < 20: continue
         ihl = (ip[0] & 15) * 4; proto = ip[9]; src, dst = socket.inet_ntoa(ip[12:16]), socket.inet_ntoa(ip[16:20])
         tot = struct.unpack_from('!H', ip, 2)[0] or len(ip)
         l4 = ip[ihl:tot]
+        dk = (ip[4:6], ip[12:20], proto, tot, bytes(l4[:16]))
+        if ip[4:6] != bytes(2):
+            if dk in seen and t - seen[dk] < 1.0: continue
+            seen[dk] = t
+            if len(seen) > 4096: seen.popitem(last=False)
         if proto == 17 and len(l4) >= 8:
             sp, dp = struct.unpack_from('!HH', l4, 0); data = l4[8:]
             if dp == 9 and data.startswith(b'OpenNova link: '):      # our own .pcap: which USB / serial link a made-up host is
                 try: j = json.loads(data[15:].decode('utf-8')); alias[j['shown as']] = j['link']
                 except (ValueError, KeyError, TypeError): pass
-            if 3800 in (sp, dp) or 5600 in (sp, dp) or 54622 in (sp, dp):
-                tx = dp in (3800, 5600) and not data.startswith(b'rpProMI')
+            coex = sp in COEX_UDP or dp in COEX_UDP     # VMP / COEX: announcements 54622-54624, backup discovery 54700
+            if 3800 in (sp, dp) or 5600 in (sp, dp) or coex:
+                tx = dp in (3800, 5600) and not data.startswith(b'rpProMI')   # COEX: the controller announces itself (rx)
                 peer = (dst, dp) if tx else (src, sp)
                 txt = data.decode('utf-8', 'replace') if data[:1] in (b'r', b'{') else ''
                 r = {'seq': len(out) + 1, 't': t, 'kind': 'udp', 'dir': 'tx' if tx else 'rx', 'peer': '%s:%s' % peer, 'hex': data.hex(), 'n': len(data),
-                     'proto': {3800: 'nova', 5600: 'unico', 54622: 'coex'}.get(dp if tx else sp, '')}
+                     'proto': 'coex' if coex else {3800: 'nova', 5600: 'unico'}.get(dp if tx else sp, ''), 'cli': '%s:%s' % ((src, sp) if tx else (dst, dp))}
                 if txt: r['text'] = txt
                 out.append(r)
             continue
@@ -801,11 +818,11 @@ def from_capture(buf):
                 proc[ck] = (src, sp) if sp in PROC_PORTS and dp not in PROC_PORTS else (dst, dp) if dp in PROC_PORTS and sp not in PROC_PORTS \
                     else (dst, dp) if fr[0] == 0x55 else (src, sp)
             from_proc = proc[ck] == (src, sp)
-            link = '%s:%d' % proc[ck]
+            link = '%s:%d' % proc[ck]; cli = '%s:%d' % ((dst, dp) if from_proc else (src, sp))   # cli: the program's side (netcap names it)
             if fr[0] == 0x55 and from_proc:                # our request coming back
-                r = dict(_echo_rec(link, fr, sent.get(link, ())), seq=len(out) + 1, t=t, kind='echo')
+                r = dict(_echo_rec(link, fr, sent.get(link, ())), seq=len(out) + 1, t=t, kind='echo', cli=cli)
                 out.append(r); continue
-            p = decode(fr); r = {'seq': len(out) + 1, 't': t, 'kind': 'tg', 'link': link, 'dir': 'rx' if from_proc else 'tx', 'hex': fr.hex()}
+            p = decode(fr); r = {'seq': len(out) + 1, 't': t, 'kind': 'tg', 'link': link, 'dir': 'rx' if from_proc else 'tx', 'hex': fr.hex(), 'cli': cli}
             if p: r['d'] = p[0]; r['sum'] = summary(*p)
             if not from_proc: sent.setdefault(link, collections.deque(maxlen=SENT_KEEP)).append((r['seq'], fr))
             out.append(r)
@@ -814,6 +831,7 @@ def from_capture(buf):
         if (head[:4] in (b'GET ', b'PUT ', b'POST', b'DELE', b'HTTP')) and (key, len(out)) not in http_seen:
             line = head.split(b'\r\n', 1)[0].decode('latin1')
             out.append({'seq': len(out) + 1, 't': t, 'kind': 'http', 'link': '%s:%d' % ((dst, dp) if not head.startswith(b'HTTP') else (src, sp)),
+                        'cli': '%s:%d' % ((src, sp) if not head.startswith(b'HTTP') else (dst, dp)),
                         'method': line.split(' ')[0], 'url': line, 'req': None, 'status': None, 'resp': None, 'ms': 0, 'imported': True})
     # round-trip times: a reply after the request with its serial on the same link
     pend = {}

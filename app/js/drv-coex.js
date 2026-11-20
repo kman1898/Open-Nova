@@ -22,14 +22,16 @@ var DRV_COEX = {
     service: { restart: false, factory: [], panels: true } }; },   // controller restart / reset: not captured from VMP yet
   discover: function (o) {
     return DRV.post('coex', '/api/coex/discover', { timeout: o.timeout || 2, probe: coexHosts() }).then(function (r) {
+      DRV.noteWhy(r.search);   // found nothing: what the helper's searches met (app-online.js olWhy)
       return (r.devices || []).filter(function (x) { return !x.error; }).map(function (x) { x.kind = 'coex'; return x; });
     });
   },
   // Detected receiving cards per output card and port (the controller scans by itself; "Detect now" asks for a re-scan).
   // An NCP to receiving cards as VMP does it (after the file guard, app-rcvguard.js); targets carry the cabinet IDs. No save.
   // Restart the receiving cards as VMP's Maintain ▸ Cabinet ▸ Restart (VMP_TOUR, emulator [R]); only through app-service.js.
-  restartPanels: function (d) {
-    return DRV.post('coex', '/api/coex/cabinet-restart', { host: d.hw.host, port: d.hw.port }).then(function (r) {
+  // targets (Maintain: [{card, port, index}]) = those cabinets, by their cabinet IDs; none = every card found.
+  restartPanels: function (d, targets) {
+    return DRV.post('coex', '/api/coex/cabinet-restart', { host: d.hw.host, port: d.hw.port, targets: targets && targets.length ? targets : undefined }).then(function (r) {
       return drvResult(r.ok, { error: r.error, text: r.ok ? r.cards + ' receiving card' + (r.cards === 1 ? '' : 's') + ' restarting' : 'Restart failed: ' + r.error });
     });
   },

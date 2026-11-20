@@ -12,19 +12,23 @@
 // Never both. Linking a found device to a "Pick a model" processor (Hardware ▸ Link, an old project) sets its model from
 // what the device reports (olFit). The H web login (H login… in the Hardware card) is entered here and kept by the helper
 // on this computer only (tools/hweb.py), never in the project or the log.
-// Owns: ol, olMode, olLinked, olWorkspace, olMoveOnline, olAfterLink, olSetMode, olSame, olInProject, olHCard, olModel, olWhere, olCards, olTarget, olFit, olLinkHw, olAdd,
-// olFixLinked, olFoundHtml, olSearch, olAddAddress, olIsH, olWebRefresh, olChassis, hlOpen, hlSubmit, hlForget, bindOnline.
+// Owns: ol, olMode, olLinked, olWorkspace, olMoveOnline, olAfterLink, olSetMode, olSame, olInProject, olHCard, olModel, olWhere, olNonLed, olCards, olTarget, olFit, olLinkHw, olAdd,
+// olFixLinked, olFoundHtml, olSearch, olAddAddress, olIsH, olWebRefresh, olChassis, hlOpen, hlSubmit, hlForget, bindOnline,
+// OL_WAIT_MS, OL_GRACE_MS, OL_RETRY_MS, olDown, olAnswers, olConn, olConnected, olShown, olShownDevices, olGone, olLcShown,
+// olPolls, olConnTick, olView, olGoneRender, olFindAgain.
 // Depends on: app-core (P, ui, $, uid, esc, toast, commit, snapshot, save), app-log (log), drv-core (DRV), app-processors
 // (PROC_MODELS, PROC_ORDER, OUTPUT_CARDS, procModel, procUnset, cardsOfDevice, cardList, applyCards, cardsForModel,
 // chassisCardType, newProcName, deviceLabel, deviceById, wiredCards, cardName, cardChangeToast, setProcessorModel),
 // app-hardware (hw, hwModelKey, hwForget, hwWhere, hwSenderName, renderHwCard, HW_BUSY_WORDS), app-save (liveSet),
 // app-devices (devSelected, devPick, devRenderPicker), app-readback (rb, rbAuto), drv-lct / drv-coex (LCT_HOSTS_KEY,
-// lctHosts, COEX_HOSTS_KEY, coexHosts), app-render (renderAll), app-sync (projWorkspace), all at run time.
+// lctHosts, COEX_HOSTS_KEY, coexHosts), app-render (renderAll), app-sync (projWorkspace), app-health (hlt), app-hardware
+// (hwErrText, hwDetect, hwWriting), app-processors (lctOwner, removeProcessor, procPanels), app-geometry (allCells), all at run time.
 // Classic script, not an ES module (see app-core.js); every top-level name is a shared global.
 'use strict';
 
-var ol = { searching: false, at: 0, timer: null, hl: null, fixed: null };   // at = when the last search finished; hl = processor of the H
-// login dialog; fixed = the project olFixLinked last looked at
+var ol = { searching: false, at: 0, timer: null, hl: null, fixed: null, conn: {}, goneOpen: false };   // at = when the last search finished; hl = processor of the H
+// login dialog; fixed = the project olFixLinked last looked at; conn[processor id] = olConn's state; goneOpen = Device's
+// "not connected" fold is open
 
 // ------------------------------------------------------------------ the mode = the workspace
 // Online and offline are separate workspaces, as in VMP (user, 2026-10-28: "when I disable off-line mode, all of those should
@@ -110,19 +114,25 @@ function olModel(x) {
   return k2 ? { key: k2, types: null } : null;
 }
 function olWhere(x) { return x.usb ? 'USB' : x.ip; }
+// x is only cards that aren't LED outputs (NON_LED_CARDS, app-processors.js): their name, else ''
+function olNonLed(x) {
+  var S = x && x.kind === 'lct' ? (x.senders && x.senders.length ? x.senders : x.modelId != null ? [x.modelId] : []) : [];
+  return S.length && S.every(function (s) { return NON_LED_CARDS[s]; }) ? NON_LED_CARDS[S[0]] : '';
+}
 // The cards a processor d of model m gets (an H: its output cards as found).
 function olCards(d, m) {
   var M = procModel(m.key);
   if (m.types) return m.types.slice(0, M.slots).map(function (t) { return { ports: OUTPUT_CARDS[t].ports, type: t, dev: d.id, old: null }; });
   return cardsForModel(d, m.key);
 }
-// What one click on found entry x does: {inp: in the project already} | {why: can't} | {m, how: 'add' | 'link' | 'set', d}.
+// What one click on found entry x does: {inp: in the project already} | {why: can't; unknown: a model we don't know yet} | {m, how: 'add' | 'link' | 'set', d}.
 function olTarget(x) {
   if (!x) return { why: 'gone' };
   var inp = olInProject(x); if (inp) return { inp: inp };
   if (x.error) return { why: x.error };
+  var nl = olNonLed(x); if (nl) return { why: nl, nonLed: true };   // an H's MVR card: known, but nothing to add
   var m = olModel(x);
-  if (!m) return { why: 'its model isn’t in the catalogue' + (x.modelId != null ? ' (ModelID 0x' + (+x.modelId).toString(16).toUpperCase() + ')' : '') };
+  if (!m) return { unknown: true, why: 'not known to Open Nova yet' + (x.modelId != null ? ' (ModelID 0x' + (+x.modelId).toString(16).toUpperCase() + ')' : '') + ' — Help ▸ Report a problem sends us what we need to add it' };
   var open = (P.devices || []).filter(function (d) { return !olLinked(d); });   // a simulated one (drv-offline.js) is open too
   var same = open.filter(function (d) { return d.model === m.key; })[0], pick = open.filter(procUnset)[0];
   return same ? { m: m, how: 'link', d: same } : pick ? { m: m, how: 'set', d: pick } : { m: m, how: 'add', d: null };
@@ -164,7 +174,7 @@ function olAdd(x) {
   if (hw.busy) return toast('Wait — ' + (HW_BUSY_WORDS[hw.busy] || hw.busy) + ' is still running');
   var t = olTarget(x);
   if (t.inp) return toast(deviceLabel(t.inp) + ' is already in this project');
-  if (!t.m) return toast('Can’t add ' + (x && x.deviceName || 'it') + ': ' + t.why);
+  if (!t.m) return toast(t.unknown ? (x && x.deviceName || 'This processor') + ' is ' + t.why : 'Can’t add ' + (x && x.deviceName || 'it') + ': ' + t.why);
   var d = t.d, pinned, before = d ? deviceLabel(d) : '';
   if (t.how === 'add') {
     d = { id: uid(), model: t.m.key, name: newProcName(P.devices, t.m.key) };
@@ -208,7 +218,7 @@ function olFoundHtml() {
   var list = (hw.found || []).filter(function (x) { return x && x.ip; }), h = '';
   list.forEach(function (x) {
     var t = olTarget(x), i = hw.found.indexOf(x), m = t.m || (t.inp ? { key: t.inp.model } : null);
-    var name = m ? procModel(m.key).name : x.deviceName || 'Processor';
+    var name = m ? procModel(m.key).name : t.nonLed ? 'H MVR card' : x.deviceName || 'Processor';
     var sub = [hwWhere(x.ip, x.port)];
     if (x.iface && typeof nwShort === 'function') sub.push(nwShort(x.iface));   // the network it answered on (app-network.js)
     if (x.kind === 'unico' || x.kind === 'coex') {   // their own name (set in Unico / VMP) and serial number
@@ -219,14 +229,35 @@ function olFoundHtml() {
       t.m.types.forEach(function (ty) { if (!n[ty]) { n[ty] = 0; order.push(ty); } n[ty]++; });
       sub.push(order.map(function (ty) { return (n[ty] > 1 ? n[ty] + ' × ' : '') + OUTPUT_CARDS[ty].name; }).join(' + ') + (t.m.guess ? ' · chassis guessed (H login… reads it)' : ''));
     }
-    var act = t.inp ? 'In project as ' + deviceLabel(t.inp) : !t.m ? 'Can’t add: ' + t.why : t.how === 'add' ? 'Add' : 'Link to ' + deviceLabel(t.d);
+    var act = t.inp ? 'In project as ' + deviceLabel(t.inp) : t.unknown ? 'Not known to Open Nova yet — Help ▸ Report a problem sends us what we need to add it' : t.nonLed ? 'Preview card, not an LED output' : !t.m ? 'Can’t add: ' + t.why : t.how === 'add' ? 'Add' : 'Link to ' + deviceLabel(t.d);
     var ok = !t.inp && !!t.m;
     h += '<button class="dp-model dp-found' + (t.inp ? ' in' : '') + '" data-found="' + i + '"' + (ok ? '' : ' disabled') + ' title="' +
-      esc(ok ? act + ': ' + name + ' at ' + olWhere(x) + ' joins the project, linked' : act) + '"><b>' + esc(name) + '</b><span>' + esc(sub.join(' · ')) + '</span>' +
+      esc(ok ? act + ': ' + name + ' at ' + olWhere(x) + ' joins the project, linked' : t.unknown ? 'N' + t.why.slice(1) : act) + '"><b>' + esc(name) + '</b><span>' + esc(sub.join(' · ')) + '</span>' +
       (x.conflict ? '<span class="rcv-bad">⚠ ' + esc(x.conflict) + '</span>' : '') + '<span class="dp-act">' + esc(act) + '</span></button>';
   });
   if (!list.length) h = '<p class="hint">' + (ol.searching || !ol.at ? 'Searching…' : 'No processors found. Are they on, and on this network (or plugged in by USB)? A processor on another network: Add by address…') + '</p>';
+  if (!list.length && !ol.searching && ol.at) { var why = olWhy(DRV.why); h += '<p class="hint ol-why" title="' + esc(why.more) + '">' + esc(why.line) + '</p>'; }
   return h;
+}
+// Why a search found nothing, in one short line (the likely causes on a fresh computer: the firewall / macOS Local Network
+// permission, NovaLCT or VMP on this computer holding a search port, a search that couldn't be sent) plus the adapters
+// searched; everything the helper said in the tooltip. w = DRV.why (the helper's 'search' replies, drv-core.js).
+function olWhy(w) {
+  w = w || { problems: [], searched: [] };
+  var plat = w.platform || (/Mac/.test(navigator.platform || '') ? 'darwin' : /Win/.test(navigator.platform || '') ? 'win32' : 'linux');
+  var pr = w.problems || [], parts = [];
+  var nr = pr.filter(function (p) { return p.code === 'noroute'; })[0];
+  if (plat === 'darwin') parts.push(nr ? 'macOS blocked the search: System Settings ▸ Privacy & Security ▸ Local Network ▸ allow Terminal (or Python)'
+    : 'macOS Local Network permission (Privacy & Security ▸ Local Network ▸ Terminal or Python)');
+  else if (plat === 'win32') parts.push('Windows Firewall blocking Python (allow it on Private and Public networks)');
+  else parts.push('a firewall (ufw / firewalld) blocking UDP replies');
+  var own = pr.filter(function (p) { return p.code === 'port'; }).map(function (p) { return p.text.replace(' on this computer', ''); });
+  if (own.length) parts.push(own.join(', ') + ' (close NovaLCT / VMP here)');
+  var other = pr.filter(function (p) { return p.code !== 'port' && p !== nr; })[0];
+  if (other) parts.push(other.text);
+  var s = (w.searched || []).map(function (a) { return a.name + ' (' + a.ip + ')'; });
+  return { line: 'Possible causes: ' + parts.join(' · ') + (s.length ? ' · searched ' + s.join(', ') : ''),
+    more: pr.length ? pr.map(function (p) { return p.text; }).join('\n') : 'The search reported no errors.' };
 }
 // One search (opening the online list = a search the user asked for: COM ports are probed too; refreshes are background).
 function olSearch(background) {
@@ -255,6 +286,141 @@ function olAddAddress() {
   try { localStorage.setItem(key, JSON.stringify(list)); } catch (x) { /* storage unavailable */ }
   log(cx ? 'coex_add_address' : 'lct_add_address', { address: ad, via: 'add processor (online)' });
   olSearch(false);
+}
+
+// ------------------------------------------------------------------ connected = answering now (online projects only)
+// User, 2026-11-10 (the app reopened his online project with an H2 that wasn't plugged in: Monitor "1 error", "timed out"
+// every few seconds): "it needs to only show connected when i am in online mode. offline mode can show things like that once
+// enabled". In an online project a linked processor is shown only while it answers its live detect (app-hardware.js
+// hw.watch) or health read (app-health.js hlt.watch). At start, or on a new link, it is "connecting" (shown) until the first
+// answer or failure, at most OL_WAIT_MS; a shown one goes after OL_GRACE_MS of failing without an answer in between (one
+// timeout doesn't hide a wall). Not connected = left out of every surface (tree, Device, header tiles, Layout, Screen
+// Settings, Monitor, Maintain, Dashboard, Send / Save, Backup, Presets) and not polled; nothing in the project changes. Its
+// only mention: Device's "N processors not connected ▸" fold (address, Remove from project, Find again). A search that
+// finds it again (the background one every minute, the Add processor list, Find again) lets the polls try for OL_RETRY_MS;
+// its first answer shows it again. Offline projects, simulated and unlinked processors: always shown.
+var OL_WAIT_MS = 6000, OL_GRACE_MS = 15000, OL_RETRY_MS = 20000;
+// a read that failed because the processor (or the helper) can't be reached; any other error is an answer of sorts
+function olDown(e) { e = String(e || ''); return !!e && (hwErrText(e) !== e || /did not answer|not answering|no NovaStar USB|could not open|no such device/i.test(e)); }
+// when d's live reads last answered / last failed to reach it (ms, 0 = never)
+function olAnswers(d) {
+  var r = { ok: 0, bad: 0 };
+  [hw.watch[d.id], typeof hlt !== 'undefined' ? hlt.watch[d.id] : null].forEach(function (w) {
+    if (!w || !w.done) return;
+    if (w.err && olDown(w.err)) r.bad = Math.max(r.bad, w.done); else r.ok = Math.max(r.ok, w.done);
+  });
+  return r;
+}
+// 'yes' | 'connecting' | 'no'. Moves on as answers come in; olConnTick logs each change once.
+function olConn(d) {
+  if (!d || !olLinked(d) || olMode() !== 'online') return 'yes';
+  var now = Date.now(), k = d.hw.kind + '|' + d.hw.host + '|' + d.hw.port, c = ol.conn[d.id], a = olAnswers(d);
+  if (!c || c.key !== k) c = ol.conn[d.id] = { st: 'connecting', t0: now, at: now, key: k, told: '', fail: 0, retry: 0, found: hw.found };
+  if (c.found !== hw.found) {   // a search finished since: found again → the polls may try it
+    c.found = hw.found;
+    if (c.st === 'no' && (hw.found || []).some(function (x) { return x && olSame(d.hw, x); })) c.retry = now;
+  }
+  var to = function (st) { c.st = st; c.at = now; c.fail = 0; };
+  if (c.st === 'connecting') { if (a.ok >= c.t0) to('yes'); else if (a.bad >= c.t0 || now - c.t0 > OL_WAIT_MS) to('no'); }
+  else if (c.st === 'yes') {
+    if (a.bad > a.ok) { if (!c.fail) c.fail = now; if (now - c.fail >= OL_GRACE_MS) to('no'); } else c.fail = 0;
+  } else if (a.ok > c.at) to('yes');
+  return c.st;
+}
+function olConnected(d) { return olConn(d) === 'yes'; }
+function olShown(d) { return olConn(d) !== 'no'; }
+function olShownDevices() { return (P.devices || []).filter(olShown); }
+function olGone() { return olMode() === 'online' ? (P.devices || []).filter(function (d) { return !olShown(d); }) : []; }
+// a screen is shown unless it belongs to a processor that isn't (an empty screen belongs to nobody)
+function olLcShown(lc, gone) {
+  gone = gone || olGone(); if (!lc || !gone.length) return true;
+  var o = lctOwner(lc); return !o || gone.indexOf(o) < 0;
+}
+// the live detect / health polls run for d (app-hardware.js hwTick, app-health.js hltTick): not while it isn't connected,
+// except for a while after a search found it again
+function olPolls(d) {
+  if (olConn(d) !== 'no') return true;
+  var c = ol.conn[d.id]; return !!(c && c.retry && Date.now() - c.retry < OL_RETRY_MS);
+}
+// Every second (bindOnline): log each change once, a short toast when one comes back, and redraw.
+function olConnTick() {
+  if (olMode() !== 'online') return;
+  var changed = false;
+  (P.devices || []).forEach(function (d) {
+    if (!olLinked(d)) return;
+    var st = olConn(d), c = ol.conn[d.id];
+    if (c.retry && c.retried !== c.retry && st === 'no' && !hwWriting()) { c.retried = c.retry; hwDetect(d, true); }   // found again: ask now, not after the back-off
+    if (st === 'connecting' || st === c.told) return;
+    var back = c.told === 'no';
+    c.told = st; changed = true;
+    log(st === 'yes' ? 'processor_connected' : 'processor_not_connected', { processor: deviceLabel(d), at: hwWhere(d.hw.host, d.hw.port) });
+    if (back) toast(deviceLabel(d) + ' connected');
+    if (st === 'yes' && typeof rbAuto === 'function') rbAuto(d);   // its layout, as at start (app-readback.js; once per session)
+  });
+  if (changed) renderAll();
+}
+// renderAll's first step (app-render.js): what is worked on stays on shown processors (the screen on Layout, the active
+// card, the ones picked together); the canvas says so when no linked processor is connected.
+function olView() {
+  var gone = olGone(), off = function (d) { return !!d && gone.indexOf(d) >= 0; };
+  if (gone.length) {
+    var lc = lctById(ui.viewScreen);
+    if (lc && !olLcShown(lc, gone)) {
+      var to = P.lct.filter(function (l) { return olLcShown(l, gone); })[0];
+      if (to) { ui.viewScreen = to.id; ui.view = null; ui.selKeys = new Set(); ui.selScreen = null; ui.sel = null; }
+    }
+    if (off(deviceOfCard(ui.mSender || 0))) {
+      var own = lctOwner(lctById(ui.viewScreen)), sd = own && !off(own) ? own : olShownDevices().filter(function (x) { return cardsOfDevice(x).length; })[0];
+      if (sd) { ui.mSender = cardsOfDevice(sd)[0]; ui.mPort = 0; }
+    }
+    if (ui.devMulti && ui.devMulti.length) { ui.devMulti = ui.devMulti.filter(function (id) { return !off(deviceById(id)); }); if (ui.devMulti.length < 2) ui.devMulti = []; }
+  }
+  var vp = $('viewport'), e = $('olEmpty'), none = gone.length > 0 && !olShownDevices().some(olLinked);
+  if (vp && !e && none) {
+    e = document.createElement('div'); e.id = 'olEmpty'; e.className = 'ol-empty';
+    e.innerHTML = '<p><span>No processors connected</span><button class="primary" title="The processors found on the network and USB right now">+ Add processor</button></p>';
+    e.querySelector('button').onclick = function () { log('no_processors_add', { via: 'canvas' }); devOpenPicker(); };
+    vp.appendChild(e);
+  }
+  if (e) e.hidden = !none;
+  document.body.classList.toggle('ol-none', none);   // Layout's port list and side panel have nothing to show (app.css)
+}
+// Device: one quiet line under the processor cards, "1 processor not connected ▸", folding open to the list (address,
+// Remove from project) and Find again. Nothing else mentions them.
+function olGoneRender() {
+  var cards = $('devCards'); if (!cards) return;
+  var box = $('olGone'), gone = olGone();
+  if (!box) {
+    box = document.createElement('div'); box.id = 'olGone'; box.className = 'ol-gone';
+    cards.parentNode.insertBefore(box, cards.nextSibling);
+    box.addEventListener('click', function (ev) {
+      var b = ev.target.closest('[data-olg]'); if (!b || b.disabled) return;
+      var a = b.dataset.olg;
+      if (a === 'fold') { ol.goneOpen = !ol.goneOpen; log('card_fold', { card: 'not connected', folded: !ol.goneOpen }); return olGoneRender(); }
+      if (a === 'find') return olFindAgain();
+      var d = deviceById(b.dataset.id); if (!d || a !== 'remove') return;
+      if (!procPanels(d).n && !confirm('Remove ' + deviceLabel(d) + ' from this project?\n\nCtrl+Z brings it back.')) return log('remove_processor', { processor: deviceLabel(d), cancelled: true, via: 'not connected' });
+      removeProcessor(d);   // asks first itself when cabinets are wired (app-processors.js)
+    });
+  }
+  box.hidden = !gone.length;
+  if (!gone.length) { box.innerHTML = ''; return; }
+  var looking = ol.searching || gone.some(function (d) { return olPolls(d); });
+  box.innerHTML = '<button class="ol-g-head" data-olg="fold" aria-expanded="' + ol.goneOpen + '" title="In this project, but not answering now. They show again by themselves when they answer.">' +
+    gone.length + ' processor' + (gone.length === 1 ? '' : 's') + ' not connected ' + (ol.goneOpen ? '▾' : '▸') + '</button>' +
+    (ol.goneOpen ? '<div class="ol-g-list">' + gone.map(function (d) {
+      return '<div class="ol-g-row"><b>' + esc(deviceLabel(d)) + '</b><span class="hint">' + esc(procModel(d.model).name + ' · ' + hwWhere(d.hw.host, d.hw.port)) + '</span>' +
+        '<button class="mini" data-olg="remove" data-id="' + esc(d.id) + '" title="Take it out of this project (asks first; Ctrl+Z brings it back)">Remove from project</button></div>';
+    }).join('') + '<div class="ol-g-foot"><button class="mini" data-olg="find"' + (looking ? ' disabled' : '') + ' title="Search the network and ask them again">' + (looking ? 'Looking…' : 'Find again') + '</button></div></div>' : '');
+}
+// Find again: a search, and the polls ask each one not connected once more (its first answer shows it again).
+function olFindAgain() {
+  var gone = olGone(), now = Date.now();
+  gone.forEach(function (d) { var c = ol.conn[d.id]; if (c) c.retry = now; });
+  log('find_again', { processors: gone.map(function (d) { return deviceLabel(d) + ' ' + hwWhere(d.hw.host, d.hw.port); }) });
+  olSearch(false);
+  olGoneRender();
+  setTimeout(olGoneRender, OL_RETRY_MS + 100);   // "Looking…" ends
 }
 
 // ------------------------------------------------------------------ H series: the chassis from its web API
@@ -341,6 +507,7 @@ function bindOnline() {
   // unlink doesn't move it; carried by the next save)
   ol.timer = setInterval(function () {
     if (ol.fixed !== P) { ol.fixed = P; if (!P.mode) P.mode = olMode(); olFixLinked(); }
+    olConnTick();   // connected / not connected (online projects)
     if (typeof devPick === 'undefined' || !devPick.open || olMode() !== 'online' || document.hidden || hw.busy) return;
     if (Date.now() - ol.at > 5000) olSearch(true);
   }, 1000);

@@ -5,22 +5,25 @@
 //   - the configuration check: per processor, the receiving-card configurations / firmware found (a mixed wall is listed),
 //     panels placed but not detected or of another size;
 //   - the show report: panels per type, processors / cards / ports with their load, backup — a printable HTML file.
-// Writes to cabinets (vendor receiving-card files, coefficient reset, restart …) are deliberately not here yet: they are
-// the riskiest operations in the app and wait for the user's decision (docs\OPEN_NOVA_DESIGN.md Q3).
-// Owns: mt, MT_COLS, mtRows, mtCsv, mtCheckHtml, mtReportHtml, mtDownload, renderMaintain, bindMaintain.
+// Writes to cabinets: the receiving-card file send (app-rcvguard.js) and Restart cabinets (Unico's / VMP's Maintain ▸
+// Cabinet ▸ Restart): click rows to pick them (Ctrl/⌘ adds, Shift a range), then Restart cabinets… or right-click a row;
+// it asks first (app-service.js svOpenCabinets). Coefficient reset and the like stay out (scope).
+// Owns: mt, MT_COLS, mtRows, mtCsv, mtCheckHtml, mtReportHtml, mtDownload, mtPick, mtRestart, renderMaintain, bindMaintain.
 // Depends on: app-core (P, ui, $, esc, fmt, toast), app-log (log), app-geometry (allCells), app-capacity (portUsage,
 // portLabel, panelOf, capacity), app-hardware (hwPortCells, hwPortDetected), app-health (hlt, hltCabinet is not used:
-// rows map by card / port / index), app-processors (deviceOfCard, cardsOfDevice, deviceLabel, procModel), all at run time.
+// rows map by card / port / index), app-processors (deviceOfCard, cardsOfDevice, deviceLabel, procModel), app-service
+// (svOpenCabinets), all at run time.
 // Classic script, not an ES module (see app-core.js); every top-level name is a shared global.
 'use strict';
 
-var mt = { q: '', sort: 0, dir: 1 };
+var mt = { q: '', sort: 0, dir: 1, sel: new Set(), last: '' };   // sel: picked rows ('card:port:index')
 var MT_COLS = ['Processor', 'Port', '#', 'X', 'Y', 'Size', 'Detected', 'Receiving card', 'Firmware', 'Feed', 'Temp', 'Voltage', 'Errors'];
 
 function mtRows() {
-  var cells = hwPortCells(), rows = [];
+  var cells = hwPortCells(), rows = [], gone = typeof olGone === 'function' ? olGone() : [];
   Object.keys(cells).sort(function (a, b) { var x = a.split(':'), y = b.split(':'); return x[0] - y[0] || x[1] - y[1]; }).forEach(function (k) {
     var sp = k.split(':'), card = +sp[0], port = +sp[1], d = deviceOfCard(card);
+    if (d && gone.indexOf(d) >= 0) return;   // online: a processor that isn't connected (app-online.js)
     var det = hwPortDetected(card, port), h = d && hlt.by[d.id];
     cells[k].forEach(function (c, i) {
       var x = det ? det[i] : null, hc = null;
@@ -50,7 +53,7 @@ function mtDownload(text, type, name) {
 // Per processor: the configurations found (cabinet file / receiving card / firmware) and the cabinets that don't match.
 function mtCheckHtml(rows) {
   var h = '';
-  P.devices.forEach(function (d) {
+  (typeof olShownDevices === 'function' ? olShownDevices() : P.devices).forEach(function (d) {   // online: the connected ones (app-online.js)
     var mine = rows.filter(function (r) { return r.dev === d.id; });   // by id: two processors may share a name
     if (!mine.length) return;
     var groups = {};
@@ -79,7 +82,7 @@ function mtReportHtml() {
     types[k] = (types[k] || 0) + n;
   });
   var total = Object.keys(types).reduce(function (a, k) { return a + types[k]; }, 0);
-  var procs = P.devices.map(function (d) {
+  var procs = (typeof olShownDevices === 'function' ? olShownDevices() : P.devices).map(function (d) {
     var cards = cardsOfDevice(d), ports = Object.keys(use).filter(function (k) { return cards.indexOf(use[k].sender) >= 0; });
     var maxLoad = ports.reduce(function (m, k) { var u = use[k]; return Math.max(m, u.cap ? u.load / u.cap : 0); }, 0);
     return '<tr><td>' + esc(deviceLabel(d)) + '</td><td>' + esc(procModel(d.model).name) + '</td><td>' + cards.length + '</td><td>' + ports.length + '</td><td>' + Math.round(maxLoad * 100) + ' %</td><td>' +
@@ -95,31 +98,58 @@ function mtReportHtml() {
     '<h2>Processors</h2><table><tr><th>Name</th><th>Model</th><th>Cards</th><th>Ports used</th><th>Busiest port</th><th>Link</th></tr>' + procs + '</table>' +
     '<h2>Backup</h2><p>' + esc(bk) + '</p><p>Canvas ' + P.canvasW + ' × ' + P.canvasH + ' · ' + P.bitDepth + '-bit · ' + P.refresh + ' Hz</p>';
 }
+// Click a row: pick it alone (again: unpick); Ctrl/⌘ adds or removes it; Shift picks the range from the last one, in the order shown.
+function mtPick(key, e) {
+  if (e.shiftKey && mt.last) {
+    var keys = Array.prototype.map.call($('mtBody').querySelectorAll('tr[data-cab]'), function (tr) { return tr.dataset.cab; });
+    var a = keys.indexOf(mt.last), b = keys.indexOf(key);
+    if (a >= 0 && b >= 0) { keys.slice(Math.min(a, b), Math.max(a, b) + 1).forEach(function (k) { mt.sel.add(k); }); return renderMaintain(); }
+  }
+  if (e.ctrlKey || e.metaKey) { if (mt.sel.has(key)) mt.sel.delete(key); else mt.sel.add(key); }
+  else if (mt.sel.size === 1 && mt.sel.has(key)) mt.sel.clear();
+  else { mt.sel.clear(); mt.sel.add(key); }
+  mt.last = key; renderMaintain();
+}
+// Restart the picked cabinets (asked first by the dialog). Nothing picked = nothing: never every cabinet by default (user,
+// Phase A decision D3); the button is greyed until rows are picked.
+function mtRestart(keys) {
+  if (!keys) keys = Array.from(mt.sel);
+  if (!keys.length) return toast('Select cabinets first');
+  svOpenCabinets(keys);
+}
 function renderMaintain() {
   var box = $('mtBody'); if (!box || ui.tab !== 'maintain') return;
-  var rows = mtRows(), q = mt.q.toLowerCase();
+  var rows = mtRows(), q = mt.q.toLowerCase(), have = new Set(rows.map(function (r) { return r.cab; }));
+  mt.sel.forEach(function (k) { if (!have.has(k)) mt.sel.delete(k); });   // a cabinet that went away isn't picked any more
   var shown = q ? rows.filter(function (r) { return r.v.join(' ').toLowerCase().indexOf(q) >= 0; }) : rows;
   shown = shown.slice().sort(function (a, b) { var x = a.v[mt.sort], y = b.v[mt.sort]; return (typeof x === 'number' && typeof y === 'number' ? x - y : String(x).localeCompare(String(y), undefined, { numeric: true })) * mt.dir; });
-  box.innerHTML = rows.length ? '<p class="hint">' + shown.length + ' of ' + rows.length + ' cabinets' + itip('Red = missing / other size / fault · amber = on backup / warning. Click a column to sort; right-click a cabinet to clear its errors.') + '</p>' +
+  box.innerHTML = rows.length ? '<p class="hint">' + shown.length + ' of ' + rows.length + ' cabinets' + (mt.sel.size ? ' · ' + mt.sel.size + ' picked' : '') + itip('Red = missing / other size / fault · amber = on backup / warning. Click a column to sort; click rows to pick them (Ctrl/⌘ adds, Shift a range); right-click a cabinet to clear its errors or restart it.') + '</p>' +
     '<table class="mt-tbl"><tr>' + MT_COLS.map(function (c, i) { return '<th data-mt="' + i + '">' + esc(c) + (mt.sort === i ? (mt.dir > 0 ? ' ▴' : ' ▾') : '') + '</th>'; }).join('') + '</tr>' +
-    shown.map(function (r) { return '<tr class="' + r.lvl + '" data-cab="' + r.cab + '">' + r.v.map(function (v) { return '<td>' + esc(v) + '</td>'; }).join('') + '</tr>'; }).join('') + '</table>'
+    shown.map(function (r) { return '<tr class="' + r.lvl + (mt.sel.has(r.cab) ? ' sel' : '') + '" data-cab="' + r.cab + '">' + r.v.map(function (v) { return '<td>' + esc(v) + '</td>'; }).join('') + '</tr>'; }).join('') + '</table>'
     : '<p class="hint">No cabinets placed yet.</p>';
   $('mtCheck').innerHTML = mtCheckHtml(rows);
+  var rb = $('mtRestart');
+  if (rb) { rb.textContent = mt.sel.size ? 'Restart ' + mt.sel.size + ' cabinet' + (mt.sel.size === 1 ? '' : 's') + '…' : 'Restart cabinets…'; rb.disabled = !mt.sel.size;
+    rb.title = mt.sel.size ? 'Restart the picked cabinets’ receiving cards (asks first)' : 'Select cabinets first'; }
 }
 function bindMaintain() {
   var f = $('mtFilter'); if (!f) return;
   f.addEventListener('input', function () { mt.q = f.value; renderMaintain(); });
   f.addEventListener('keydown', function (e) { e.stopPropagation(); });
   $('mtBody').addEventListener('click', function (e) {
+    var tr = e.target.closest('tr[data-cab]'); if (tr) return mtPick(tr.dataset.cab, e);
     var th = e.target.closest('[data-mt]'); if (!th) return;
     var i = +th.dataset.mt; if (mt.sort === i) mt.dir = -mt.dir; else { mt.sort = i; mt.dir = 1; }
     renderMaintain();
   });
   $('mtBody').addEventListener('contextmenu', function (e) {   // right-click a cabinet: clear its errors (app-health)
     var tr = e.target.closest('tr[data-cab]'); if (!tr || typeof hltClearMenu !== 'function') return;
-    var sp = tr.dataset.cab.split(':').map(Number);
-    e.preventDefault(); hltClearMenu(e.clientX, e.clientY, { card: sp[0], port: sp[1], index: sp[2] });
+    var k = tr.dataset.cab, sp = k.split(':').map(Number), many = mt.sel.size > 1 && mt.sel.has(k);
+    var more = [{ sep: true }, { label: 'Restart this cabinet…', act: function () { mtRestart([k]); } }];
+    if (many) more.push({ label: 'Restart the ' + mt.sel.size + ' picked cabinets…', act: function () { mtRestart(Array.from(mt.sel)); } });
+    e.preventDefault(); hltClearMenu(e.clientX, e.clientY, { card: sp[0], port: sp[1], index: sp[2] }, more);
   });
+  $('mtRestart').onclick = function () { mtRestart(); };
   $('mtCsv').onclick = function () { var r = mtRows(); if (!r.length) return toast('No cabinets placed yet'); log('maintain_csv', { rows: r.length }); mtDownload(mtCsv(r), 'text/csv', '_cabinets.csv'); };
   $('mtReport').onclick = function () { log('show_report', {}); mtDownload(mtReportHtml(), 'text/html', '_show_report.html'); };
 }

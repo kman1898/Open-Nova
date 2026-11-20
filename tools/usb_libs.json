@@ -1,0 +1,26 @@
+{
+ "about": "The USB library the Windows and Mac packages carry for NovaStar's own USB device 0483:5720 (docs/USB_NOVA_DEVICE.md §4). make_package.py --python puts each file at its path in that system's package, taken unmodified from the published archive in 'from' (both SHA-256s checked); smoke_package.py checks them; tools/novalink.py looks there first. libusb is LGPL-2.1-or-later: its licence text ships in licenses/ (its authors are in the source's AUTHORS), its source is 'source'. A newer libusb: change every entry together and run tools/test_usb.py plus the package smoke tests.",
+ "source": "https://github.com/libusb/libusb/releases/download/v1.0.30/libusb-1.0.30.tar.bz2",
+ "sourceSha256": "fea36f34f9156400209595e300840767ab1a385ede1dc7ee893015aea9c6dbaf",
+ "licenses": ["licenses/libusb-COPYING.txt"],
+ "files": [
+  {"system": "windows", "path": "libusb/windows-x64/libusb-1.0.dll", "sha256": "7cbf37e76dae9c840c7e8dbf7348ee8897dcc86c8ba45e46ada60b89411569f7",
+   "what": "libusb 1.0.30, the official Windows build (VS2022, 64-bit)",
+   "from": {"url": "https://github.com/libusb/libusb/releases/download/v1.0.30/libusb-1.0.30.7z", "sha256": "7fb1dfec805b97983763d7d0ae244320da12add1003d4249c96cc4d586398c79",
+            "member": "VS2022/MS64/dll/libusb-1.0.dll"}},
+  {"system": "windows", "path": "libusb/windows-arm64/libusb-1.0.dll", "sha256": "8d0753f3167516efb000a811eaf7feed9e6635d6223408e8c608c560f67464e5",
+   "what": "libusb 1.0.30, the official Windows build (VS2025, ARM64)",
+   "from": {"url": "https://github.com/libusb/libusb/releases/download/v1.0.30/libusb-1.0.30.7z", "sha256": "7fb1dfec805b97983763d7d0ae244320da12add1003d4249c96cc4d586398c79",
+            "member": "VS2025/ARM64/dll/libusb-1.0.dll"}},
+  {"system": "mac", "path": "libusb/macos-arm64/libusb-1.0.0.dylib", "sha256": "59644bed86d641b47dc24792dc52cf1b93cfd1f93e383137e4ba47a815191868",
+   "what": "libusb 1.0.30, Homebrew's bottle for Apple silicon (arm64_sonoma: macOS 14+, ad-hoc signed by Homebrew, links only macOS's own libraries)",
+   "from": {"url": "https://ghcr.io/v2/homebrew/core/libusb/blobs/sha256:74fa9ed0291e2d3e7827a06ea836a57c96d8861a7079544d47be231f08eb4c02",
+            "sha256": "74fa9ed0291e2d3e7827a06ea836a57c96d8861a7079544d47be231f08eb4c02", "member": "libusb/1.0.30/lib/libusb-1.0.0.dylib",
+            "headers": {"Authorization": "Bearer QQ=="}}},
+  {"system": "mac", "path": "libusb/macos-x86_64/libusb-1.0.0.dylib", "sha256": "53e6b188649a4302ba099673e2840c4d09c0475b59bfa967270175d171e2d4fc",
+   "what": "libusb 1.0.30, Homebrew's bottle for Intel Macs (sonoma: macOS 14+, links only macOS's own libraries)",
+   "from": {"url": "https://ghcr.io/v2/homebrew/core/libusb/blobs/sha256:1387aea9bbed3a1e57884b5b43166fc83cfdae415e5f3803a8259ff77a4ba613",
+            "sha256": "1387aea9bbed3a1e57884b5b43166fc83cfdae415e5f3803a8259ff77a4ba613", "member": "libusb/1.0.30/lib/libusb-1.0.0.dylib",
+            "headers": {"Authorization": "Bearer QQ=="}}}
+ ]
+}

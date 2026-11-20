@@ -35,7 +35,17 @@ var SCR_FIELDS = [
   { k: 'llSender', grp: 'lat', label: 'Low latency — processor', cap: 'll', which: 'sender', def: false, keep: true },
   { k: 'llRx', grp: 'lat', label: 'Low latency — receiving cards', cap: 'll', which: 'rx', def: false, keep: true }
 ];
-var SCR_GAMUTS = [['original', 'Original (native)'], ['rec709', 'Rec.709'], ['dcip3', 'DCI-P3'], ['dcip3d65', 'DCI-P3 D65'], ['rec2020', 'Rec.2020'], ['input', 'From input']];
+// One name per state everywhere (the list, the Gamut tile, the processors table, Dashboard, scenes: scrFmt); NovaLCT's
+// buttons Off / PAL / NTSC are Native / Rec.709 / NTSC here (its names are in the list's tooltip).
+var SCR_GAMUTS = [['original', 'Native'], ['rec709', 'Rec.709'], ['dcip3', 'DCI-P3'], ['dcip3d65', 'DCI-P3 D65'], ['rec2020', 'Rec.2020'], ['input', 'From input'], ['ntsc', 'NTSC']];
+// What this screen's processors offer: caps.color.gamuts (NovaLCT: its Off / PAL / NTSC buttons), else all but NovaLCT's NTSC.
+function scrGamuts(devs) {
+  var ok = devs.map(function (e) { return (DRV.caps(e.d).color || {}).gamuts; }).filter(Boolean)[0];
+  return SCR_GAMUTS.filter(function (g) { return ok ? ok.indexOf(g[0]) >= 0 : g[0] !== 'ntsc'; })
+    .concat(ok ? (P.gamuts || []).map(function (e) { return ['c:' + e.id, e.name]; }) : []);   // named custom gamuts (app-gamut.js)
+}
+// Alpha, locked, with a real processor: the controls are shown but greyed, nothing would get through (app-alpha.js).
+function scrLocked() { return typeof alphaGrey === 'function' && alphaGrey(); }
 var SCR_APPLIED_KEY = 'opennova.screenApplied';
 var scr = { tab: 'iq', busy: false, applied: null, errors: {}, bitWas: {}, live: {}, keepForm: false, read: {}, readDone: {}, shown: false };   // live[devId|k] = {busy, next}   // errors[devId|lcId|k] = last refusal; bitWas[lcId] = bit depth before this tab changed it
 // read[link|lcId] = {values, notes, mixed, at, error} = what the processor said it holds (read when the tab opens / on link)
@@ -75,7 +85,7 @@ function scrDevices(lc) {
       e.cells++;
     });
   });
-  return P.devices.filter(function (d) { return by[d.id]; }).map(function (d) { return by[d.id]; });
+  return (typeof olShownDevices === 'function' ? olShownDevices() : P.devices).filter(function (d) { return by[d.id]; }).map(function (d) { return by[d.id]; });   // online: the connected ones (app-online.js)
 }
 
 // ------------------------------------------------------------------ applied values (this browser)
@@ -93,13 +103,13 @@ function scrAppliedStore() { try { localStorage.setItem(SCR_APPLIED_KEY, JSON.st
 // processor's "applied" value (the table and the controls start from it); a setting being sent live right now is left
 // alone. Nothing is written; a processor that can't be read keeps "—".
 function scrRead(lc) {
-  if (scr.busy) return;
-  scrDevices(lc).forEach(function (e) {
+  if (scr.busy) return Promise.resolve();
+  return Promise.all(scrDevices(lc).map(function (e) {
     var d = e.d, x = d.hw && DRV.of(d), key = scrKey(d, lc);
     if (!x || !x.readColor || scr.readDone[key]) return;
     scr.readDone[key] = 1;
     var call; try { call = x.readColor(d, e.ports); } catch (err) { call = Promise.resolve({ ok: false, error: err.message }); }
-    Promise.resolve(call).then(function (r) { return r; }, function (err) { return { ok: false, error: 'helper: ' + err.message }; }).then(function (r) {
+    return Promise.resolve(call).then(function (r) { return r; }, function (err) { return { ok: false, error: 'helper: ' + err.message }; }).then(function (r) {
       var got = [];
       scr.read[key] = { at: Date.now(), values: (r && r.values) || {}, notes: (r && r.notes) || {}, mixed: (r && r.mixed) || [], error: r && !r.ok ? (r.error || 'read failed') : '' };
       if (r && r.ok) {
@@ -112,10 +122,38 @@ function scrRead(lc) {
         scrAppliedStore();
       }
       log('screen_read', { screen: lc.name, device: deviceLabel(d), ok: !!(r && r.ok), read: got, values: r && r.values, error: r && r.error });
+      if (r && r.record) gmLogCard(d, lc, r.record);   // what NovaLCT stored, against our maths (app-gamut.js)
       if (ui.tab !== 'screen') return;
       var a = document.activeElement, using = a && a.closest && a.closest('#scForm') && /^(INPUT|SELECT)$/.test(a.tagName);
       scr.keepForm = !!using; renderScreenTab(); scr.keepForm = false;   // a control being used stays put
     });
+  }));
+}
+// Read back: ask the processors again and show, setting by setting, what is set here against what they hold.
+function scrReadBack() {
+  var lc = scrLc(); if (!lc) return;
+  var devs = scrDevices(lc).filter(function (e) { return e.d.hw && DRV.of(e.d).readColor; });
+  if (!devs.length) return toast('Nothing to read: no linked processor drives ' + lc.name);
+  var was = {}, want = scrWanted(lc);
+  devs.forEach(function (e) { var k = scrKey(e.d, lc); was[k] = JSON.parse(JSON.stringify(scrApplied(e.d, lc))); delete scr.readDone[k]; });
+  return scrRead(lc).then(function () {
+    var rows = [];
+    devs.forEach(function (e) {
+      var key = scrKey(e.d, lc), rd = scr.read[key] || { values: {}, notes: {} };
+      if (rd.error) return rows.push({ s: deviceLabel(e.d), a: '—', b: '—', ok: false, why: rd.error });
+      SCR_FIELDS.forEach(function (f) {
+        if (!(f.k in rd.values)) return;
+        var here = f.k in want ? want[f.k] : was[key][f.k], v = rd.values[f.k], known = v !== null && v !== undefined;
+        rows.push({ s: f.label + (devs.length > 1 ? ' · ' + deviceLabel(e.d) : ''), a: here === undefined ? '—' : scrFmt(f, here), b: known ? scrFmt(f, v) : '—', ok: known && (here === undefined || here === v),
+          why: !known ? rd.notes[f.k] || 'not known' : rd.mixed.indexOf(f.k) >= 0 ? 'its ports differ' : 'differs' });
+      });
+    });
+    $('cmpTitle').textContent = 'Read back: ' + lc.name;
+    $('cmpBody').innerHTML = '<table class="cmp"><tr><th>Setting</th><th>Set here</th><th>On the processor</th><th></th></tr>' + rows.map(function (r) {
+      return '<tr class="' + (r.ok ? 'ok' : 'bad') + '"><td>' + esc(r.s) + '</td><td>' + esc(r.a) + '</td><td>' + esc(r.b) + '</td><td>' + (r.ok ? '✓' : '⚠ ' + esc(r.why)) + '</td></tr>';
+    }).join('') + '</table>';
+    $('cmpDlg').hidden = false;
+    log('screen_read_back', { screen: lc.name, settings: rows.length, differences: rows.filter(function (r) { return !r.ok; }).length });
   });
 }
 
@@ -138,11 +176,12 @@ function scrLowLatencyCheck(lc) {
     var a = span[keys[i]], b = span[keys[j]];
     if (a.x0 === b.x0 || a.x1 === b.x1 || (b.x0 < a.x1 && b.x1 > a.x0)) bad.push([a, b]);
   }
-  var name = function (r) { return portLabel(r.sender, r.port) + ' (X ' + r.x0 + '–' + r.x1 + ')'; };
+  var name = function (r) { return portLabel(r.sender, r.port) + ' (X ' + r.x0 + '–' + r.x1 + ')'; }, more = bad.length > 1 ? ' (+' + (bad.length - 1) + ' more pair' + (bad.length > 2 ? 's' : '') + ')' : '';
   if (keys.length < 2) return { ok: true, text: keys.length ? 'One port drives this screen: nothing to compare.' : 'No cabinets are wired on this screen yet.' };
   if (!bad.length) return { ok: true, text: 'OK: all ' + keys.length + ' ports feed their own columns.' };
-  return { ok: false, bad: bad, text: 'Can’t be switched on: ' + name(bad[0][0]) + ' and ' + name(bad[0][1]) + ' cover the same columns' +
-    (bad.length > 1 ? ' (+' + (bad.length - 1) + ' more pair' + (bad.length > 2 ? 's' : '') + ')' : '') +
+  // short: the one line under the switch; text: the whole reason (its tooltip, and Apply's skip line)
+  return { ok: false, bad: bad, short: 'Can’t be switched on: ' + portLabel(bad[0][0].sender, bad[0][0].port) + ' and ' + portLabel(bad[0][1].sender, bad[0][1].port) + ' overlap' + more,
+    text: 'Can’t be switched on: ' + name(bad[0][0]) + ' and ' + name(bad[0][1]) + ' cover the same columns' + more +
     '. For low latency every port must feed its own vertical strip (ports stacked in rows always fail).' };
 }
 
@@ -154,7 +193,7 @@ function scrSupports(d, f) {
 }
 function scrFmt(f, v) {
   if (v === undefined || v === null) return '—';
-  if (f.k === 'gamut') { var g = SCR_GAMUTS.filter(function (x) { return x[0] === v; })[0]; return g ? g[1] : v; }
+  if (f.k === 'gamut') { var ce = gmEntry(v), g = SCR_GAMUTS.filter(function (x) { return x[0] === v; })[0]; return ce ? ce.name : g ? g[1] : v; }
   if (f.cap === 'll') return v ? 'On' : 'Off';
   return v + (f.unit === '%' ? ' %' : f.unit === 'K' ? ' K' : f.unit || '');
 }
@@ -248,7 +287,7 @@ function scrApplyScreens(lcs, title) {
 // Live: send one setting of the current screen to every linked processor that offers it, now, without asking. Per
 // processor and setting one write is in flight; a newer value waits and goes next (older waiting values are dropped).
 function scrLive(k, v) {
-  var lc = scrLc(), f = scrField(k); if (!lc || !f || f.keep) return;
+  var lc = scrLc(), f = scrField(k); if (!lc || !f || f.keep || scrLocked()) return;
   lc.color = lc.color || {}; lc.color[k] = v;   // wanted (the undo step is taken when the control is released)
   scrDevices(lc).forEach(function (e) {
     var d = e.d; if (!d.hw || !scrSupports(d, f)) return;
@@ -312,27 +351,27 @@ function scrThumbSvg(lc, cellsBy, cls) {
 // the gamma curve, the colour temperature on its scale, the gamut's triangle in the CIE xy diagram. Redrawn with the middle,
 // so they follow the sliders live.
 var SCR_PRIM = { original: [[.695, .303], [.175, .722], [.137, .052]], rec709: [[.64, .33], [.30, .60], [.15, .06]], dcip3: [[.68, .32], [.265, .69], [.15, .06]],
-  dcip3d65: [[.68, .32], [.265, .69], [.15, .06]], rec2020: [[.708, .292], [.17, .797], [.131, .046]] };
+  dcip3d65: [[.68, .32], [.265, .69], [.15, .06]], rec2020: [[.708, .292], [.17, .797], [.131, .046]], ntsc: [[.67, .33], [.21, .71], [.14, .08]] };
 function scrVisHtml(val) {
   var b = Math.max(0, Math.min(100, +val.brightness || 0)), g = +val.gamma || 2.2, ct = +val.colorTemp || 6500, gm = val.gamut || 'original';
   var xy = function (q) { return (6 + q[0] * 86).toFixed(1) + ' ' + (58 - q[1] * 60).toFixed(1); };
   var loc = [[.174, .005], [.144, .030], [.091, .133], [.045, .295], [.008, .538], [.014, .750], [.074, .834], [.155, .806], [.230, .754], [.302, .692], [.373, .624], [.444, .555], [.512, .487], [.575, .424], [.627, .372], [.666, .334], [.692, .308], [.735, .265]];
   var crv = '', i; for (i = 0; i <= 24; i++) { var x = i / 24; crv += (i ? 'L' : 'M') + (6 + x * 84).toFixed(1) + ' ' + (54 - Math.pow(x, g) * 48).toFixed(1); }
   var rays = ''; for (i = 0; i < 8; i++) { var a = i * Math.PI / 4; rays += 'M' + (48 + Math.cos(a) * 15).toFixed(1) + ' ' + (30 + Math.sin(a) * 15).toFixed(1) + 'L' + (48 + Math.cos(a) * 21).toFixed(1) + ' ' + (30 + Math.sin(a) * 21).toFixed(1); }
-  var tri = SCR_PRIM[gm] ? '<path class="sc-tri" d="M' + SCR_PRIM[gm].map(xy).join('L') + 'Z"/>' : '<text class="sc-na" x="48" y="34">from input</text>';
+  var pr = SCR_PRIM[gm] || gmPrims(gm), tri = pr ? '<path class="sc-tri" d="M' + pr.map(xy).join('L') + 'Z"/>' : '<text class="sc-na" x="48" y="34">from input</text>';
   var tile = function (t, pic, v, led) { return '<div class="sc-v"><span class="sc-vt">' + t + '</span><span class="sc-vp">' + pic + '</span><b>' + v + '</b><i class="sc-led" style="width:' + led + '%"></i></div>'; };
   return '<div class="sc-vis pro-only" aria-hidden="true">' +
     tile('Brightness', '<svg viewBox="0 0 96 60"><path class="sc-ray" d="' + rays + '" style="opacity:' + (0.25 + b / 133).toFixed(2) + '"/><circle class="sc-sun" cx="48" cy="30" r="10" style="opacity:' + (0.3 + b / 143).toFixed(2) + '"/></svg>', b + '<small> %</small>', b) +
     tile('Gamma', '<svg viewBox="0 0 96 60"><path class="sc-grid" d="M6 54H90M6 6V54M48 6V54M6 30H90"/><path class="sc-lin" d="M6 54L90 6"/><path class="sc-crv" d="' + crv + '"/></svg>', g.toFixed(1), Math.round((g - 1) / 3 * 100)) +
     tile('Colour temp', '<span class="sc-ct"><i style="left:' + Math.max(0, Math.min(100, (ct - 2000) / 80)).toFixed(1) + '%"></i></span>', ct + '<small> K</small>', Math.round((ct - 2000) / 80)) +
-    tile('Gamut', '<svg viewBox="0 0 96 60"><path class="sc-loc" d="M' + loc.map(xy).join('L') + 'Z"/>' + tri + '<circle class="sc-wp" cx="' + xy([.3127, .329]).split(' ')[0] + '" cy="' + xy([.3127, .329]).split(' ')[1] + '" r="1.6"/></svg>', esc(scrFmt(scrField('gamut'), gm).replace(/ \(native\)$/, '')), 100) +
+    tile('Gamut', '<svg viewBox="0 0 96 60"><path class="sc-loc" d="M' + loc.map(xy).join('L') + 'Z"/>' + tri + '<circle class="sc-wp" cx="' + xy([.3127, .329]).split(' ')[0] + '" cy="' + xy([.3127, .329]).split(' ')[1] + '" r="1.6"/></svg>', esc(scrFmt(scrField('gamut'), gm)), 100) +
     '</div>';
 }
 function scrFieldHtml(f, lc, val, devs) {
   var sup = devs.filter(function (e) { return scrSupports(e.d, f); }), off = devs.length && !sup.length, h = '';
   var want = scrWanted(lc), set = f.k in want;
   var changed = set && devs.some(function (e) { return e.d.hw && scrSupports(e.d, f) && scrApplied(e.d, lc)[f.k] !== want[f.k]; });
-  var id = 'sc_' + f.k, dis = off || scr.busy ? ' disabled' : '';
+  var id = 'sc_' + f.k, dis = off || scr.busy || scrLocked() ? ' disabled' : '';
   var slider = f.k === 'brightness' || f.k === 'gamma' || f.k === 'colorTemp';
   var chg = changed ? '<span class="chg" title="Different from what was last applied">●</span>' : '';
   if (slider) {   // in the side column: name on top, the slider across the whole column, the value box and ↺ underneath
@@ -349,14 +388,17 @@ function scrFieldHtml(f, lc, val, devs) {
     (changed ? '<span class="chg" title="Different from what was last applied">● not applied</span>' : '') + '</label>';
   if (slider) { /* drawn above */ }
   else if (f.k === 'gamut')
-    h += '<select id="' + id + '" data-k="gamut"' + dis + '>' + SCR_GAMUTS.map(function (g) { return '<option value="' + g[0] + '"' + (g[0] === val ? ' selected' : '') + '>' + esc(g[1]) + '</option>'; }).join('') + '</select>';
+    h += '<select id="' + id + '" data-k="gamut"' + dis + (devs.some(function (e) { return (DRV.caps(e.d).color || {}).gamuts; }) ? ' title="NovaLCT’s buttons: Native = Off, Rec.709 = PAL, NTSC. Made from its default LED colours, Rec.709 and NTSC dim the wall (Rec.709: red 42 %, blue 29 %)."' : '') + '>' + scrGamuts(devs).map(function (g) { return '<option value="' + g[0] + '"' + (g[0] === val ? ' selected' : '') + '>' + esc(g[1]) + '</option>'; }).join('') + '</select>' + lfFieldHtml(lc, devs);
   else if (f.k === 'bitDepth') {
     h += '<select id="' + id + '" data-k="bitDepth"' + dis + '>' + [8, 10, 12].map(function (b) { return '<option value="' + b + '"' + (b === val ? ' selected' : '') + '>' + b + '-bit</option>'; }).join('') + '</select>';
     var cap = SCR.portCapacity(val, P.refresh);
     h += '<div class="sc-note">' + (cap ? fmt(cap) + ' px/port' : 'n/a') + ' at ' + val + '-bit' + itip('Port capacity at ' + P.refresh + ' Hz: ' + [8, 10, 12].map(function (b) { var c = SCR.portCapacity(b, P.refresh); return b + '-bit ' + (c ? fmt(c) + ' px' : 'n/a'); }).join(' · ') + '.\nThe same setting as Layout → Bit depth.') + '</div>';
-  } else
-    h += '<label class="chk"><input type="checkbox" id="' + id + '" data-k="' + f.k + '"' + (val ? ' checked' : '') + dis + '> On</label>';
-  if (f.k === 'llSender' && devs.some(function (e) { return DRV.caps(e.d).llCheck; })) { var ck = scrLowLatencyCheck(lc); h += '<p class="sc-check ' + (ck.ok ? 'ok' : 'bad') + '">' + esc(ck.text) + '</p>'; }
+  } else {
+    // LCT's low-latency rule failing: the switch can't go on (greyed, the reason as its tooltip; switching off stays possible)
+    var ck = f.k === 'llSender' && devs.some(function (e) { return DRV.caps(e.d).llCheck; }) ? scrLowLatencyCheck(lc) : null, no = ck && !ck.ok && !val;
+    h += '<label class="chk"' + (no ? ' title="' + esc(ck.text) + '"' : '') + '><input type="checkbox" id="' + id + '" data-k="' + f.k + '"' + (val ? ' checked' : '') + (no && !dis ? ' disabled' : dis) + '> On</label>';
+    if (ck) h += '<p class="sc-check ' + (ck.ok ? 'ok' : 'bad') + '"' + (ck.short ? ' title="' + esc(ck.text) + '"' : '') + '>' + esc(ck.short || ck.text) + '</p>';
+  }
   // where it goes is the one "→ processor" line on top (scrTargetHtml); here only why a processor doesn't take it
   var grp = devs.some(function (e) { return SCR_FIELDS.some(function (g) { return g.grp === f.grp && scrSupports(e.d, g); }); });   // none at all: the target line says it
   if (grp && sup.length < devs.length) h += '<div class="sc-why">' + (sup.length ? 'Not on ' + devs.filter(function (e) { return sup.indexOf(e) < 0; }).map(function (e) { return esc(deviceLabel(e.d)); }).join(', ') : 'Not on ' + (devs.length === 1 ? 'this processor' : 'these processors')) + '</div>';
@@ -407,7 +449,7 @@ function renderScreenTab() {
   // right: the controls of the chosen group (a live update re-renders only the middle, never the slider in use)
   Array.prototype.forEach.call(document.querySelectorAll('#scSeg [data-sc]'), function (b) { var on = b.dataset.sc === scr.tab; b.classList.toggle('on', on); b.setAttribute('aria-selected', String(on)); });
   // (Image Quality's "goes out as you move them" is the Live tag on its segment button, index.html)
-  if (!scr.keepForm) $('scForm').innerHTML = scrTargetHtml(devs, fields) + fields.map(function (f) { return scrFieldHtml(f, lc, val[f.k], devs); }).join('');
+  if (!scr.keepForm) $('scForm').innerHTML = (scrLocked() ? '<p class="hint">Locked: unlock sending to change these (Settings ▸ Alpha ▸ Allow sending).</p>' : '') + scrTargetHtml(devs, fields) + fields.map(function (f) { return scrFieldHtml(f, lc, val[f.k], devs); }).join('');
   var pending = scrChanges(lc).some(function (p) { return p.linked && p.send.length; });
   $('scApply').disabled = scr.busy || !pending; $('scApply').textContent = scr.busy ? 'Applying…' : 'Apply…';
   $('scRevert').disabled = scr.busy;
@@ -417,6 +459,7 @@ function renderScreenTab() {
 
 function bindScreen() {
   var seg = $('scSeg'); if (!seg) return;
+  $('scReadBack').onclick = function () { scrReadBack(); };
   seg.onclick = function (e) { var b = e.target.closest('[data-sc]'); if (!b) return; scr.tab = b.dataset.sc; renderScreenTab(); };
   var num = function (f, x) { var v = +x; if (isNaN(v)) return null; if (f.min != null) v = Math.max(f.min, Math.min(f.max, v)); if (f.step === 0.1) v = Math.round(v * 10) / 10; return v; };
   [$('scForm')].forEach(function (form) {   // all controls live in the right panel

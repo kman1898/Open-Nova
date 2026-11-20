@@ -17,7 +17,7 @@
 // VMP; the switch is in its header (and Tools ▸ Enter / Exit offline mode). There is no generic processor to pick.
 // Owns: bindDevices, renderDevices, renderDevProps, devSelected, devShow,
 // devGoPort, devRangeText, devIsBlank, devAdd, devBands, devPerRow, devListHtml,
-// devCardHtml, devMiniSvg, devRearSvg, devPortsHtml, fillSelect, cardOptionGroups, devPick, devPickerDialog,
+// devCardHtml, devPortCount, devPortWords, devModelChange, devMiniSvg, devRearSvg, devPortsHtml, fillSelect, cardOptionGroups, devPick, devPickerDialog,
 // devOpenPicker, devRenderPicker, devRenderPickSum, devClosePicker, devFirstRun, devMenu, devSvcFold, devMultiPick, devMultiClear;
 // ui.devSel (selected processor id), ui.devMulti (ids picked together with Ctrl/⌘ / Shift: the pro look's strip shows them), ui.devDrag (id of the card being dragged), ui.devSvcOpen (the Service section is open).
 // Depends on: app-core (P, ui, $, esc, uid, int, log, commit, toast, save, snapshot, lctById,
@@ -37,8 +37,10 @@
 // ------------------------------------------------------------------ helpers
 // The processor shown in the Processors tab: the one picked there, else the one of the active
 // sending card, else the first.
+// Online, only a connected processor (app-online.js olShown).
 function devSelected() {
-  return deviceById(ui.devSel) || deviceOfCard(ui.mSender || 0) || P.devices[0];
+  var on = typeof olShown === 'function' ? function (d) { return d && olShown(d) ? d : null; } : function (d) { return d; };
+  return on(deviceById(ui.devSel)) || on(deviceOfCard(ui.mSender || 0)) || (typeof olShownDevices === 'function' ? olShownDevices() : P.devices)[0];
 }
 // Several processors at once (the tree's Processors view, the strip's processor switcher): Ctrl/⌘-click adds / takes one away,
 // Shift-click takes the range from the selected one; a plain click or Esc goes back to one. Only what is shown changes (the
@@ -107,9 +109,10 @@ function devAdd(key, qty, cardType, nCards) {
 // <option> rows for picking a sending card, grouped under their processor. n = how many cards
 // to offer (past the last card: "not added").
 function cardOptionGroups(sel, n) {
-  var h = '', cur = null;
+  var h = '', cur = null, gone = typeof olGone === 'function' ? olGone() : [];   // online: not the cards of a processor that isn't connected
   for (var i = 0; i < n; i++) {
     var c = P.processors[i], d = c && deviceById(c.dev), g = d ? d.id : '-';
+    if (d && i !== sel && gone.indexOf(d) >= 0) continue;
     if (g !== cur) {
       if (cur !== null) h += '</optgroup>';
       h += '<optgroup label="' + esc(d ? deviceLabel(d) + ' · ' + procModel(d.model).name : 'Not added') + '">';
@@ -256,6 +259,7 @@ function devPortsHtml(d, use) {
 function devListHtml(q) {
   var h = '', shown = 0, cellsBy = allCells(), dm = lctDevMap(cellsBy);
   P.devices.forEach(function (d, k) {
+    if (typeof olShown === 'function' && !olShown(d)) return;   // online: not connected (app-online.js)
     var m = procModel(d.model), idx = cardsOfDevice(d), lcs = lctScreensOf(d, cellsBy, dm);
     if (q && (deviceLabel(d) + ' ' + m.name + ' ' + lcs.map(function (l) { return l.name; }).join(' ')).toLowerCase().indexOf(q) < 0) return;
     shown++;
@@ -274,19 +278,37 @@ function devListHtml(q) {
         (ty ? '<span class="tn-type">' + ty.kind + '</span>' : '') + '</div>';
     });
   });
-  if (!shown) h += '<p class="hint tn-none">No processor matches “' + esc(q) + '”.</p>';
+  if (!shown && q) h += '<p class="hint tn-none">No processor matches “' + esc(q) + '”.</p>';
+  else if (!shown && P.devices.length) h += '<p class="hint tn-none">No processors connected.</p>';   // online (app-online.js)
   return h;
 }
+// The ports of processor d, one meaning everywhere (this card, the Device tile in app-pipeline.js): used = ports with
+// cabinets wired; backup = backup ports of port pairs (no cabinets of their own), said apart: "4 of 36 ports used · 4 backup".
+function devPortCount(d, use) {
+  var n = { total: 0, used: 0, backup: 0 }, bk = {}, b = typeof bkRead === 'function' ? bkRead() : { mode: 'none' };
+  if (b.mode === 'port') b.pairs.forEach(function (q) { bk[q.bs + ':' + q.bp] = 1; });
+  cardsOfDevice(d).forEach(function (i) { var np = portsOfSender(i) || 0; n.total += np; for (var p = 0; p < np; p++) { if (use[i + ':' + p]) n.used++; else if (bk[i + ':' + p]) n.backup++; } });
+  return n;
+}
+function devPortWords(n) { return n.used + ' of ' + n.total + ' ports used' + (n.backup ? ' · ' + n.backup + ' backup' : ''); }
+// Processor properties ▸ Model: a processor with cabinets wired asks first (its cards and ports change); a new one (nothing
+// wired) changes at once. Either way one undo step (setProcessorModel commits).
+function devModelChange(d, key) {
+  if (d.model === key || !PROC_MODELS[key]) return;
+  var w = wiredCards(), from = procModel(d.model).name, to = procModel(key).name, who = deviceLabel(d);
+  if (cardsOfDevice(d).some(function (i) { return w[i]; }) && !confirm('Change ' + who + (who !== from ? ' (' + from + ')' : '') + ' to ' + to + '?\n\nIts cards and ports change to the ' + to +
+      '’s. If cabinets are on ports the ' + to + ' doesn’t have, nothing changes. Ctrl+Z undoes it.')) { log('set_processor_model', { processor: who, to: to, cancelled: true }); return; }
+  setProcessorModel(d, key);
+}
 function devCardHtml(d, k, use) {
-  var m = procModel(d.model), idx = cardsOfDevice(d), on = d === devSelected(), n = 0, used = 0;
-  idx.forEach(function (i) { var np = P.processors[i].ports; n += np; for (var p = 0; p < np; p++) if (use[i + ':' + p]) used++; });
+  var m = procModel(d.model), idx = cardsOfDevice(d), on = d === devSelected(), pc = devPortCount(d, use);
   var what = m.kind === 'chassis' ? idx.length + ' of ' + m.slots + ' slots' : devRangeText(idx);
   return '<div class="dv-card' + (on ? ' on' : '') + '" draggable="true" data-id="' + d.id + '" role="option" aria-selected="' + on + '" title="' + esc(deviceLabel(d) + ' — click to select, drag (or ← →) to change the cascade order, right-click for more') + '">' +
     '<div class="dv-c-top"><span class="dv-dot' + (m.kind === 'custom' ? ' warn' : '') + '"></span><b class="dv-c-name">' + esc(deviceLabel(d)) + '</b>' +
       '<span class="dv-pos" title="Position in the cascade">' + (k + 1) + '</span></div>' +
     '<div class="dv-c-sub">' + esc(m.name) + ' <span class="dv-bar-sep">|</span> ' + (m.kind === 'chassis' ? devRangeText(idx) : what) + '</div>' +
     '<div class="dv-c-img">' + devMiniSvg(d, use) + '</div>' +
-    '<div class="dv-c-foot">' + (m.kind === 'custom' ? '<span class="dv-c-warn" data-act="setmodel" title="Its model isn’t known (an imported file): pick it in Processor properties, or link it — nothing is sent until then">Pick a model</span>' : '<span class="dv-c-use">' + used + ' of ' + n + ' ports used' + (m.kind === 'chassis' ? ' · ' + what : '') + '</span>') +
+    '<div class="dv-c-foot">' + (m.kind === 'custom' ? '<span class="dv-c-warn" data-act="setmodel" title="Its model isn’t known (an imported file): pick it in Processor properties, or link it — nothing is sent until then">Pick a model</span>' : '<span class="dv-c-use"' + (m.kind === 'chassis' ? ' title="' + esc(devPortWords(pc) + ' · ' + what) + '"' : '') + '>' + devPortWords(pc) + '</span>') +   // the slots: Processor properties
       '<span class="dv-c-acts">' +
         '<button class="mini" data-act="left" title="Earlier in the cascade (its cards get lower numbers)"' + (k === 0 ? ' disabled' : '') + '>←</button>' +
         '<button class="mini" data-act="right" title="Later in the cascade"' + (k === P.devices.length - 1 ? ' disabled' : '') + '>→</button>' +
@@ -304,18 +326,20 @@ function renderDevices(use) {
   // the shared tree's Processors view (app-shell.js) can be open on any tab that shows the tree
   if (ui.treeView === 'procs' && !$('treeProcs').hidden) {
     $('dvProj').textContent = P.name || 'Untitled';
-    var realCards = P.processors.filter(function (c, i) { return cardIsReal(i); }).length;   // a fixed processor's card isn't counted
+    var realCards = P.processors.filter(function (c, i) { var o = deviceOfCard(i); return cardIsReal(i) && (!o || olShown(o)); }).length;   // a fixed processor's card isn't counted
     var chassis = P.devices.some(function (x) { return procModel(x.model).kind === 'chassis'; });
-    $('dvProjSub').textContent = (olMode() === 'online' ? 'Online · ' : 'Offline · ') + P.devices.length + ' processor' + (P.devices.length === 1 ? '' : 's') +
+    var nOn = P.devices.length - olGone().length;   // online: the connected ones (app-online.js)
+    $('dvProjSub').textContent = (olMode() === 'online' ? 'Online · ' : 'Offline · ') + nOn + ' processor' + (nOn === 1 ? '' : 's') +
       (realCards ? ' · ' + realCards + (chassis ? ' sending card' : ' card') + (realCards === 1 ? '' : 's') : '');
     $('dvProjSub').title = olMode() === 'online' ? 'Online project: Add processor lists the processors found on the network' : 'Offline project: Add processor lists the model catalogue (Tools ▸ Offline Mode)';
     $('devList').innerHTML = devListHtml(($('devSearch').value || '').trim().toLowerCase());
   }
   if (ui.tab !== 'devices') return;
-  var h = '';
-  P.devices.forEach(function (dv, k) { h += devCardHtml(dv, k, use); });
+  var h = '', on = typeof olShown === 'function' ? olShown : function () { return true; };
+  P.devices.forEach(function (dv, k) { if (on(dv)) h += devCardHtml(dv, k, use); });   // online: the connected ones; the others in one fold under the cards (app-online.js)
   h += '<button class="dv-card dv-add" data-act="add" title="' + (olMode() === 'online' ? 'Add a processor found on the network (online)' : 'Add a processor from the model catalogue (offline)') + ': it cascades after the last one"><span>+ Add processor</span></button>';
   $('devCards').innerHTML = h;
+  if (typeof olGoneRender === 'function') olGoneRender();
   if (d) {
     var m = procModel(d.model);
     $('devRearTitle').innerHTML = '<span class="dv-dot' + (m.kind === 'custom' ? ' warn' : '') + '"></span><b>' + esc(m.name) + '</b><span class="hint">' + esc(deviceLabel(d)) + ' · ' + devRangeText(cardsOfDevice(d)) +
@@ -330,6 +354,8 @@ function renderDevices(use) {
 function renderDevProps(d, use) {
   var none = !d;   // no processor yet: only "+ Add processor"
   $('dvNone').hidden = !none;
+  var nt = $('dvNone').firstChild;   // online with every processor not connected: say that instead (app-online.js)
+  if (none && nt && nt.nodeType === 3) nt.textContent = typeof olGone === 'function' && olGone().length ? 'No processors connected.' : 'No processor in this project yet.';
   ['dvInfo', 'dvCards', 'dvHw'].forEach(function (k) { var c = document.querySelector('#modDevices [data-card="' + k + '"]'); if (c) c.hidden = none; });
   $('dvService').hidden = none;
   if (!d) return;
@@ -367,7 +393,9 @@ function renderDevProps(d, use) {
     if (m.kind === 'chassis') h += '<select data-act="type" data-card="' + i + '" aria-label="Output card in slot ' + (s + 1) + '" title="Output card in this slot">' +
       m.cardTypes.map(function (t) { return '<option value="' + t + '"' + (t === c.type ? ' selected' : '') + '>' + esc(OUTPUT_CARDS[t].name) + '</option>'; }).join('') + '</select>';
     else if (m.kind === 'custom') h += '<label class="dv-cr-ports" title="Ports on this card (1–' + MAX_CARD_PORTS + ')">Ports<input type="number" min="1" max="' + MAX_CARD_PORTS + '" data-act="ports" data-card="' + i + '" value="' + c.ports + '"></label>';
-    if (m.kind !== 'fixed') h += '<button class="mini" data-act="rmcard" data-card="' + i + '"' + (need || idx.length < 2 ? ' disabled' : '') +
+    if (cardHasScreen(d)) { var cs = cardScreen(i); h += '<select data-act="screen" data-card="' + i + '" aria-label="Screen of ' + esc(cardName(i, true)) + '" title="The screen this card draws on: its own, or shared with other cards">' +
+      (cs ? '' : '<option value="" selected>Own screen</option>') + lctScreensOf(d).map(function (lc) { return '<option value="' + lc.id + '"' + (cs === lc ? ' selected' : '') + '>' + esc(lc.name) + '</option>'; }).join('') + '<option value="__new">New screen</option></select>'; }
+    if (m.kind !== 'fixed') h += '<button class="mini" data-act="rmcard\" data-card="' + i + '"' + (need || idx.length < 2 ? ' disabled' : '') +
       ' title="' + (need ? cardName(i) + ' has cabinets wired — move or clear its ports first' : idx.length < 2 ? 'A processor keeps at least one card (Remove processor removes it all)'
         : 'Remove this card; later cards move up one number') + '">×</button>';
     h += '</div>';
@@ -660,7 +688,7 @@ function bindDevices() {
     log('rename_processor', { from: deviceLabel(d), to: v });
     d.name = v; commit(); renderAll();
   });
-  $('dvModel').addEventListener('change', function () { var d = devSelected(); if (d) setProcessorModel(d, this.value); renderAll(); });
+  $('dvModel').addEventListener('change', function () { var d = devSelected(); if (d) devModelChange(d, this.value); renderAll(); });
   $('dvRemove').onclick = function () { var d = devSelected(); if (d) removeProcessor(d); };
   var body = $('dvCardsBody');
   body.onclick = function (e) {
@@ -675,7 +703,8 @@ function bindDevices() {
   };
   body.onchange = function (e) {
     var t = e.target, i = +t.dataset.card;
-    if (t.dataset.act === 'type') { setOutputCardType(i, t.value); renderAll(); }
+    if (t.dataset.act === 'screen') { if (t.value) cardToScreen(i, t.value); }
+    else if (t.dataset.act === 'type') { setOutputCardType(i, t.value); renderAll(); }
     else if (t.dataset.act === 'ports') setCardPorts(i, int(t.value, P.processors[i].ports));
   };
   // Keys: while the picker is open they are its own. (Keeping the canvas shortcuts off the hidden

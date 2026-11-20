@@ -5,19 +5,22 @@
 //     change of their layout automatically, a moment after the edit (only what's linked, not simulated, and only
 //     when its own layout changed). Switch off per processor in its Hardware card.
 //   - Save: the ONLY path that stores in flash (LCT's Save sequence, Unico's cabinet/solid). After a Send or a live
-//     apply the processor is "unsaved": a banner lists them with a Save button. Save always asks first.
+//     apply the processor is "unsaved": an amber chip in the menu bar names them, its Save saves exactly those (the same
+//     confirm as the header's Save; greyed only with the reason). Save always asks first.
+//   - Header: the Send / Save tiles act on the processors worked on (app-pipeline.js pipeAct), their ▾ opens the menu.
 //   - Compare: project vs hardware for one processor (placed vs detected per port; Unico also positions).
 // Owns: LIVE_KEY, LIVE_STALE, liveSlot, liveKey, liveStore, liveSet, liveLoad, UNSAVED_KEY, hwUnsavedStore, hwUnsaved, hwMarkUnsaved, hwSaveDevices, liveApplySchedule, liveApplyNow, hwCompare, renderUnsaved,
 // openSendMenu, bindSave; hw.unsaved, hw.applied, hw.applying.
 // Depends on: app-core (P, ui, $, esc, log, toast), app-hardware (hw, hwSend, hwSendModel, hwPairs, hwPortCells,
 // renderHwCard), drv-core (DRV), app-context-menu (openMenu), app-processors (cardsOfDevice, portLabel in
-// app-capacity), all at run time.
+// app-capacity), app-pipeline (pipeAct), app-alpha (alphaOwn), all at run time.
 // Classic script, not an ES module (see app-core.js); every top-level name is a shared global.
 'use strict';
 
 var UNSAVED_KEY = 'opennova.unsaved';   // kept in this browser so a reload still shows the reminder
 function hwUnsavedStore() { try { localStorage.setItem(UNSAVED_KEY, JSON.stringify(hw.unsaved || {})); } catch (e) { /* storage unavailable */ } }
-function hwUnsaved() { return (P.devices || []).filter(function (d) { return d.hw && hw.unsaved && hw.unsaved[d.id]; }); }
+// A linked processor that isn't answering isn't warned about: nothing can be saved on it now, and the flag comes back with it.
+function hwUnsaved() { return ((typeof olShownDevices === 'function' ? olShownDevices() : P.devices) || []).filter(function (d) { return d.hw && hw.unsaved && hw.unsaved[d.id] && !((hw.watch || {})[d.id] || {}).err; }); }
 function hwMarkUnsaved(d, why) {
   if (!DRV.caps(d).save) return;
   hw.unsaved = hw.unsaved || {};
@@ -44,9 +47,9 @@ function hwSaveDevices(list) {
     });
   }, Promise.resolve()).then(function () { hwEnd('save'); renderUnsaved(); var d = devSelected && devSelected(); if (d) renderHwCard(d); });
 }
-// The header's Save: all processors of the project, or one of them (● = has changes not saved yet).
+// Save ▾ (the header's menu): all processors of the project, or one of them (● = has changes not saved yet).
 function openSaveMenu(btn) {
-  var linked = (P.devices || []).filter(function (d) { return d.hw && DRV.caps(d).save; }), r = btn.getBoundingClientRect(), items = [{ header: 'Save to the processors’ flash' }];
+  var linked = ((typeof olShownDevices === 'function' ? olShownDevices() : P.devices) || []).filter(function (d) { return d.hw && DRV.caps(d).save; }), r = btn.getBoundingClientRect(), items = [{ header: 'Save to the processors’ flash' }];   // online: the connected ones
   if (!linked.length) items.push({ label: 'No processor linked — Processors ▸ Hardware', disabled: true });
   if (linked.length > 1) items.push({ label: 'Save all processors (' + linked.length + ')', act: function () { hwSaveDevices(linked); } });
   linked.forEach(function (d) { items.push({ label: 'Save ' + deviceLabel(d) + (hw.unsaved && hw.unsaved[d.id] ? '  ●' : ''), act: function () { hwSaveDevices([d]); } }); });
@@ -150,19 +153,21 @@ function hwCompare(d) {
   done('Project vs ' + deviceLabel(d) + ' (cabinets the processor detects)');
 }
 
-// ------------------------------------------------------------------ header + banner
-function renderUnsaved() {
+// ------------------------------------------------------------------ header + the "not saved" chip (menu bar)
+function renderUnsaved(noPipe) {   // noPipe: renderAll draws the pipeline itself
   var bar = $('unsavedBar'); if (!bar) return;
-  var list = hwUnsaved(), applying = hw.applying && Object.keys(hw.applying).some(function (k) { return hw.applying[k]; });
-  bar.hidden = !list.length && !applying;
-  $('unsavedText').textContent = applying ? 'Applying edits to the processor…' :
-    'Not saved on ' + list.map(function (d) { return deviceLabel(d); }).join(', ') + ' — a power cycle loses the live changes.';   // proposal §5 wording; stays visible on every tab (§2.3)
-  $('btnSaveBar').disabled = !!hw.busy || !list.length;
+  var list = hwUnsaved(), applying = hw.applying && Object.keys(hw.applying).some(function (k) { return hw.applying[k]; }), names = list.map(deviceLabel).join(', ');
+  bar.hidden = !list.length && !applying;   // stays visible on every tab (§2.3)
+  $('unsavedText').textContent = applying ? 'Applying…' : 'Not saved: ' + names;
+  bar.title = applying ? 'Applying edits to the processor…' : list.length ? 'Not saved on ' + names + ' — a power cycle loses the live changes.' : '';   // proposal §5 wording
+  // its Save = Save for exactly these processors; greyed only with the reason
+  alphaOwn($('btnSaveBar'), !!hw.busy || !list.length, hw.busy ? 'Wait — ' + (HW_BUSY_WORDS[hw.busy] || hw.busy) + ' is still running' :
+    !list.length ? 'Nothing to save yet — the edits are still being applied' : 'Save ' + names + ' to flash (asks first)');
   $('btnSaveHw').classList.toggle('warn', list.length > 0);
-  if (typeof renderPipe === 'function') renderPipe();   // the Save tile (app-pipeline.js)
+  if (!noPipe && typeof renderPipe === 'function') renderPipe();   // the Save tile (app-pipeline.js)
 }
 function openSendMenu(btn) {
-  var linked = (P.devices || []).filter(function (d) { return d.hw; }), r = btn.getBoundingClientRect(), items = [{ header: 'Send layout' }];
+  var linked = ((typeof olShownDevices === 'function' ? olShownDevices() : P.devices) || []).filter(function (d) { return d.hw; }), r = btn.getBoundingClientRect(), items = [{ header: 'Send layout' }];   // online: the connected ones
   if (!linked.length) items.push({ label: 'No processor linked — Processors ▸ Hardware', disabled: true });
   if (linked.length > 1) items.push({ label: 'Send to all processors (' + linked.length + ')', act: hwSendAll });
   linked.forEach(function (d) {
@@ -184,9 +189,12 @@ function bindSave() {
   hw.unsaved = {}; hw.applying = {};
   liveLoad();
   try { hw.unsaved = JSON.parse(localStorage.getItem(UNSAVED_KEY) || '{}') || {}; } catch (e) { /* storage unavailable */ }
-  $('btnSendHdr').onclick = function (e) { e.stopPropagation(); openSendMenu(this); };
-  $('btnSaveHw').onclick = function (e) { e.stopPropagation(); openSaveMenu(this); };   // all, or one processor
-  $('btnSaveBar').onclick = function () { hwSaveDevices(hwUnsaved()); };
+  // one action per tile (user decision D1): the tile = Send / Save to the processors it names; its ▾ = the menu (all, one, Compare)
+  $('btnSendHdr').onclick = function (e) { e.stopPropagation(); pipeAct('send'); };
+  $('btnSaveHw').onclick = function (e) { e.stopPropagation(); pipeAct('save'); };
+  $('btnSendMenu').onclick = function (e) { e.stopPropagation(); openSendMenu($('btnSendHdr')); };
+  $('btnSaveMenu').onclick = function (e) { e.stopPropagation(); openSaveMenu($('btnSaveHw')); };
+  $('btnSaveBar').onclick = function () { log('unsaved_save', { processors: hwUnsaved().map(deviceLabel) }); hwSaveDevices(hwUnsaved()); };
   $('cmpClose').onclick = function () { $('cmpDlg').hidden = true; };
   renderUnsaved();
 }

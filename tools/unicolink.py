@@ -159,14 +159,19 @@ class Unico:
         screens = self.get('screen/list-detail')['list']
         leds = [{'screenId': s['screenId'], 'guid': s['guid'], 'name': s['general']['name'], 'type': s['screenIdObj']['type']}
                 for s in screens if s['screenIdObj']['type'] != 8]          # type 8 = the MVR (multiviewer) screen
+        def opt(path, key):   # a device of the family without LED outputs doesn't have these commands (model 0x722A: code 8212)
+            try: return self.get(path)[key]
+            except UnicoError as e:
+                if ' code 8212 ' not in str(e): raise
+                return []
         canvases = [{'canvasId': c['canvasID'], 'slotId': c['slotID'], 'width': c['canvasSize']['canvasWidth'],
                      'height': c['canvasSize']['canvasHeight'], 'online': c['isOnline']}
-                    for c in self.get('screen/canvas-all')['canvasList']]
+                    for c in opt('screen/canvas-all', 'canvasList')]
         # Ports are numbered across the sending cards, card by card (slot order): a VX Pro has one card (ports 0-19); an H2
         # with two 4xFiber cards has ports 0-31 on slot 4 and 32-63 on slot 5. 'cardPort' = the index on its own card,
         # which is what goes into the cabinetID.
         ports = {}
-        for n in self.get('node/sender-netport')['list']:
+        for n in opt('node/sender-netport', 'list'):
             o = n['netPortIdObj']
             if n['canvasID'] and o.get('slotId') is not None:
                 ports.setdefault((o['slotId'], n['netportIndex']), {'cardPort': n['netportIndex'], 'netportId': n['netportID'],
@@ -504,7 +509,9 @@ def _goodbye(call):
 
 def handle(path, body, log):
     if path == '/api/unico/discover':
-        return {'ok': True, 'devices': discover(float(body.get('timeout', 2)))}
+        ds = discover(float(body.get('timeout', 2)))
+        import netif   # nothing found: what the searches met (bind / send errors, the adapters searched, who holds a search port)
+        return dict({'ok': True, 'devices': ds}, **({} if ds else {'search': netif.search_report(owners=True)}))
     dev = Unico(body['host'], int(body.get('port', 8088))).login()
     if path == '/api/unico/info':
         return {'ok': True, 'info': dev.info()}

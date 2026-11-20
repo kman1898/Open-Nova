@@ -248,6 +248,112 @@ ok(w['Tailscale']['type'] == 'vpn' and w['Tailscale']['ipv4'][0]['broadcast'] ==
 ok(w['vEthernet (Default Switch)']['type'] == 'virtual', 'Windows: Hyper-V switch = virtual')
 ok(ips(w['Ethernet 4']) == ['169.254.12.34/16'] and w['Ethernet 4']['type'] == 'ethernet', 'Windows: an automatic (169.254) address is kept (a direct cable to a processor)')
 ok(w['Bluetooth Network Connection']['type'] == 'bluetooth' and not w['Bluetooth Network Connection']['up'], 'Windows: Bluetooth PAN = bluetooth, down')
+# the fallback in other languages: ipconfig writes the console (OEM) code page; the addresses are found by their shape
+WIN_LOCALE = {   # (language, OEM code page, ipconfig /all text) - wording as Windows prints it, made-up adapters
+ 'es': ('cp850', 'Adaptador de Ethernet Ethernet:\r\n\r\n   Descripción . . . . . . . . . . . : Intel(R) Ethernet\r\n'
+        '   Dirección física. . . . . . . . . : 02-00-00-00-00-21\r\n   Dirección IPv4. . . . . . . . . . . . . . : 192.168.0.10(Preferido) \r\n'
+        '   Máscara de subred . . . . . . . . . . . . : 255.255.255.0\r\n   Puerta de enlace predeterminada . . . . . : 192.168.0.1\r\n\r\n'
+        'Adaptador de LAN inalámbrica Wi-Fi:\r\n\r\n   Estado de los medios. . . . . . . . . . . : medios desconectados\r\n'
+        '   Descripción . . . . . . . . . . . : Intel(R) Wi-Fi 6 AX201\r\n   Dirección física. . . . . . . . . : 02-00-00-00-00-22\r\n'),
+ 'fr': ('cp850', 'Carte Ethernet Ethernet :\r\n\r\n   Description. . . . . . . . . . . . . . : Intel(R) Ethernet\r\n'
+        '   Adresse IPv4. . . . . . . . . . . . . .: 192.168.0.10(préféré) \r\n   Masque de sous-réseau. . . . . . . . . : 255.255.255.0\r\n'),
+ 'pt': ('cp850', 'Adaptador Ethernet Ethernet:\r\n\r\n   Descrição . . . . . . . . . . . . : Intel(R) Ethernet\r\n'
+        '   Endereço IPv4. . . . . . . .  . . . . . . . : 192.168.0.10(Preferencial) \r\n   Máscara de Sub-rede . . . . . . . . . . . . : 255.255.255.0\r\n'),
+ 'nl': ('cp850', 'Ethernet-adapter Ethernet:\r\n\r\n   Beschrijving. . . . . . . . . . . : Intel(R) Ethernet\r\n'
+        '   IPv4-adres. . . . . . . . . . . . : 192.168.0.10(voorkeur) \r\n   Subnetmasker. . . . . . . . . . . : 255.255.255.0\r\n'),
+ 'pl': ('cp852', 'Karta Ethernet Ethernet:\r\n\r\n   Opis. . . . . . . . . . . . . . . : Intel(R) Ethernet\r\n'
+        '   Adres IPv4. . . . . . . . . . . . : 192.168.0.10(Preferowane) \r\n   Maska podsieci. . . . . . . . . . : 255.255.255.0\r\n'),
+ 'ru': ('cp866', 'Адаптер Ethernet Ethernet:\r\n\r\n   Описание. . . . . . . . . . . . . : Intel(R) Ethernet\r\n'
+        '   Физический адрес. . . . . . . . . : 02-00-00-00-00-21\r\n   IPv4-адрес. . . . . . . . . . . . : 192.168.0.10(Основной) \r\n'
+        '   Маска подсети . . . . . . . . . . : 255.255.255.0\r\n   Основной шлюз. . . . . . . . . : 192.168.0.1\r\n'),
+ 'zh': ('cp936', 'Windows IP 配置\r\n\r\n   主机名  . . . . . . . . . . . . . : SHOW-PC\r\n\r\n以太网适配器 以太网:\r\n\r\n'
+        '   描述. . . . . . . . . . . . . . . : Intel(R) Ethernet\r\n   物理地址. . . . . . . . . . . . . : 02-00-00-00-00-21\r\n'
+        '   IPv4 地址 . . . . . . . . . . . . : 192.168.0.10(首选) \r\n   子网掩码  . . . . . . . . . . . . : 255.255.255.0\r\n'
+        '   默认网关. . . . . . . . . . . . . : 192.168.0.1\r\n   DHCP 服务器 . . . . . . . . . . . : 192.168.0.1\r\n'),
+ 'ja': ('cp932', 'イーサネット アダプター イーサネット:\r\n\r\n   説明. . . . . . . . . . . . . . . : Intel(R) Ethernet\r\n'
+        '   IPv4 アドレス . . . . . . . . . . : 192.168.0.10(優先) \r\n   サブネット マスク . . . . . . . . : 255.255.255.0\r\n'),
+}
+for lang, (cp, text) in sorted(WIN_LOCALE.items()):
+    got = netif.parse_ipconfig(netif._decode(text.encode(cp), cp))
+    eth = [i for i in got if i['ipv4']]
+    ok(len(eth) == 1 and ips(eth[0]) == ['192.168.0.10/24'] and eth[0]['ipv4'][0]['broadcast'] == '192.168.0.255' and eth[0]['type'] == 'ethernet'
+       and eth[0]['label'] == 'Intel(R) Ethernet',
+       'Windows fallback (%s, %s): the adapter, its address and mask by their shape; the gateway / DHCP server not taken for one' % (lang, cp),
+       [(i['name'], i['type'], ips(i), i['label']) for i in got])
+es = netif.parse_ipconfig(netif._decode(WIN_LOCALE['es'][1].encode('cp850'), 'cp850'))
+ok([(i['type'], i['up'], i['mac']) for i in es] == [('ethernet', True, '02:00:00:00:00:21'), ('wifi', False, '02:00:00:00:00:22')],
+   'Windows fallback (es): Wi-Fi recognised and "medios desconectados" = down; MACs by their shape', [(i['name'], i['type'], i['up'], i['mac']) for i in es])
+ok(netif._decode('Máscara'.encode('utf-8'), 'cp850') == 'Máscara' and netif._decode('Máscara'.encode('cp850'), 'cp850') == 'Máscara',
+   'Windows fallback: output decoded as UTF-8 when it is, else with the OEM code page')
+ok(len([i for i in netif.parse_ipconfig(WIN_LOCALE['zh'][1]) if i['ipv4'] or i['label']]) == 1, 'Windows fallback (zh): the "Windows IP 配置" host part is no adapter')
+
+
+# ------------------------------------------------------------------ Windows: GetAdaptersAddresses through a ctypes stand-in (the same structs, a fake iphlpapi)
+def gaa_standin(adapters, need=None):
+    """A stand-in iphlpapi: builds IP_ADAPTER_ADDRESSES / UNICAST structs (linked as Windows links them) and copies the
+    first into the caller's buffer; first asks for a bigger buffer (ERROR_BUFFER_OVERFLOW) when need is given."""
+    import ctypes as C
+    T, keep = netif.gaa_structs(), []
+
+    def sockaddr(ip):
+        b = C.create_string_buffer(struct.pack('=HH4s8x', 2, 0, socket.inet_aton(ip)), 16); keep.append(b); return b
+
+    nodes = []
+    for name, desc, iftype, oper, mac, addrs in adapters:
+        a = T['ADAPTER'](); a.Length = C.sizeof(a); a.FriendlyName = name; a.Description = desc; a.IfType = iftype; a.OperStatus = oper
+        for k, x in enumerate(mac): a.PhysicalAddress[k] = x
+        a.PhysicalAddressLength = len(mac)
+        us = []
+        for ip, pre in addrs:
+            u = T['UNICAST']()
+            if ':' in ip: b = C.create_string_buffer(struct.pack('=H', 23) + b'\0' * 26, 28); keep.append(b); u.Address.iSockaddrLength = 28   # an AF_INET6 one: skipped
+            else: b = sockaddr(ip); u.Address.iSockaddrLength = 16
+            u.Address.lpSockaddr = C.cast(b, C.c_void_p); u.OnLinkPrefixLength = pre; us.append(u)
+        for x, y in zip(us, us[1:]): x.Next = C.pointer(y)
+        if us: a.FirstUnicastAddress = C.pointer(us[0])
+        keep.extend(us); nodes.append(a)
+    for x, y in zip(nodes, nodes[1:]): x.Next = C.pointer(y)
+    keep.extend(nodes)
+    calls = []
+
+    class Api:
+        @staticmethod
+        def GetAdaptersAddresses(family, flags, reserved, buf, size):
+            calls.append((family, flags, size[0]))
+            if need and size[0] < need: size[0] = need; return 111
+            C.memmove(buf, C.addressof(nodes[0]), C.sizeof(nodes[0])); return 0
+    Api.keep, Api.calls = keep, calls
+    return Api
+
+
+api = gaa_standin([
+    ('Ethernet 2', 'Intel(R) Ethernet Connection (7) I219-V', 6, 1, b'\x02\0\0\0\0\x01', [('fe80::1', 64), ('192.168.0.10', 24)]),
+    ('Ethernet 3', 'Realtek USB GbE Family Controller', 6, 1, b'\x02\0\0\0\0\x02', [('192.168.0.20', 24), ('10.10.0.5', 16)]),
+    ('WLAN', 'Intel(R) Wi-Fi 6 AX201 160MHz', 71, 2, b'\x02\0\0\0\0\x03', []),
+    ('Tailscale', 'Tailscale Tunnel', 53, 1, b'', [('100.101.102.103', 32)]),
+    ('Сетевое подключение Bluetooth', 'Bluetooth Device (Personal Area Network)', 6, 2, b'\x02\0\0\0\0\x05', []),
+    ('Loopback Pseudo-Interface 1', 'Software Loopback Interface 1', 24, 1, b'', [('127.0.0.1', 8)]),
+    ('Teredo Tunneling Pseudo-Interface', 'Teredo Tunneling Pseudo-Interface', 131, 1, b'\0' * 8, [('2001::1', 64)]),
+], need=40000)
+rows = netif.gaa_rows(api)
+ok(rows is not None and len(rows) == 7 and api.calls[0][:2] == (0, 0xE) and api.calls[-1][2] == 40000,
+   'GetAdaptersAddresses (stand-in): AF_UNSPEC, no anycast / multicast / DNS; a bigger buffer when it asks; every adapter walked', api.calls)
+g = by(netif.from_gaa(rows))
+ok(list(g) == ['Ethernet 2', 'Ethernet 3', 'WLAN', 'Tailscale', 'Сетевое подключение Bluetooth'],
+   'GetAdaptersAddresses: friendly names in any language, the loopback and the Teredo tunnel left out', list(g))
+ok(ips(g['Ethernet 2']) == ['192.168.0.10/24'] and g['Ethernet 2']['ipv4'][0]['mask'] == '255.255.255.0' and g['Ethernet 2']['up']
+   and g['Ethernet 2']['type'] == 'ethernet' and g['Ethernet 2']['mac'] == '02:00:00:00:00:01' and g['Ethernet 2']['label'].startswith('Intel'),
+   'GetAdaptersAddresses: Ethernet 2 = IPv4 only (IPv6 skipped), prefix -> mask, up, MAC, description', g['Ethernet 2'])
+ok(ips(g['Ethernet 3']) == ['192.168.0.20/24', '10.10.0.5/16'], 'GetAdaptersAddresses: two IPv4 addresses on one adapter')
+ok(g['WLAN']['type'] == 'wifi' and not g['WLAN']['up'], 'GetAdaptersAddresses: IfType 71 = Wi-Fi; OperStatus down = down')
+ok(g['Tailscale']['type'] == 'vpn' and g['Tailscale']['ipv4'][0]['broadcast'] == '' and g['Tailscale']['mac'] == '', 'GetAdaptersAddresses: Tailscale = VPN, /32, no MAC')
+ok(g['Сетевое подключение Bluetooth']['type'] == 'bluetooth' and not g['Сетевое подключение Bluetooth']['up'], 'GetAdaptersAddresses: Bluetooth PAN by its description')
+ok(netif.gaa_rows(type('Bad', (), {'GetAdaptersAddresses': staticmethod(lambda *a: 87)})) is None, 'GetAdaptersAddresses: an error = None (then ipconfig is read)')
+if sys.platform == 'win32':
+    real_gaa, real_ipc = netif.from_gaa(netif.gaa_rows()), netif.parse_ipconfig(netif._decode(netif._run(['ipconfig', '/all'], raw=True)))
+    ok([(i['name'], i['type'], i['up'], ips(i)) for i in real_gaa] == [(i['name'], i['type'], i['up'], ips(i)) for i in real_ipc],
+       'this computer: GetAdaptersAddresses and ipconfig give the same adapters, types and addresses', ([i['name'] for i in real_gaa], [i['name'] for i in real_ipc]))
+
 de = by(netif.parse_ipconfig(WIN_DE))
 ok(list(de) == ['Ethernet 2', 'WLAN'] and ips(de['Ethernet 2']) == ['10.1.2.3/24'] and de['WLAN']['type'] == 'wifi' and not de['WLAN']['up'],
    'Windows (German): names, address and mask, WLAN disconnected', {k: (v['type'], v['up'], ips(v)) for k, v in de.items()})
@@ -414,6 +520,56 @@ if lo_ok:
     got = unicolink.discover(1.0, targets=('127.0.0.1',))
     ok(len(got) == 1 and got[0]['ip'] == '127.0.0.2' and not got[0]['conflict'], 'Unico search: one serial number heard on both networks = one processor (bridged), no flag', got)
     u2.close()
+
+    # ---- why a search found nothing (the app's empty list): the adapters searched, bind / send errors, who holds a port
+    sr = netif.search_report()
+    ok({'name': 'Show A', 'ip': '127.0.0.3'} in sr['searched'] and {'name': 'Show B', 'ip': '127.0.0.4'} in sr['searched'] and not sr['problems'] and sr['platform'] == sys.platform,
+       'search report: the adapters searched, no problems', sr)
+    stand_in = netif._read
+    use(fake([('Show B', [('127.0.0.4', '127.0.0.2')], True), ('Gone', [('192.0.2.77', '192.0.2.255')], True), ('lo', [('127.0.0.1', '')], True)]))
+    netif._searches.clear(); netif.udp_search(P, b'rqProMI:', 'nova', 0.3, ('127.0.0.1',))
+    sr = netif.search_report()
+    ok([(p['code'], p['iface']) for p in sr['problems']] == [('bind', 'Gone')] and 'Gone (192.0.2.77)' in sr['problems'][0]['text'],
+       'an adapter whose address can\'t be bound: a "bind" problem naming it', sr['problems'])
+    use([]); netif._searches.clear(); netif.udp_search(P, b'rqProMI:', 'nova', 0.2, ('127.0.0.1',))
+    ok([p['code'] for p in netif.search_report()['problems']] == ['noifaces'], 'no adapters read: said so')
+    netif._read = stand_in; netif._cache['at'] = 0.0
+    ok(netif.problem('send', 'x', OSError(65, 'No route to host'))['code'] == 'noroute' and netif.problem('send', 'x', OSError(113, 'No route'))['code'] == 'noroute'
+       and netif.problem('send', 'x', OSError(13, 'denied'))['code'] == 'send', 'a send refused with "no route to host" (macOS without Local Network permission) = noroute')
+    import sysdiag   # noqa: E402
+    real_owners = sysdiag.udp_owners
+    sysdiag.udp_owners = lambda ports=None: {54622: [{'pid': 3776, 'name': 'VMP_XCenter.exe', 'local': '0.0.0.0:54622'}],
+                                             3800: [{'pid': os.getpid(), 'name': 'python.exe', 'local': '0.0.0.0:3800'}], 5600: [], 'note': '', 'error': ''}
+    netif._owners.update(at=0.0, v=None)
+    sr = netif.search_report(owners=True)
+    ok([p['text'] for p in sr['problems'] if p['code'] == 'port'] == ['VMP_XCenter.exe on this computer holds UDP 54622'],
+       'another program holding a search port is named (Open Nova\'s own sockets aren\'t)', sr['problems'])
+    sysdiag.udp_owners = real_owners; netif._owners.update(at=0.0, v=None)
+
+    # ---- MX / CX announcements: heard on all three ports (VMP's XCenter holds the first); a port that can't be bound is said
+    import coexlink   # noqa: E402
+    ports = []
+    for _ in range(3):
+        t = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); t.bind(('127.0.0.1', 0)); ports.append(t.getsockname()[1]); t.close()
+    coexlink.ANNOUNCE_PORTS = tuple(ports)
+    def announce():
+        time.sleep(0.4)
+        a = socket.socket(socket.AF_INET, socket.SOCK_DGRAM); a.bind(('127.0.0.6', 0))
+        for port, api in ((ports[1], 18001), (ports[2], 18002)):   # one controller per port, a login each (no web call needed)
+            a.sendto(json.dumps({'data': [{'apiPort': str(api), 'mac': '02:00:00:00:00:%02d' % (api % 100), 'authType': 1, 'workMode': 0}]}).encode(), ('127.0.0.1', port))
+        a.close()
+    threading.Thread(target=announce, daemon=True).start()
+    netif._searches.clear()
+    cx = coexlink.discover(1.2)
+    ok(sorted((x['ip'], x['port']) for x in cx) == [('127.0.0.6', 18001), ('127.0.0.6', 18002)] and all('login' in x.get('error', '') for x in cx)
+       and not netif.search_report()['problems'], 'COEX: announcements heard on the 2nd and 3rd port too', cx)
+    hold = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+    if os.name == 'nt': hold.setsockopt(socket.SOL_SOCKET, getattr(socket, 'SO_EXCLUSIVEADDRUSE', -5), 1)
+    hold.bind(('0.0.0.0', ports[0]))
+    netif._searches.clear(); coexlink.discover(0.3); hold.close()
+    pr = netif.search_report()['problems']
+    ok([p['code'] for p in pr] == ['listen'] and ('UDP %d' % ports[0]) in pr[0]['text'], 'COEX: a port that can\'t be listened on is said (not swallowed), the others still listen', pr)
+    coexlink.ANNOUNCE_PORTS = (54622, 54623, 54624)
 
     # ---- TCP through one interface: the connection's source is that interface's address
     srv = socket.socket(); srv.bind(('127.0.0.2', 0)); srv.listen(4); TP = srv.getsockname()[1]; peers = []

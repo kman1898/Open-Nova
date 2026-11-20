@@ -67,6 +67,8 @@ bindSchedule();    // the Schedule tab (app-schedule.js)
 bindAlpha();       // version, the alpha's intro / read-only / Report a problem, first-contact snapshots (app-alpha.js)
 bindVendor();      // Tools ▸ Vendor Apps: NovaLCT / VMP / Unico here, their logs, Wireshark captures, the relay (app-vendor.js)
 bindLut3d();       // File ▸ Open LUT…: a 3-D LUT as a small 3-D picture, view only (app-lut3d.js)
+bindLutFit();      // Screen Settings ▸ Load LUT…: a LUT as curves + gamut on NovaLCT cards (app-lutfit.js)
+bindGamut();       // Screen Settings ▸ Custom gamut…: NovaLCT's Configure Color Space (app-gamut.js)
 fixSel();
 renderAll();
 devFirstRun();     // a project with nothing set up yet: "Which processors are you using?"

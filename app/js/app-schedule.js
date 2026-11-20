@@ -58,7 +58,7 @@ function renderSchedule() {
   // someone is typing in the add form: a redraw (live polling calls renderAll) would wipe it — draw later
   var a = document.activeElement;
   if (a && box.contains(a) && /INPUT|SELECT|TEXTAREA/.test(a.tagName)) { if (!renderSchedule.later) renderSchedule.later = setTimeout(function () { renderSchedule.later = 0; renderSchedule(); }, 1500); return; }
-  var linked = P.devices.filter(function (d) { return d.hw; });
+  var linked = (typeof olShownDevices === 'function' ? olShownDevices() : P.devices).filter(function (d) { return d.hw; });   // online: the connected ones (app-online.js)
   if (!linked.length) { box.innerHTML = '<p class="hint">No processor is linked. Link one in Device → Hardware.</p>'; return; }
   var today = new Date(), iso = today.getFullYear() + '-' + ('0' + (today.getMonth() + 1)).slice(-2) + '-' + ('0' + today.getDate()).slice(-2);
   // the processors without a scheduler: one line for all of them (UI cleanup item 10), not a card each

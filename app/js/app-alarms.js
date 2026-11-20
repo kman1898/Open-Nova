@@ -10,6 +10,12 @@
 // [pattern on the event text, cause, suggestion]
 var ALARMS = [
   [/^cleared/, 'The condition stopped.', 'Nothing to do; check the wall if it keeps coming back.'],
+  // a whole fibre of an H output card (app-health.js hltFiber): before the per-port wordings it contains
+  [/^opt\d+ fiber: no link .* running on backup/, 'Every port this fibre (OPT) carries has no link, so all its cabinets are fed from the backup fibre.', 'Check the fibre, its SFP modules at both ends and the fibre converter’s power (if the wall is cabled with RJ45 instead, those cables). The picture is safe while the backup holds.'],
+  [/^opt\d+ fiber: no link .* no backup/, 'The backup fibre (OPT) carries nothing, so there is no spare if the primary fibre fails.', 'Check the backup fibre, its SFP modules and the converter’s power; then Verify on the Backup tab.'],
+  // layout vs cables (app-health.js hltMapGap)
+  [/cables of ports \d+ and \d+ swapped/, 'The two cables go to each other’s runs: each port’s picture lands on the other port’s cabinets (backup cables: while the wall runs on backup).', 'Swap the two cables back (on a fibre converter, its two outputs), then Verify on the Backup tab. Monitoring already shows each cabinet’s readings in its real place.'],
+  [/cabinets? mapped, \d+ answers?( on its backup cable|$)/, 'The layout maps a different number of cabinets on this port than the cable answers with.', 'Check which cable is in which port (and on a fibre converter, which output), or fix the layout and Send. The cabinets the cable has are still monitored.'],
   [/primary (port )?failed|primary failed/, 'The primary cable or port carries no data, so the whole chain is fed from the backup port.', 'Check the primary cable, its connectors and the port on the processor. The picture is safe while the backup holds.'],
   [/data break before cabinet|data link broken|split feed/, 'The chain is broken between two cabinets: those before the break are fed from the primary port, the rest from the backup.', 'Check the network cable between the named cabinet and the one before it, and both cards’ ports. Without backup the cabinets after the break would be dark.'],
   [/redundancy lost|backup port \d+ has no link/, 'The backup cable isn’t connected or carries nothing, so there is no spare if the primary fails.', 'Plug the backup cable into the last cabinet of the chain and the backup port; then Verify on the Backup tab.'],

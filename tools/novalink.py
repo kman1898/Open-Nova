@@ -13,7 +13,8 @@ One request in flight, 3 s timeout, 256-byte payloads.
   python novalink.py detect --host H --port P [--cards 0:20,1:20] [--probe 0.5]   receiving cards per port, in cable order
   python novalink.py serial [--probe 1]             list serial ports and NovaStar USB devices; --probe asks each (read-only)
   --host serial:COM3 (or serial:/dev/cu.usbserial-0001) in place of an IP = that USB / serial port (docs\\USB_SERIAL.md)
-  --host usb:0483:5720@20-1.2 (or just usb:) = NovaStar's own USB device, via libusb-1.0 (docs\\USB_NOVA_DEVICE.md)
+  --host usb:0483:5720@20-1.2 (or just usb:) = NovaStar's own USB device, via libusb-1.0 (docs\\USB_NOVA_DEVICE.md);
+      usb:0483:5720@libusb0-0001 = one on NovaLCT's Windows driver, via libusb0.dll
 
 The helper also serves /api/hw/{discover,info,detect} and /api/unico/{discover,info,detect,send,backup-mode} for Unico-family processors (VX Pro): see unicolink.py,
 and /api/coex/* for COEX controllers (MX40 Pro, MX6000 Pro …): see coexlink.py, and /api/hw/hweb/{login,info,forget} for the
@@ -25,7 +26,7 @@ over that one connection (off unless asked).
 
 Sends only to the host:port it is given. It never runs the receiving-card Save (0x01000011) unless a plan asks.
 """
-import itertools, json, lzma, math, os, socket, struct, sys, time, datetime, threading
+import errno, itertools, json, lzma, math, os, socket, struct, sys, time, datetime, threading
 if os.environ.get('OPENNOVA_STARTUP_TRACE'):   # tools/smoke_package.py: where a start that never answers is stuck
     import faulthandler; faulthandler.dump_traceback_later(float(os.environ['OPENNOVA_STARTUP_TRACE']), repeat=True)
 import wirelog   # the flight recorder: every frame to / from a processor (docs/DIAGNOSTICS.md)
@@ -76,6 +77,14 @@ class LinkBusy(LinkError):
     """Another operation holds the processor (a Send, a Save …): "busy: <operation> is running on <target>"."""
 
 
+class NoCard(LinkError):
+    """A receiving-card read the sending card answered with ack 1 (timeout, DETECT_LCT: AckResults 1): no card answered at
+    that place. The expected end of every chain walk (detect, monitoring, identify) and a dead primary port that the
+    backup then serves, so the recorder notes it on the reply and doesn't count it as a link error (an H9 tester's report:
+    35,000 "errors", nearly all of these). Callers treat it like any LinkError."""
+    TEXT = 'no receiving card answered (status 1)'
+
+
 def _keepalive(s):
     """The OS TCP keep-alive NovaLCT turns on (idle 30 s, then every 5 s, HW_PROTOCOL.md §4.1): a dead peer shows up
     without a single extra frame (LCT sends no heartbeat frame either)."""
@@ -86,6 +95,9 @@ def _keepalive(s):
             for o, v in (('TCP_KEEPIDLE', 30), ('TCP_KEEPALIVE', 30), ('TCP_KEEPINTVL', 5)):
                 if hasattr(socket, o): s.setsockopt(socket.IPPROTO_TCP, getattr(socket, o), v)
     except (OSError, ValueError): pass
+
+
+NO_REPLY_WAIT = 0.3   # s: how long a no-reply write waits for an answer that may come anyway (TcpLink.write)
 
 
 class TcpLink:
@@ -142,7 +154,7 @@ class TcpLink:
         h = bytes([0x55, 0xAA, 0, self.serial, 0xFE, dst, dev, port]) + struct.pack('<HBBIH', card, op, r2, addr, length) + data
         return h + struct.pack('<H', sum16(h[2:], 0x5555)), self.serial
 
-    def _reply(self, serial, full=False):
+    def _reply(self, serial, full=False, quiet=False):
         deadline = time.time() + self.s.gettimeout()
         while True:
             i = self.buf.find(b'\xAA\x55')
@@ -156,11 +168,16 @@ class TcpLink:
                     wirelog.tg(self.tag, 'rx', r)
                     if struct.unpack_from('<H', r, len(r) - 2)[0] != sum16(r[2:-2], 0x5555): self._fail('bad reply checksum')
                     if full: return r
+                    if r[2] == 1 and self.last and len(self.last) > 6 and self.last[6] == 1: raise NoCard(NoCard.TEXT)   # noted on the reply (wirelog.tg)
                     if r[2] != 0: self._fail('processor answered status %d' % r[2])
                     return r[18:18 + n]
-            if time.time() > deadline: self._fail('no reply (timeout)')
+            if time.time() > deadline:
+                if quiet: raise LinkError('no reply (timeout)')
+                self._fail('no reply (timeout)')
             try: d = self.s.recv(65536)
-            except socket.timeout: self._fail('no reply (timeout)')
+            except socket.timeout:
+                if quiet: raise LinkError('no reply (timeout)')
+                self._fail('no reply (timeout)')
             except OSError as e: self._fail('receive failed: %s' % e, True)
             if not d: self._fail('connection closed', True)
             self.buf += d
@@ -168,8 +185,19 @@ class TcpLink:
     def write(self, dev, dst, port, card, addr, data, r2=0, no_reply=False):
         f, ser = self._frame(dev, dst, port, card, 1, r2, addr, len(data), data)
         self._send(f)
-        if not no_reply: self._reply(ser)
-        else: time.sleep(0.05)
+        if not no_reply: self._reply(ser); return
+        # "No reply expected" (0x01000000 SortCommand to every card) — but a VX4S-N over USB answers it anyway, ~51 ms later,
+        # and loses the next frame if that goes out first (tester report 2026-11-20: both Sends stopped on their first
+        # port-flag write, sent 50 ms after the SortCommand; NovaLCT's own writes there answered at once). So wait for that
+        # answer, up to NO_REPLY_WAIT, at least the 50 ms of before; none coming is not an error and isn't recorded as one.
+        t = time.time(); old = self.s.gettimeout(); self.s.settimeout(NO_REPLY_WAIT)
+        try: self._reply(ser, full=True, quiet=True)
+        except LinkLost: raise
+        except LinkError:
+            if getattr(self.s, 'dirty', False): self.s.dirty = False   # USB: nothing pending, no clear-halt needed
+        finally: self.s.settimeout(old)
+        left = 0.05 - (time.time() - t)
+        if left > 0: time.sleep(left)
 
     def read(self, dev, dst, port, card, addr, length, r2=0, timeout=None):
         f, ser = self._frame(dev, dst, port, card, 0, r2, addr, length)
@@ -384,6 +412,10 @@ class _Shared:
             time.sleep(self.next_try - now)
         gap = self.closed + RECONNECT_GAP - time.time()
         if gap > 0: time.sleep(gap)
+        w = usb_yielded(self.key)                         # NovaLCT has the device (tools/usbauto.py): not opened
+        if w:
+            wirelog.conn(self.key, 'refused: %s' % w)
+            raise LinkBusy(w)
         lock = _target_lock(self.key)                     # a probe may hold the port for a moment
         if not lock.acquire(timeout=min(h.wait, LINK_WAIT)):
             raise LinkBusy('busy: %s is in use (a probe?)' % self.key)
@@ -541,6 +573,30 @@ def close_links(idle=0.0, key=None, why='closed'):
     return out
 
 
+# NovaLCT's turn (tools/usbauto.py): while NovaLCT has a USB / COM controller, Open Nova doesn't open it again (its own
+# requests are refused with this text, its searches answer from the last probe) and closes its idle connection to it.
+YIELD = {}   # target ("usb:0483:5720@…" / "serial:COM3") -> why
+
+
+def usb_yield(host, why):
+    """why = Open Nova lets go of host (closed now when unused, never opened until usb_yield(host, None)); None = may use it again."""
+    t = serial_target(host)
+    key = 'serial:%s' % t[0] if t else str(host)
+    if why: YIELD[key] = why; close_links(0, key, why); wirelog.conn(key, 'yielded: %s' % why)
+    elif YIELD.pop(key, None) is not None: wirelog.conn(key, 'taken back')
+
+
+def usb_yielded(key):
+    """The reason Open Nova leaves key alone now ('' = none). Asked again by usbauto every look: an in-flight request's
+    connection is closed once it ends."""
+    if not YIELD: return ''
+    t = serial_target(key)
+    k = 'serial:%s' % t[0] if t else str(key)
+    w = YIELD.get(k, '')
+    if w: close_links(0, k, w)
+    return w
+
+
 def links_status():
     """The pool for /api/hw/links: per target open or not, requests holding it, the exclusive operation, reconnects."""
     now = time.time()
@@ -556,7 +612,7 @@ def _target(host, port, timeout):
     loc = usb_target(host)
     if loc is not None:
         if not loc:                                      # "usb:" = the first NovaStar USB device
-            ds = libusb().devices()
+            ds = usb_list()
             if not ds: raise LinkError('no NovaStar USB device (0483:5720) on this computer')
             loc = ds[0]['location']
         return 'usb:%04x:%04x@%s' % (NOVA_VID, NOVA_PID, loc), (lambda: UsbLink(loc, timeout, locked=True)), ()
@@ -736,12 +792,18 @@ def probe_serial(p, timeout=1.0):
     handshake read, 1 s) at 115200, then at 1,048,576. Read-only: LCT's arrange-address
     write before it (0x01000000 to dst FF) is left out. -> {name, label, answered, modelId, baud, host} or {…, error}"""
     name, lock = p['name'], _target_lock('serial:%s' % p['name'])
+    if usb_yielded('serial:%s' % name): return dict(SER_SEEN.get(name) or {'answered': False}, name=name, label=p.get('label', name), busy=True)   # NovaLCT's turn
     if not lock.acquire(blocking=False): return dict(SER_SEEN.get(name) or {'answered': False}, name=name, label=p.get('label', name), busy=True)
     r = {'name': name, 'label': p.get('label', name), 'driver': p.get('driver', ''), 'answered': False}
     try:
         for baud in SERIAL_BAUDS:
             try: link = SerialLink(name, baud, timeout, locked=True)
-            except (OSError, LinkError) as e: r.setdefault('error', str(e)); break   # can't open (NovaLCT holding it?) / speed not available
+            except (OSError, LinkError) as e:   # can't open (NovaLCT holding it?) / speed not available
+                r.setdefault('error', str(e)); n = getattr(e, 'errno', None)
+                # Windows: 5 = access denied (another program has it open); macOS / Linux: EBUSY; Linux EACCES = not in dialout
+                if n == 13 and sys.platform.startswith('linux'): r['cause'] = 'perm'
+                elif n in (5, 16) or (n == 13 and sys.platform == 'win32'): r['cause'] = 'inuse'
+                break
             try:
                 b = link.read(0, 0, 0, 0, 0x00000002, 2); m = b[0] | (b[1] << 8)
                 if m not in (0, 0xFFFF):
@@ -787,7 +849,9 @@ def nova_usb():
 # Not a COM port: a vendor-class interface (FF/06/50) with two bulk endpoints that speaks USB mass-storage "bulk-only"
 # framing. Each TG frame goes out behind a 31-byte "USBC" command block (CB[0] = A2 "write"), the reply comes back on the
 # IN pipe as a plain AA 55 frame; a device that answers with a 13-byte "USBS" status first is asked with an A3 "read" block
-# (LCT's "old" flow). This is NovaLCT's shipped USB mode (its "U-disk" mode; see the ComMode note below). Raw USB needs libusb-1.0 (ctypes; macOS: brew install libusb). Target: "usb:0483:5720@<bus-ports>".
+# (LCT's "old" flow). This is NovaLCT's shipped USB mode (its "U-disk" mode; see the ComMode note below). Raw USB through ctypes: libusb-1.0 (the Windows / Mac packages carry it in libusb/; Linux: the system's)
+# or, on Windows, libusb-win32's libusb0.dll for a device on NovaLCT's driver. Target: "usb:0483:5720@<bus-ports>" (libusb-1.0)
+# or "usb:0483:5720@libusb0-<n>" (libusb0.dll).
 NOVA_VID, NOVA_PID = 0x0483, 0x5720
 USB_MODE = os.environ.get('OPENNOVA_USB_MODE', 'udisk')   # 'com' = LCT's ComMode: no USBC block (not LCT's shipped setting)
 USB_IN_SIZE = 0x10200          # one IN transfer: the largest reply (20 + 65535 B) rounded up to whole 512-B packets
@@ -806,9 +870,22 @@ def usb_cbw(n, read=False, tag=0):
     return b'USBC' + struct.pack('<IIBBB', tag & 0xFFFFFFFF, n, 0x80 if read else 0, 0, 16) + bytes([0xA3 if read else 0xA2, 0, 0, 0, 0, 0, 0, 1]) + bytes(8)
 
 
+def _bundled_libusb():
+    """The libusb-1.0 the Windows / Mac package carries (<package>/libusb/<system>-<arch>/, put there by make_package.py from
+    tools/usb_libs.json): this Python's architecture first (the other one just fails to load)."""
+    pkg = os.path.dirname(HERE)
+    if sys.platform == 'win32':
+        ds, f = (['windows-arm64', 'windows-x64'] if 'ARM64' in sys.version.upper() else ['windows-x64', 'windows-arm64']), 'libusb-1.0.dll'
+    elif sys.platform == 'darwin':
+        import platform
+        ds, f = (['macos-arm64', 'macos-x86_64'] if platform.machine() == 'arm64' else ['macos-x86_64', 'macos-arm64']), 'libusb-1.0.0.dylib'
+    else: return []
+    return [os.path.join(pkg, 'libusb', d, f) for d in ds]
+
+
 def _libusb_paths():
     import ctypes.util
-    p = [os.environ.get('OPENNOVA_LIBUSB', '')]
+    p = [os.environ.get('OPENNOVA_LIBUSB', '')] + _bundled_libusb()
     if sys.platform == 'win32':
         p += [os.path.join(d, 'libusb-1.0.dll') for d in (HERE, os.path.dirname(HERE))] + [ctypes.util.find_library('libusb-1.0') or '']
         # NovaStar ships libusb 1.0.26 (x64) with VMP / LCT's MonitorManager: a last resort
@@ -820,39 +897,177 @@ def _libusb_paths():
     return [x for x in p + [ctypes.util.find_library('usb-1.0') or ''] if x]
 
 
-LIBUSB_HELP = {'darwin': 'install it with Homebrew: brew install libusb',
-               'win32': 'put libusb-1.0.dll (64-bit, from the libusb release at github.com/libusb/libusb/releases, VS2019/MS64/dll) '
-                        'next to novalink.py',
-               'linux': 'install it: sudo apt install libusb-1.0-0 (or your distribution\'s libusb package)'}
-_LIBUSB = []
+def _libusb0_paths():
+    """Windows: libusb-win32's libusb0.dll. NovaLCT's USB driver (Nova_ProHD.inf, libusb0.sys 1.2.6.0) copies it into System32
+    (SysWOW64 for 32-bit) when the device is first installed, so the plain name finds it wherever that driver is bound."""
+    return [x for x in (os.environ.get('OPENNOVA_LIBUSB0', ''), 'libusb0.dll') if x]
+
+
+# What's wrong with NovaStar USB and the one thing to do, in plain words (docs\USB_NOVA_DEVICE.md §4 "Messages"). We never
+# install a driver ourselves (that needs admin rights): on Windows NovaLCT's installer brings the right one.
+USB_FIX = {
+    'driver': 'Windows has no USB driver on it that Open Nova can use. Install NovaLCT once (it installs the USB driver), '
+              'or set the device to WinUSB with Zadig.',
+    'busy': 'Another program is using it. Close NovaLCT / VMP, then Find again.',
+    'udev': 'Linux doesn’t let Open Nova open it. Add this line to /etc/udev/rules.d/60-novastar.rules, then unplug it and plug '
+            'it in again: SUBSYSTEM=="usb", ATTR{idVendor}=="0483", ATTR{idProduct}=="5720", MODE="0660", TAG+="uaccess"',
+    'lib-win': 'Open Nova’s libusb-1.0.dll is missing. Use the Windows package of Open Nova, unzipped whole (it has a libusb folder).',
+    'lib-mac': 'Open Nova’s libusb is missing. Use the Mac package of Open Nova (it has a libusb folder), or install it with '
+               'Homebrew: brew install libusb',
+    'lib-linux': 'It needs libusb. Install it: sudo apt install libusb-1.0-0 (or your distribution’s libusb package).',
+}
+
+
+def nova_usb_drivers():
+    """Windows: the driver Windows bound to each 0483:5720 it has seen ('libusb0' = NovaLCT's, 'WinUSB', '' = none), read-only
+    from the registry (Enum\\USB\\VID_0483&PID_5720\\<instance>\\Service). Elsewhere: []."""
+    if sys.platform != 'win32': return []
+    out = []
+    try:
+        import winreg
+        with winreg.OpenKey(winreg.HKEY_LOCAL_MACHINE, r'SYSTEM\CurrentControlSet\Enum\USB\VID_0483&PID_5720') as k:
+            for i in range(winreg.QueryInfoKey(k)[0]):
+                with winreg.OpenKey(k, winreg.EnumKey(k, i)) as s:
+                    try: out.append(str(winreg.QueryValueEx(s, 'Service')[0] or ''))
+                    except OSError: out.append('')
+    except OSError: pass
+    return out
+
+
+def usb_fix(cause):
+    """USB_FIX's text for a cause: 'driver', 'busy', 'udev', or 'lib' (no USB library loads: per system; on Windows by the
+    driver Windows bound, since NovaLCT's driver brings its own libusb0.dll and WinUSB needs the package's libusb-1.0.dll)."""
+    if cause == 'lib':
+        if sys.platform == 'darwin': return USB_FIX['lib-mac']
+        if sys.platform != 'win32': return USB_FIX['lib-linux']
+        drv = [d.lower() for d in nova_usb_drivers()]
+        return USB_FIX['lib-win'] if 'winusb' in drv and 'libusb0' not in drv else USB_FIX['driver']
+    return USB_FIX.get(cause, '')
+
+
+def _usb_error(what, detail, cause=''):
+    """OSError for a failed USB step: the plain words first (USB_FIX), the library's own name for it in brackets (for the log)."""
+    fix = usb_fix(cause) if cause else ''
+    return OSError('%s (USB %s: %s)' % (fix, what, detail) if fix else 'USB %s: %s' % (what, detail))
+
+
+_USB_NOTES = set()
+
+
+def _usb_note(event, error=None, **extra):
+    """Into the recorder (link usb:0483:5720) once per distinct event: which USB library loaded, or why USB can't be used,
+    so a problem report shows the cause."""
+    k = (event, error, tuple(sorted(extra.items())))
+    if k in _USB_NOTES: return
+    _USB_NOTES.add(k)
+    wirelog.conn('usb:%04x:%04x' % (NOVA_VID, NOVA_PID), event, error, **extra)
+
+
+_LIBUSB, _LIBUSB0 = [], []
 
 
 def libusb():
-    """The libusb-1.0 library (loaded once) or LinkError saying how to get it."""
+    """The libusb-1.0 library (loaded once) or LinkError saying what to do."""
     if _LIBUSB: return _LIBUSB[0]
     for p in _libusb_paths():
-        try: _LIBUSB.append(_Libusb(p)); return _LIBUSB[0]
-        except (OSError, AttributeError): pass               # not there / not libusb-1.0 / wrong architecture
-    raise LinkError('NovaStar USB needs libusb-1.0, which isn’t on this computer: %s' % LIBUSB_HELP.get(sys.platform, LIBUSB_HELP['linux']))
+        try: _LIBUSB.append(_Libusb(p))
+        except (OSError, AttributeError): continue           # not there / not libusb-1.0 / wrong architecture
+        _usb_note('USB library libusb-1.0', path=p); return _LIBUSB[0]
+    raise LinkError('NovaStar USB: ' + usb_fix('lib'))
+
+
+def libusb0():
+    """Windows: libusb0.dll (loaded once) when it is there, else None. Elsewhere None."""
+    if not _LIBUSB0:
+        lib = None
+        for p in (_libusb0_paths() if sys.platform == 'win32' else []):
+            try: lib = _Libusb0(p)
+            except (OSError, AttributeError): continue
+            _usb_note('USB library libusb0', path=p, version=lib.version); break
+        _LIBUSB0.append(lib)
+    return _LIBUSB0[0]
+
+
+def usb_libs():
+    """The USB libraries to ask, in order: Windows: libusb0.dll first when it is there (the device is then on NovaLCT's
+    libusb0.sys), then libusb-1.0 (WinUSB; macOS / Linux: the only one). LinkError (what to do) when none loads."""
+    libs = [x for x in [libusb0()] if x]
+    try: libs.append(libusb())
+    except LinkError:
+        if not libs: raise
+    return libs
+
+
+def usb_list():
+    """Every 0483:5720 (descriptors only, nothing opened) from the first library that lists one. On Windows a device on
+    NovaLCT's driver is listed by libusb0 and (unusable) by libusb-1.0 too, so libusb-1.0 is asked only when libusb0 has none."""
+    err = None
+    for lib in usb_libs():
+        try: ds = lib.devices()
+        except OSError as e: err = err or e; continue
+        if ds: return ds
+    if err: raise err
+    return []
+
+
+def usb_open(location):
+    """The device at location ('' = the first one) opened through the library that lists it: 'libusb0-…' = libusb0.dll."""
+    if not location:
+        ds = usb_list()
+        if not ds: raise LinkError('no NovaStar USB device (0483:5720) on this computer')
+        location = ds[0]['location']
+    lib = libusb0() if location.startswith('libusb0-') else libusb()
+    if lib is None: raise OSError('no NovaStar USB device (0483:5720) at ' + location)
+    return lib.open(location)
+
+
+def _usb_structs(C, pack=0):
+    """The descriptor structs (EP, IF, ALT, CFG, DEV): field for field the same in libusb-1.0 and libusb-win32, which packs
+    every struct to 1 byte (lusb0_usb.h #include <pshpack1.h>)."""
+    P, I, U8, U16 = C.c_void_p, C.c_int, C.c_uint8, C.c_uint16
+    def S(name, fields): return type(name, (C.Structure,), dict({'_pack_': pack, '_layout_': 'ms'} if pack else {}, _fields_=fields))
+    EP = S('EP', [('bLength', U8), ('bDescriptorType', U8), ('bEndpointAddress', U8), ('bmAttributes', U8), ('wMaxPacketSize', U16),
+                  ('bInterval', U8), ('bRefresh', U8), ('bSynchAddress', U8), ('extra', P), ('extra_length', I)])
+    IF = S('IF', [('bLength', U8), ('bDescriptorType', U8), ('bInterfaceNumber', U8), ('bAlternateSetting', U8), ('bNumEndpoints', U8),
+                  ('bInterfaceClass', U8), ('bInterfaceSubClass', U8), ('bInterfaceProtocol', U8), ('iInterface', U8),
+                  ('endpoint', C.POINTER(EP)), ('extra', P), ('extra_length', I)])
+    ALT = S('ALT', [('altsetting', C.POINTER(IF)), ('num_altsetting', I)])
+    CFG = S('CFG', [('bLength', U8), ('bDescriptorType', U8), ('wTotalLength', U16), ('bNumInterfaces', U8), ('bConfigurationValue', U8),
+                    ('iConfiguration', U8), ('bmAttributes', U8), ('MaxPower', U8), ('interface', C.POINTER(ALT)), ('extra', P), ('extra_length', I)])
+    DEV = S('DEV', [('bLength', U8), ('bDescriptorType', U8), ('bcdUSB', U16), ('bDeviceClass', U8), ('bDeviceSubClass', U8),
+                    ('bDeviceProtocol', U8), ('bMaxPacketSize0', U8), ('idVendor', U16), ('idProduct', U16), ('bcdDevice', U16),
+                    ('iManufacturer', U8), ('iProduct', U8), ('iSerialNumber', U8), ('bNumConfigurations', U8)])
+    return EP, IF, ALT, CFG, DEV
+
+
+def _usb_endpoints(cfg=None):
+    """LCT's choice in a configuration descriptor (CFG, or None): the interface FF/06/50; OUT = an endpoint without bit 7, IN =
+    with it. Not found -> EP 01 / 81 on interface 0, like LCT."""
+    out = {'iface': 0, 'epOut': 0x01, 'epIn': 0x81, 'maxPacket': 0, 'matched': False}
+    if cfg is None: return out
+    out['config'] = cfg.bConfigurationValue
+    for i in range(cfg.bNumInterfaces):
+        it = cfg.interface[i]
+        for a in range(it.num_altsetting):
+            s = it.altsetting[a]
+            if (s.bInterfaceClass, s.bInterfaceSubClass, s.bInterfaceProtocol) != (0xFF, 0x06, 0x50): continue
+            out.update(iface=s.bInterfaceNumber, matched=True)
+            for e in range(s.bNumEndpoints):
+                ep = s.endpoint[e]
+                out['epIn' if ep.bEndpointAddress & 0x80 else 'epOut'] = ep.bEndpointAddress; out['maxPacket'] = ep.wMaxPacketSize
+            return out
+    return out
 
 
 class _Libusb:
     """libusb-1.0 through ctypes: list 0483:5720 devices (descriptors only) and open one (_LibusbDev)."""
+    name = 'libusb-1.0'
+
     def __init__(self, path):
         import ctypes as C
         L = (C.WinDLL if sys.platform == 'win32' else C.CDLL)(path)   # LIBUSB_CALL = WINAPI on Windows
-        P, I, U8, U16, PP = C.c_void_p, C.c_int, C.c_uint8, C.c_uint16, C.POINTER(C.c_void_p)
-        class EP(C.Structure): _fields_ = [('bLength', U8), ('bDescriptorType', U8), ('bEndpointAddress', U8), ('bmAttributes', U8), ('wMaxPacketSize', U16),
-                                           ('bInterval', U8), ('bRefresh', U8), ('bSynchAddress', U8), ('extra', P), ('extra_length', I)]
-        class IF(C.Structure): _fields_ = [('bLength', U8), ('bDescriptorType', U8), ('bInterfaceNumber', U8), ('bAlternateSetting', U8), ('bNumEndpoints', U8),
-                                           ('bInterfaceClass', U8), ('bInterfaceSubClass', U8), ('bInterfaceProtocol', U8), ('iInterface', U8),
-                                           ('endpoint', C.POINTER(EP)), ('extra', P), ('extra_length', I)]
-        class ALT(C.Structure): _fields_ = [('altsetting', C.POINTER(IF)), ('num_altsetting', I)]
-        class CFG(C.Structure): _fields_ = [('bLength', U8), ('bDescriptorType', U8), ('wTotalLength', U16), ('bNumInterfaces', U8), ('bConfigurationValue', U8),
-                                            ('iConfiguration', U8), ('bmAttributes', U8), ('MaxPower', U8), ('interface', C.POINTER(ALT)), ('extra', P), ('extra_length', I)]
-        class DEV(C.Structure): _fields_ = [('bLength', U8), ('bDescriptorType', U8), ('bcdUSB', U16), ('bDeviceClass', U8), ('bDeviceSubClass', U8),
-                                            ('bDeviceProtocol', U8), ('bMaxPacketSize0', U8), ('idVendor', U16), ('idProduct', U16), ('bcdDevice', U16),
-                                            ('iManufacturer', U8), ('iProduct', U8), ('iSerialNumber', U8), ('bNumConfigurations', U8)]
+        P, I, U8, PP = C.c_void_p, C.c_int, C.c_uint8, C.POINTER(C.c_void_p)
+        EP, IF, ALT, CFG, DEV = _usb_structs(C)
         for f, a, r in (('libusb_init', [PP], I), ('libusb_exit', [P], None), ('libusb_get_device_list', [P, C.POINTER(PP)], C.c_ssize_t),
                         ('libusb_free_device_list', [PP, I], None), ('libusb_get_device_descriptor', [P, C.POINTER(DEV)], I),
                         ('libusb_get_bus_number', [P], U8), ('libusb_get_port_numbers', [P, C.POINTER(U8), I], I),
@@ -862,16 +1077,14 @@ class _Libusb:
                         ('libusb_set_auto_detach_kernel_driver', [P, I], I), ('libusb_clear_halt', [P, C.c_ubyte], I),
                         ('libusb_bulk_transfer', [P, C.c_ubyte, P, I, C.POINTER(I), C.c_uint], I), ('libusb_error_name', [I], C.c_char_p)):
             getattr(L, f).argtypes = a; getattr(L, f).restype = r
-        self.L, self.C, self.DEV, self.CFG = L, C, DEV, CFG
+        self.L, self.C, self.DEV, self.CFG, self.path = L, C, DEV, CFG, path
 
     def err(self, what, rc):
         name = (self.L.libusb_error_name(rc) or b'?').decode()
-        win = sys.platform == 'win32'
-        hint = {'LIBUSB_ERROR_ACCESS': '' if win else ' (Linux: a udev rule for 0483:5720 is needed, docs\\USB_NOVA_DEVICE.md)',
-                'LIBUSB_ERROR_BUSY': ' (another program has it: close NovaLCT / VMP)',
-                'LIBUSB_ERROR_NOT_SUPPORTED': ' (NovaLCT’s libusb0 driver needs libusbK.dll, or bind WinUSB with Zadig: docs\\USB_NOVA_DEVICE.md)' if win else '',
-                'LIBUSB_ERROR_NOT_FOUND': ' (no driver libusb can use is bound: docs\\USB_NOVA_DEVICE.md)' if win else ''}.get(name, '')
-        return OSError('USB %s: %s%s' % (what, name, hint))
+        win = sys.platform == 'win32'   # NOT_SUPPORTED / NOT_FOUND on Windows: no driver, or one libusb-1.0 can't use
+        cause = {'LIBUSB_ERROR_ACCESS': 'udev' if sys.platform.startswith('linux') else 'busy', 'LIBUSB_ERROR_BUSY': 'busy',
+                 'LIBUSB_ERROR_NOT_SUPPORTED': 'driver' if win else '', 'LIBUSB_ERROR_NOT_FOUND': 'driver' if win else ''}.get(name, '')
+        return _usb_error(what, name, cause)
 
     def _scan(self, location=None):
         """location None: every 0483:5720 device's descriptors (nothing opened; the OS's cached descriptors). A location
@@ -889,7 +1102,7 @@ class _Libusb:
                     if L.libusb_get_device_descriptor(d, C.byref(dd)) or (dd.idVendor, dd.idProduct) != (NOVA_VID, NOVA_PID): continue
                     pn = (C.c_uint8 * 8)(); k = L.libusb_get_port_numbers(d, pn, 8)
                     info = dict(self._endpoints(d), location='%d-%s' % (L.libusb_get_bus_number(d), '.'.join(str(pn[j]) for j in range(max(k, 0)))),
-                                vid=dd.idVendor, pid=dd.idProduct, bcdDevice=dd.bcdDevice, bcdUSB=dd.bcdUSB)
+                                vid=dd.idVendor, pid=dd.idProduct, bcdDevice=dd.bcdDevice, bcdUSB=dd.bcdUSB, lib=self.name)
                     if location is None: out.append(info); continue
                     if location and info['location'] != location: continue
                     h = C.c_void_p(); rc = L.libusb_open(d, C.byref(h))
@@ -903,25 +1116,12 @@ class _Libusb:
             if not keep: L.libusb_exit(ctx)
 
     def _endpoints(self, d):
-        """LCT's choice: the interface FF/06/50; OUT = an endpoint without bit 7, IN = with it.
-        Not found -> EP 01 / 81 on interface 0, like LCT."""
-        C, out = self.C, {'iface': 0, 'epOut': 0x01, 'epIn': 0x81, 'maxPacket': 0, 'matched': False}
+        """LCT's endpoint choice in the device's first configuration (_usb_endpoints)."""
+        C = self.C
         cfg = C.POINTER(self.CFG)()
-        if self.L.libusb_get_config_descriptor(d, 0, C.byref(cfg)): return out
-        try:
-            c = cfg.contents; out['config'] = c.bConfigurationValue
-            for i in range(c.bNumInterfaces):
-                it = c.interface[i]
-                for a in range(it.num_altsetting):
-                    s = it.altsetting[a]
-                    if (s.bInterfaceClass, s.bInterfaceSubClass, s.bInterfaceProtocol) != (0xFF, 0x06, 0x50): continue
-                    out.update(iface=s.bInterfaceNumber, matched=True)
-                    for e in range(s.bNumEndpoints):
-                        ep = s.endpoint[e]
-                        out['epIn' if ep.bEndpointAddress & 0x80 else 'epOut'] = ep.bEndpointAddress; out['maxPacket'] = ep.wMaxPacketSize
-                    return out
+        if self.L.libusb_get_config_descriptor(d, 0, C.byref(cfg)): return _usb_endpoints()
+        try: return _usb_endpoints(cfg.contents)
         finally: self.L.libusb_free_config_descriptor(cfg)
-        return out
 
     def devices(self): return self._scan()
 
@@ -970,6 +1170,114 @@ class _LibusbDev:
         if self.h is None: return
         try: self.L.libusb_release_interface(self.h, self.iface)
         finally: self.L.libusb_close(self.h); self.L.libusb_exit(self.ctx); self.h = None
+
+
+LIBUSB0_TIMEOUT = -116          # libusb-win32: -ETRANSFER_TIMEDOUT (error.h)
+LIBUSB0_MAX_IO = 0x10000        # libusb-win32 1.2.6 splits bigger transfers at 64 KiB and loses the first part if the next times out
+
+
+class _Libusb0:
+    """Windows: libusb-win32's libusb0.dll (the libusb-0.1 API) through ctypes, for a 0483:5720 on NovaLCT's own driver
+    (libusb0.sys). The same face as _Libusb: devices() (descriptors only) and open(location) -> _Libusb0Dev, so the USBC
+    framing and the recorder hooks (_NovaUsbPort, UsbLink) are the same. Structs from libusb-win32's lusb0_usb.h: every one
+    byte-packed, LIBUSB_PATH_MAX 512, unsigned long = 32 bits; functions cdecl. Location = the device's libusb0 number
+    ('libusb0-0001', from its file name \\\\.\\libusb0-0001--0x0483-0x5720)."""
+    name = 'libusb0'
+
+    def __init__(self, path):
+        import ctypes as C
+        L = C.CDLL(path)
+        P, I = C.c_void_p, C.c_int
+        EP, IF, ALT, CFG, DEV = _usb_structs(C, 1)
+        UDEV = type('usb_device', (C.Structure,), {'_pack_': 1, '_layout_': 'ms'})
+        UBUS = type('usb_bus', (C.Structure,), {'_pack_': 1, '_layout_': 'ms'})
+        UDEV._fields_ = [('next', C.POINTER(UDEV)), ('prev', C.POINTER(UDEV)), ('filename', C.c_char * 512), ('bus', C.POINTER(UBUS)),
+                         ('descriptor', DEV), ('config', C.POINTER(CFG)), ('dev', P), ('devnum', C.c_uint8), ('num_children', C.c_uint8),
+                         ('children', P)]
+        UBUS._fields_ = [('next', C.POINTER(UBUS)), ('prev', C.POINTER(UBUS)), ('dirname', C.c_char * 512), ('devices', C.POINTER(UDEV)),
+                         ('location', C.c_uint32), ('root_dev', C.POINTER(UDEV))]
+        VER = type('usb_version', (C.Structure,), {'_fields_': [(k, I) for k in ('dll1', 'dll2', 'dll3', 'dll4', 'drv1', 'drv2', 'drv3', 'drv4')]})
+        for f, a, r in (('usb_init', [], None), ('usb_find_busses', [], I), ('usb_find_devices', [], I), ('usb_get_busses', [], C.POINTER(UBUS)),
+                        ('usb_open', [C.POINTER(UDEV)], P), ('usb_close', [P], I), ('usb_set_configuration', [P, I], I),
+                        ('usb_claim_interface', [P, I], I), ('usb_release_interface', [P, I], I), ('usb_clear_halt', [P, C.c_uint], I),
+                        ('usb_bulk_write', [P, I, P, I, I], I), ('usb_bulk_read', [P, I, P, I, I], I), ('usb_strerror', [], C.c_char_p),
+                        ('usb_get_version', [], C.POINTER(VER))):
+            getattr(L, f).argtypes = a; getattr(L, f).restype = r
+        self.L, self.C, self.UDEV, self.UBUS, self.lock, self.path = L, C, UDEV, UBUS, threading.Lock(), path
+        L.usb_init()
+        v = L.usb_get_version()   # driver -1.-1.-1.-1 = libusb0.sys isn't running
+        self.version = '%d.%d.%d.%d, driver %d.%d.%d.%d' % tuple(getattr(v.contents, k) for k, _ in VER._fields_) if v else '?'
+
+    def err(self, what, rc):
+        s = (self.L.usb_strerror() or b'').decode('latin-1', 'replace').strip()
+        return _usb_error(what, 'libusb0 %d%s' % (rc, ', ' + s if s else ''), {-13: 'busy', -16: 'busy'}.get(rc, ''))
+
+    def _walk(self):
+        """(usb_device pointer, info) for each 0483:5720 libusb0 lists (only devices on its own driver). Under self.lock: the
+        list is rebuilt on every call and the old pointers go with it."""
+        L = self.L
+        L.usb_find_busses(); L.usb_find_devices()
+        b = L.usb_get_busses()
+        while b:
+            d = b.contents.devices
+            while d:
+                dc = d.contents; dd = dc.descriptor
+                if (dd.idVendor, dd.idProduct) == (NOVA_VID, NOVA_PID):
+                    fn = dc.filename.decode('latin-1', 'replace')
+                    n = fn.split('libusb0-', 1)[1].split('-', 1)[0] if 'libusb0-' in fn else '%s-%d' % (b.contents.dirname.decode('latin-1', 'replace'), dc.devnum)
+                    yield d, dict(_usb_endpoints(dc.config.contents if dc.config else None), location='libusb0-' + n, vid=dd.idVendor,
+                                  pid=dd.idProduct, bcdDevice=dd.bcdDevice, bcdUSB=dd.bcdUSB, lib=self.name)
+                d = dc.next
+            b = b.contents.next
+
+    def devices(self):
+        with self.lock: return [info for _, info in self._walk()]
+
+    def open(self, location):
+        """The device at location ('' = the first one) opened, configuration set and its interface claimed (LCT's order)."""
+        with self.lock:
+            for d, info in self._walk():
+                if location and info['location'] != location: continue
+                h = self.L.usb_open(d)
+                if not h: raise self.err('open %s' % info['location'], -1)
+                return _Libusb0Dev(self, h, info)
+        raise OSError('no NovaStar USB device (0483:5720)%s' % (' at ' + location if location else ''))
+
+
+class _Libusb0Dev:
+    """One 0483:5720 opened through libusb0.dll: the same face as _LibusbDev (bulk_out / bulk_in / clear_halt / close).
+    LCT (LibUsbDotNet over libusb0.sys): SetConfiguration(1), then ClaimInterface."""
+    def __init__(self, lib, h, info):
+        self.lib, self.L, self.C, self.h, self.info = lib, lib.L, lib.C, h, info
+        self.ep_out, self.ep_in, self.iface = info['epOut'], info['epIn'], info['iface']
+        try:
+            rc = self.L.usb_set_configuration(h, info.get('config', 1))
+            if rc < 0: raise lib.err('set configuration', rc)
+            rc = self.L.usb_claim_interface(h, self.iface)
+            if rc < 0: raise lib.err('claim interface %d' % self.iface, rc)
+        except BaseException: self.L.usb_close(h); self.h = None; raise
+
+    def bulk_out(self, b, ms=USB_IO_MS):
+        buf = self.C.create_string_buffer(bytes(b), max(len(b), 1))
+        rc = self.L.usb_bulk_write(self.h, self.ep_out, buf, len(b), max(1, int(ms)))
+        if rc == LIBUSB0_TIMEOUT: raise socket.timeout('USB write timed out (%d bytes)' % len(b))
+        if rc < 0: raise self.lib.err('write', rc)
+
+    def bulk_in(self, n=USB_IN_SIZE, ms=USB_IO_MS):
+        n = min(n, LIBUSB0_MAX_IO)                            # a longer reply comes in two reads (the link joins them)
+        buf = self.C.create_string_buffer(n)
+        rc = self.L.usb_bulk_read(self.h, self.ep_in, buf, n, max(1, int(ms)))
+        if rc == LIBUSB0_TIMEOUT: raise socket.timeout('timed out')
+        if rc < 0: raise self.lib.err('read', rc)
+        return buf.raw[:rc]
+
+    def clear_halt(self):
+        for ep in (self.ep_out, self.ep_in): self.L.usb_clear_halt(self.h, ep)
+
+    def close(self):
+        if self.h is None: return
+        try: self.L.usb_release_interface(self.h, self.iface)
+        finally: self.L.usb_close(self.h); self.h = None
 
 
 class _NovaUsbPort(_SerialBase):
@@ -1044,17 +1352,18 @@ class UsbLink(TcpLink):
     def __init__(self, location='', timeout=3.0, wait=LINK_WAIT, locked=False, dev=None):
         t0 = time.time()
         if not location and dev is None:
-            ds = libusb().devices()
+            ds = usb_list()
             if not ds: raise LinkError('no NovaStar USB device (0483:5720) on this computer')
             location = ds[0]['location']
         self.tag = 'usb:%04x:%04x@%s' % (NOVA_VID, NOVA_PID, location)
         self.lock = None if locked else _take(self.tag, wait)
         try:
-            self.s = _NovaUsbPort(dev or libusb().open(location), timeout, link=self.tag)
+            self.s = _NovaUsbPort(dev or usb_open(location), timeout, link=self.tag)
         except Exception as e:
             if self.lock: self.lock.release(); self.lock = None
             wirelog.conn(self.tag, 'connect failed', str(e), (time.time() - t0) * 1000); raise
-        wirelog.conn(self.tag, 'open (%s)' % ('USBC' if self.s.mode != 'com' else 'plain'), ms=(time.time() - t0) * 1000)
+        wirelog.conn(self.tag, 'open (%s)' % ('USBC' if self.s.mode != 'com' else 'plain'), ms=(time.time() - t0) * 1000,
+                     lib=(getattr(self.s.dev, 'info', None) or {}).get('lib'))
         self.serial = 0
         self.buf = b''
         self.last = None
@@ -1062,9 +1371,10 @@ class UsbLink(TcpLink):
 
 def usb_devices():
     """NovaStar USB devices here, listed from descriptors only (nothing opened) -> ([{name, label, host, …}], error or '')."""
-    try: ds = libusb().devices()
-    except (LinkError, OSError) as e: return [], str(e)
-    return [dict(d, name=d['location'], label='USB ' + d['location'], host='usb:%04x:%04x@%s' % (NOVA_VID, NOVA_PID, d['location'])) for d in ds], ''
+    try: ds = usb_list()
+    except (LinkError, OSError) as e: _usb_note('USB not usable', str(e)); return [], str(e)   # once per cause, for the report
+    short = lambda loc: str(int(loc[8:])) if loc.startswith('libusb0-') and loc[8:].isdigit() else loc   # "USB 1" for libusb0-0001
+    return [dict(d, name=d['location'], label='USB ' + short(d['location']), host='usb:%04x:%04x@%s' % (NOVA_VID, NOVA_PID, d['location'])) for d in ds], ''
 
 
 USB_SEEN = {}
@@ -1072,8 +1382,22 @@ USB_SEEN = {}
 
 def probe_usb(d, timeout=1.0):
     """Is a controller behind NovaStar USB device d? One read of sender 0's ModelID (0x00000002, 2 B, dst 0), as probe_serial."""
+    w = usb_yielded(d['host'])
+    if w: return dict(USB_SEEN.get(d['host']) or d, busy=True, yielded=w)
     lock = _target_lock(d['host'])
-    if not lock.acquire(blocking=False): return dict(USB_SEEN.get(d['host']) or d, busy=True)
+    if not lock.acquire(blocking=False):
+        sh = _POOL.get(d['host'])
+        if sh is None or sh.raw is None or USB_SEEN.get(d['host']): return dict(USB_SEEN.get(d['host']) or d, busy=True)
+        r = dict(d, answered=False)                  # held open before any probe (the USB coordinator's bridge): ask through it once
+        try:
+            link = open_link(d['host'], None, timeout, wait=1.0)
+            try: b = link.read(0, 0, 0, 0, 0x00000002, 2); m = b[0] | (b[1] << 8)
+            finally: link.close()
+            if m not in (0, 0xFFFF): r.update(answered=True, modelId=m)
+            else: r['error'] = 'ModelID 0x%04X' % m
+        except (OSError, LinkError) as e: return dict(USB_SEEN.get(d['host']) or d, busy=True, error=str(e))
+        USB_SEEN[d['host']] = r
+        return r
     r = dict(d, answered=False)
     try:
         try: link = UsbLink(d['name'], timeout, locked=True)
@@ -1335,21 +1659,34 @@ def senders_on(link, limit=32):
     return out
 
 
+# H cards on a TG port that aren't LED sending cards (app-processors.js NON_LED_CARDS): no sending-card table to ask for
+NON_LED_CARDS = {0x7B47: 'H MVR card (preview)'}
+
+
 def sender_functions(link, dst):
     """The sending card's function table (0x02020020, 64 B; NovaLCT reads it on connect), read-only. FreeRoute = byte 4
     (0x02020024) bit 6: NovaLCT then counts port load by cabinet areas (free topology) (CROSS_TOOL §3.1); whether an H
-    16-port card updated with Dynamic Sub-Pixels sets it is what the H test shows. {hex, freeRoute} or {error}."""
+    16-port card updated with Dynamic Sub-Pixels sets it is what the H test shows. {hex, freeRoute} or {error}.
+    The H 16-port card (0x7B46, an H9 tester's, 2026-11-19) answers the 64-byte read with status 4 (unknown command): then
+    the FreeRoute byte alone (0x02020024, 1 B) is asked; when that is refused too -> {error, unsupported: True}."""
     try: t = link.read(0, dst, 0, 0, 0x02020020, 64, timeout=1.5)
-    except LinkError as e: return {'error': str(e)}
+    except LinkError as e:
+        if 'status 4' not in str(e): return {'error': str(e)}
+        try: b = link.read(0, dst, 0, 0, 0x02020024, 1, timeout=1.5)
+        except LinkError as e2: return {'error': 'not available on this card (%s)' % e2, 'unsupported': 'status 4' in str(e2)}
+        return {'hex': '', 'byte4': '%02x' % b[0], 'freeRoute': bool(b[0] & 0x40)}
     return {'hex': t.hex(), 'freeRoute': bool(t[4] & 0x40)}
 
 
 def linked_ports(link, dst, ports):
     """Port link bits (DETECT_LCT.md §1.3): ports 0-15 in the low nibble of sender bytes 0x02000000 + 31, 159, 294, 295;
-    ports 16+ in 0x02010000, one byte per 4 ports (low nibble)."""
-    blk = link.read(0, dst, 0, 0, 0x02000000, 296)
-    if len(blk) < 296: raise LinkError('short reply to the port-link read (%d of 296 B)' % len(blk))
-    bits = [blk[31], blk[159], blk[294], blk[295]]
+    ports 16+ in 0x02010000, one byte per 4 ports (low nibble). Read as NovaLCT (and health) does: 256 B, plus 0x02000100
+    for ports 9-16 — a VX4S-N answers one 296 B read with status 4 (tester report 2026-11-20: Detect said "no answer", 0
+    ports, 0 panels, while the 256 B read answered every time)."""
+    blk = link.read(0, dst, 0, 0, 0x02000000, 256)
+    if ports > 8: blk += link.read(0, dst, 0, 0, 0x02000100, 256)
+    if len(blk) < (296 if ports > 8 else 160): raise LinkError('short reply to the port-link read (%d B)' % len(blk))
+    bits = [blk[31], blk[159]] + ([blk[294], blk[295]] if ports > 8 else [0, 0])
     out = [p for p in range(min(ports, 16)) if bits[p // 4] & (1 << (p % 4))]
     if ports > 16:
         more = link.read(0, dst, 0, 0, 0x02010000, 8)   # a card with 16 ports or fewer may answer short: those ports are off
@@ -1467,13 +1804,14 @@ def gamma_lut(gamma, grey):
     return one * 3
 
 
-def set_gamma(link, targets, gamma, log):
+def set_gamma(link, targets, gamma, log, tables=None):
     """NovaLCT's gamma change (as recorded with two H_20 cards): per port (card 0xFFFF) the LUT 0x05000000 (1536 B, 6 x 256 B) then
     0x02000000 <- gamma x 10; then 0x060003CA <- 00 (low-gray grade 0) to every port. Only the case confirmed on the wire:
     cards with a 16-bit grey depth (read first, 0x02000000 +0x25, from card 0 of each primary port). Per port, not all or
     nothing (real H2 / H5, 2026-10-11: one port with nothing on it, or its primary cable out, stopped the whole change):
     a port whose card doesn't answer is read through its backup port (target {backupOf: [dst, port]}); a port with no
     answering card, or not 16-bit, is skipped and named. Only if no port can take it is it an error. No save.
+    tables = NovaLCT's Custom gamma instead (recorded): 1536 B as hex, R, G, B, u16 LE, each colour its own; 0x02000000 <- FE.
     Returns (frames, written ports, skipped texts)."""
     prim = [t for t in targets if not t.get('backupOf')]
     def grey(dst, port):
@@ -1491,7 +1829,8 @@ def set_gamma(link, targets, gamma, log):
         ok.append(t); ok += backs
     if not ok:
         raise LinkError('no port could take gamma — ' + '; '.join(skipped))
-    lut, g = gamma_lut(gamma, 16), max(10, min(40, int(round(gamma * 10))))
+    lut, g = (bytes.fromhex(tables), 0xFE) if tables else (gamma_lut(gamma, 16), max(10, min(40, int(round(gamma * 10)))))
+    if len(lut) != 1536: raise LinkError('a custom gamma is 1536 bytes, not %d' % len(lut))
     n = 0
     for t in ok:
         for o in range(0, len(lut), CHUNK):
@@ -1499,7 +1838,7 @@ def set_gamma(link, targets, gamma, log):
         link.write(1, t['dst'], t['port'], 0xFFFF, 0x02000000, bytes([g])); n += 1
     for t in ok:
         link.write(1, t['dst'], t['port'], 0xFFFF, 0x060003CA, b'\x00'); n += 1
-    log('gamma %.1f -> %d port(s), %d frames; skipped: %s; not saved' % (gamma, len(ok), n, '; '.join(skipped) or 'none'))
+    log('%s -> %d port(s), %d frames; skipped: %s; not saved' % ('custom gamma' if tables else 'gamma %.1f' % gamma, len(ok), n, '; '.join(skipped) or 'none'))
     return n, len(ok), skipped
 
 
@@ -1507,8 +1846,8 @@ def color_read(link, targets, log):
     """Read-only: what the receiving cards of each port hold now, read as NovaLCT reads it when its Brightness / Advanced
     Colour windows open (docs\\COLOR_BRIGHTNESS.md §1, §4.1, §5.2; the same reads are in NovaLCT's recorded colour
     sessions): card 0 of the port, 0x02000000 (0x30 B: +0 gamma x 10, +1 brightness, +2..+5 R G B VR, +0x25 grey depth;
-    the read set_gamma does first, done on the real H5), the colour-space switch 0x02000130 (1 B) and, when it is on (02),
-    the 0x12009000 record (256 B); per sending card the gamma source depth 0x03100109 (1 B). A port whose card doesn't
+    the read set_gamma does first, done on the real H5), the colour-space switch 0x02000130 (1 B) and the 0x12009000
+    record (256 B); per sending card the gamma source depth 0x03100109 (1 B). A port whose card doesn't
     answer is read through its backup port (target {backupOf}). Returns one entry per primary port: {dst, port, via, hex
     (the 0x30 B), gamut (1 B hex), record (hex or None), src (sender byte or None)} or {dst, port, error}."""
     prim = [t for t in targets if not t.get('backupOf')]
@@ -1524,7 +1863,7 @@ def color_read(link, targets, log):
         e = {'dst': t['dst'], 'port': t['port'], 'via': [dst, port], 'hex': blk.hex(), 'gamut': None, 'record': None}
         try:
             g = link.read(1, dst, port, 0, 0x02000130, 1, timeout=1.0); e['gamut'] = g.hex()
-            if g[0] == 0x02: e['record'] = link.read(1, dst, port, 0, 0x12009000, 256, timeout=1.0).hex()
+            e['record'] = link.read(1, dst, port, 0, 0x12009000, 256, timeout=1.0).hex()   # also when off: the LEDs' colours for Custom gamut
         except LinkError: pass
         if t['dst'] not in src:
             try: src[t['dst']] = link.read(0, t['dst'], 0, 0, 0x03100109, 1)[0]
@@ -1579,12 +1918,15 @@ def identify(link, chains, log, full=False, pairs=None, probe_timeout=0.5):
     import rcvfile
     t0 = time.time(); out = []; rt = ReplyTimer(probe_timeout)
     backup_of = {(q['ps'], q['pp']): (q['bs'], q['bp']) for q in (pairs or [])}
+    via_backup = set()   # ports whose cards answered only through the backup: the rest of that port is read there at once
     def rd(d, p, i, addr, ln):
+        bk = backup_of.get((d, p))
+        if bk and (d, p) in via_backup: return rt.read(link, bk[0], bk[1], i, addr, ln, timeout=probe_timeout)
         try: return rt.read(link, d, p, i, addr, ln, timeout=probe_timeout)
         except LinkError:
-            bk = backup_of.get((d, p))
             if not bk: raise
-            return rt.read(link, bk[0], bk[1], i, addr, ln, timeout=probe_timeout)
+            b = rt.read(link, bk[0], bk[1], i, addr, ln, timeout=probe_timeout)
+            via_backup.add((d, p)); return b
     for c in chains:
         dst = int(c['dst'])
         for p, n in sorted(((int(k), int(v)) for k, v in (c.get('ports') or {}).items())):
@@ -2033,8 +2375,12 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self):
         o = self.headers.get('Origin')
-        if o is not None and not origin_ok(o): return self._json(403, {'error': 'origin not allowed'})
-        if self.headers.get('Content-Type', '').split(';')[0] != 'application/json': return self._json(415, {'error': 'JSON only'})
+        def refuse(code, text):   # the body is read first: left unread, Windows aborts the connection and the reply is lost
+            try: self.rfile.read(min(int(self.headers.get('Content-Length', 0) or 0), 1 << 20))
+            except (OSError, ValueError): pass
+            return self._json(code, {'error': text})
+        if o is not None and not origin_ok(o): return refuse(403, 'origin not allowed')
+        if self.headers.get('Content-Type', '').split(';')[0] != 'application/json': return refuse(415, 'JSON only')
         try: body = json.loads(self.rfile.read(int(self.headers.get('Content-Length', 0))) or b'{}')
         except ValueError: return self._json(400, {'ok': False, 'error': 'the request body isn’t valid JSON'})
         if not isinstance(body, dict): return self._json(400, {'ok': False, 'error': 'the request body must be a JSON object'})
@@ -2074,6 +2420,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, {'ok': True, 'frames': n, 'log': path, 'tail': lines[-12:]})
             if self.path == '/api/hw/discover':
                 ds = discover(float(body.get('timeout', 2)), probe=body.get('probe') or ()); net_found('lct', ds)
+                if not ds:   # nothing found: what the searches met (bind / send errors, the adapters searched, who holds a search port)
+                    import netif
+                    return self._json(200, {'ok': True, 'devices': ds, 'search': netif.search_report(owners=True)})
                 return self._json(200, {'ok': True, 'devices': ds})
             if self.path == '/api/hw/links':                 # the link pool: open connections; close = close the unused ones now
                 closed = close_links(0, body.get('target')) if body.get('close') else []
@@ -2101,7 +2450,8 @@ class Handler(BaseHTTPRequestHandler):
                 link = open_link(body['host'], body.get('port'))
                 try:   # answered after close(): a request the link pool refused answers "busy" (PooledLink.close)
                     ss = senders_on(link)
-                    r = {'ok': True, 'senders': ss} if not body.get('functions') else {'ok': True, 'senders': ss, 'functions': [sender_functions(link, d) for d in range(len(ss))]}
+                    r = {'ok': True, 'senders': ss} if not body.get('functions') else {'ok': True, 'senders': ss, 'functions': [
+                        {'error': 'not a sending card (%s)' % NON_LED_CARDS[s]} if s in NON_LED_CARDS else sender_functions(link, d) for d, s in enumerate(ss)]}
                 finally: link.close()
                 return self._json(200, r)
             if self.path == '/api/hw/detect':
@@ -2124,7 +2474,7 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, {'ok': n > 0 or not bad, 'written': n, 'failed': bad, 'error': None if n or not bad else 'no card answered', 'tail': lines[-12:]})
             if self.path == '/api/hw/gamma':                 # gamma to receiving cards (16-bit cards only), no save
                 link = open_link(body['host'], body.get('port'), exclusive='a gamma change')
-                try: n, ports, skipped = set_gamma(link, body['targets'], float(body['gamma']), log)
+                try: n, ports, skipped = set_gamma(link, body['targets'], float(body.get('gamma') or 0), log, body.get('tables'))
                 finally: link.close()
                 return self._json(200, {'ok': True, 'frames': n, 'ports': ports, 'skipped': skipped, 'tail': lines[-6:]})
             if self.path == '/api/hw/color-read':            # what the cards hold now (brightness, gamma, R/G/B, colour space), read-only
@@ -2246,7 +2596,9 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, wirelog.set_enabled(body.get('on', True)))
             if p == '/api/hw/diag/import':                   # a Wireshark / tcpdump capture, decoded and kept
                 import base64
-                rs = wirelog.from_capture(base64.b64decode(body['data']))
+                import usbcap                            # a USBPcap capture (link type 249): NovaStar's USB device
+                data = base64.b64decode(body['data'])
+                rs = usbcap.from_pcap(data) if usbcap.is_usbpcap(data) else wirelog.from_capture(data)
                 name = wirelog.save_import(body.get('name') or 'capture', rs)
                 return self._json(200, {'ok': True, 'name': name, 'total': len(rs), 'frames': rs[:20000]})
             if p == '/api/hw/diag/open-folder':             # this computer only (the helper listens on 127.0.0.1)
@@ -2394,7 +2746,15 @@ def main(argv):
         alpha.prune_daily()
         print('novalink helper on http://%s:%d — %s%s' % (host, port, alpha.version_line(), ' · read-only until unlocked' if alpha.read_only() else '')); sys.stdout.flush()
         threading.Thread(target=net_watch, daemon=True).start()   # interfaces that come and go (USB Ethernet, Wi-Fi, VPN)
-        srv = ThreadingHTTPServer((host, port), Handler)
+        import usbauto                             # NovaStar USB controllers: Open Nova and NovaLCT both, recorded (Windows)
+        threading.Thread(target=usbauto.run, daemon=True).start()
+        import netcap                              # NovaLCT / VMP / Unico on the network: recorded, passively (pktmon / tcpdump)
+        threading.Thread(target=netcap.run, daemon=True).start()
+        try: srv = ThreadingHTTPServer((host, port), Handler)
+        except OSError as e:   # one line, no traceback (opennova.py picks a free port first: this is a race or a start by hand)
+            taken = e.errno in (errno.EADDRINUSE, errno.EACCES) or getattr(e, 'winerror', None) in (10048, 10013)
+            print("The hardware helper can't use port %d: %s. Start it with --port <another port>." % (port, 'another program is using it' if taken else e))
+            return 1
         if os.environ.get('OPENNOVA_STARTUP_TRACE'): import faulthandler; faulthandler.cancel_dump_traceback_later()   # it started
         srv.serve_forever(); return 0
     if cmd == 'serial':                                  # serial [--probe 1]: USB / serial ports, which answer (read-only)

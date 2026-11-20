@@ -14,7 +14,7 @@
 <p>Runs <code>ui-lint.js</code> <code>uiSweep()</code> (every tab, every ▾ menu, every menu-bar menu and submenu) in the app at each
 window width × interface size × text size × theme, in a hidden frame of that size — no window resize needed. Query:
 <code>?w=375,768,1280,1920&amp;z=0.7,1,1.5&amp;fs=1,1.15&amp;theme=dark,light&amp;h=800</code> (<code>&amp;offline=1</code>: in an offline
-project with four simulated processors, so every tab shows its full controls). Saving, sync and processor searches are
+project with four simulated processors, so every tab shows its full controls; <code>&amp;usbauto=1</code>: with the USB line and its button). Saving, sync and processor searches are
 switched off in the frame; this browser’s size / text / theme settings are put back at the end.</p>
 <pre id="out">running…</pre>
 <div class="host" id="host"></div>
@@ -44,6 +44,11 @@ function frame(w) {
         win.saveLocal = function () {}; win.schedulePush = function () {}; win.liveApplySchedule = function () {};
         win.olSearch = function () {}; win.rbAuto = function () {}; win.olWebRefresh = function () {}; if (win.hw) win.hw.bgAt = Date.now() + 1e9;
         if (q.get('offline')) offlineProject(win);
+        if (q.get('usbauto') && win.vndAutoShow) {   // ?usbauto=1: the USB coordinator's line with its button, as on a tester's PC
+          win.vndAuto.st = { ok: true, state: 'released', sub: 'needs-consent', say: 'NovaLCT has the NovaPro HD · not recorded yet', tip: 'Windows asks for permission once.', action: 'allow' };
+          win.vndNet.st = { ok: true, state: 'needs-consent', say: 'NovaLCT and VMP are open · not recorded yet', tip: 'Windows asks for permission once.', action: 'allow' };   // network recording's line too
+          win.vndAutoShow();
+        }
         var s = win.document.createElement('script'); s.src = 'tests/ui-lint.js?' + Date.now();
         s.onload = function () { resolve(f); }; win.document.body.appendChild(s);
       })();

@@ -1,25 +1,26 @@
 // app-display.js - Display & Test (design phase 5, the field tool): what the wall shows right now, on every linked
 // processor at once, through its driver (drv-*.js) — never part of Send, never saved.
-//   - header Blackout / Freeze (toggle) and Normal; Alt+B / Alt+F / Alt+N; a red banner while anything is active
-//     (one click, no confirm — user decision; Normal is always one click away);
+//   - header Blackout / Freeze (toggle) and Normal; Alt+B / Alt+F / Alt+N; a red chip in the menu bar while anything is
+//     active (one click, no confirm — user decision; Normal is always one click away); the tiles are live whenever a
+//     processor is linked, worked out on every render (dispTiles), else greyed with the reason;
 //   - Layout ▸ Test ▾ and right-click ▸ Test pattern: a pattern on the selected panels, else the selected sections, else
 //     everything; Identify (a tool: click a panel, it lights green on the wall for 3 s); Mapping (cards draw their port
 //     and chain number);
 //   - targets come from the project: a panel's (processor, card on its link, port, cable position) from the export's
 //     cable order (hwPortCells), so they address exactly what the layout placed.
 // Owns: disp, DISP_IDENT_MS, dispTargets, dispLinked, dispRun, dispSet, dispPattern, dispNormal, dispToggle, dispIdentify,
-// dispMapping, dispMenuItems, openTestMenu, renderDisplayBar, renderIdentify, bindDisplay.
+// dispMapping, dispMenuItems, openTestMenu, DISP_TILES, dispTiles, renderDisplayBar, renderIdentify, bindDisplay.
 // Depends on: app-core (P, ui, $, esc, log, toast), app-capacity (screenById), app-geometry (cellsOf, visibleScreens),
 // app-processors (deviceOfCard, cardsOfDevice), app-hardware (hwPortCells), drv-core (DRV), app-context-menu (openMenu),
-// app-render (renderAll, renderCanvas, el), all at run time.
+// app-render (renderAll, renderCanvas, el), app-alpha (alphaOwn), all at run time.
 // Classic script, not an ES module (see app-core.js); every top-level name is a shared global.
 'use strict';
 
-var disp = { mode: 'normal', pattern: null, scope: '', mapping: false };
+var disp = { mode: 'normal', pattern: null, scope: '', mapping: false, tips: {} };   // tips: the tiles' own tooltips (index.html)
 var DISP_IDENT_MS = 3000;
 
 // Linked processors that can show things (a real link or a simulated one).
-function dispLinked() { return (P.devices || []).filter(function (d) { return d.hw && DRV.caps(d).display; }); }
+function dispLinked() { return ((typeof olShownDevices === 'function' ? olShownDevices() : P.devices) || []).filter(function (d) { return d.hw && DRV.caps(d).display; }); }   // online: the connected ones (app-online.js)
 
 // {deviceId: targets|null} for the cells of `cells` (or null everywhere = the whole wall), and a scope text.
 function dispTargets(cells) {
@@ -110,17 +111,28 @@ function openTestMenu(btn) {
   openMenu(r.left, r.bottom + 4, items);
 }
 
-// ------------------------------------------------------------------ banner + canvas pulse
+// ------------------------------------------------------------------ the tiles, the state chip, the canvas pulse
+// Blackout / Freeze / Normal / Pattern: live while any processor is linked (or simulated), else greyed with the reason.
+// renderAll calls this too (the project arriving at start-up, every link change), so it is never a stale start-up state.
+var DISP_TILES = ['btnBlackout', 'btnFreeze', 'btnNormalHdr', 'btnTestHdr'];
+function dispTiles() {
+  var none = !dispLinked().length;
+  DISP_TILES.forEach(function (id) {
+    var b = $(id); if (!b) return;
+    if (!(id in disp.tips)) disp.tips[id] = b.dataset.roTitle || b.title;
+    alphaOwn(b, none, none ? 'Link a processor first' : disp.tips[id]);   // the alpha's read-only greying keeps its own reason
+  });
+}
+// The state chip in the menu bar (index.html #displayBar): one line, never pushes the workspace.
 function renderDisplayBar() {
   var bar = $('displayBar'); if (!bar) return;
-  var what = disp.mode === 'blackout' ? 'The screen is BLACKED OUT' : disp.mode === 'freeze' ? 'The screen is FROZEN' : '';
-  if (disp.pattern) what = (what ? what + ' · ' : '') + 'Test pattern ' + disp.pattern + ' on ' + disp.scope;
-  if (disp.mapping) what = (what ? what + ' · ' : '') + 'Mapping is on';
-  bar.hidden = !what; $('displayText').textContent = what;
+  var what = disp.mode === 'blackout' ? 'Blacked out' : disp.mode === 'freeze' ? 'Frozen' : '', tip = what ? 'The wall is ' + what.toLowerCase() : '';
+  if (disp.pattern) { what = (what ? what + ' · ' : '') + 'Pattern ' + disp.pattern; tip = (tip ? tip + ' · ' : '') + 'Test pattern ' + disp.pattern + ' on ' + disp.scope; }
+  if (disp.mapping) { what = (what ? what + ' · ' : '') + 'Mapping on'; tip = (tip ? tip + ' · ' : '') + 'Mapping is on'; }
+  bar.hidden = !what; $('displayText').textContent = what; bar.title = tip ? tip + ' — Normal brings the picture back (Alt+N)' : '';
   $('btnBlackout').classList.toggle('on', disp.mode === 'blackout');
   $('btnFreeze').classList.toggle('on', disp.mode === 'freeze');
-  var none = !dispLinked().length;
-  ['btnBlackout', 'btnFreeze', 'btnNormalHdr'].forEach(function (id) { $(id).disabled = none; });
+  dispTiles();
   if (typeof renderPipe === 'function') renderPipe();   // the Override tiles (app-pipeline.js)
 }
 function renderIdentify(svg, unit) {

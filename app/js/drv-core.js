@@ -87,10 +87,20 @@ var DRV = {
     return { name: x.name, signal: x.signal, text: (x.signal ? x.width + '×' + x.height + (x.rate ? ' @ ' + x.rate + ' Hz' : '') : 'no signal') + (edid ? ' · ' + edid : '') };
   },
   unsupported: function (what) { return Promise.resolve(drvResult(false, { unsupported: true, error: what + ' isn’t available for this processor yet' })); },
+  // Why a search may have found nothing: the helper's 'search' of each family that found none ({platform, problems
+  // [{code, text}], searched [{name, ip}]}), merged over the last discoverAll; app-online.js's empty list says it.
+  why: null,
+  noteWhy: function (s) {
+    if (!s || !s.problems) return;
+    var w = DRV.why || (DRV.why = { platform: s.platform, problems: [], searched: [] });
+    s.problems.forEach(function (p) { if (!w.problems.some(function (q) { return q.text === p.text; })) w.problems.push(p); });
+    (s.searched || []).forEach(function (a) { if (!w.searched.some(function (b) { return b.name === a.name && b.ip === a.ip; })) w.searched.push(a); });
+  },
   // Every family's discovery at once, in registration order; families that fail just find nothing.
   // The list's .failed = how many families couldn't reach the helper.
   discoverAll: function (opts) {
     var fams = Object.keys(DRV.families).filter(function (f) { return DRV.families[f].discover; }), failed = 0;
+    DRV.why = null;
     return Promise.all(fams.map(function (f) {
       return DRV.families[f].discover(opts || {}).then(function (list) { return list || []; }, function () { failed++; return []; });
     })).then(function (lists) { var all = [].concat.apply([], lists); all.failed = failed; all.tried = fams.length; return all; });

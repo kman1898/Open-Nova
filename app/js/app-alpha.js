@@ -14,16 +14,17 @@
 //     the helper keeps a snapshot of everything said with it (diagnostics/<day>/first-contact/), once per model.
 //   - Report a problem…: what the tester writes + the project, logs, recordings, processor read-backs (all read-only),
 //     made into one .zip by the helper (REPORT.md on top, scrubbed, optionally anonymised) in Downloads. Then: its path,
-//     Show in folder, Copy issue text (version, OS, processor families, the error; no addresses, serials or names) and a
-//     link to the GitHub issue page (only a link: nothing is sent from here).
+//     Show in folder, Copy issue text (version, OS, processor families, the error; no addresses, serials or names) and,
+//     once the repository is public (version.json repoPublic), a link to the GitHub issue page (only a link: nothing is
+//     sent from here). The helper keeps the .zip small enough to e-mail and says how many files it left out.
 //   - An unexpected error caught (a JS error, an unhandled promise failure, a helper bug, a driver's internal error — not a
 //     processor that didn't answer): "Something went wrong — Make a report / Dismiss", once per distinct error a session,
 //     held back while a processor operation runs or a send dialog is open, never taking focus. Make a report = the report
 //     with that error at the top of REPORT.md (time, action, message, stack, the log and frames of the 30 s before it).
 // Owns: alphaErr, alphaErrCaught, alphaErrBlocked, alphaErrShow, alphaErrChoose, alphaErrPayload, alphaIssueClean, alphaIssueText, alphaCopy,
-// alpha, ALPHA_RO, ALPHA_UNLOCK_KEY, ALPHA_RO_SEL, ALPHA_POST, ALPHA_RENDER, ALPHA_DISCOVER, alphaSha256, alphaPost,
+// alpha, ALPHA_RO, ALPHA_UNLOCK_KEY, ALPHA_LIMITS, ALPHA_RO_SEL, ALPHA_POST, ALPHA_RENDER, ALPHA_DISCOVER, alphaSha256, alphaPost,
 // alphaVersionText, alphaTitleText, alphaTitle, alphaLoad, alphaReadOnly, alphaToken, alphaTokenOk, alphaUnlocked, alphaClassify, alphaWhat,
-// alphaApplyRO, alphaDlg, alphaDlgClose, alphaIntro, alphaUnlockAsk, alphaLock, alphaEvent, alphaFirstContact,
+// alphaApplyRO, alphaOwn, alphaContact, alphaDlg, alphaDlgClose, alphaIntro, alphaUnlockAsk, alphaLock, alphaEvent, alphaFirstContact,
 // alphaReportOpen, alphaReportGo, alphaSummary, alphaKb, bindAlpha.
 // Depends on: app-core (P, ui, $, esc, toast), app-log (log, logState, logAct, logActBody, logActNew, logFormat), drv-core (DRV), app-support (supGather),
 // app-hardware (hw, hwModelKey), app-online (olModel, olMode), app-processors (procModel, procUnset, deviceLabel), app-render (renderAll),
@@ -34,11 +35,23 @@
 var alpha = { ver: null, st: null, events: [], fc: {}, busy: false, report: null, mode: '' };   // mode: which dialog is open
 var ALPHA_RO = 'Writing to processors is off in this alpha — Settings ▸ Alpha ▸ Allow sending';
 var ALPHA_UNLOCK_KEY = 'opennova.alphaUnlock';
+// Known limits in this alpha: the same list as docs/README-ALPHA.md (keep both in step), shown in the intro (open on the first start).
+var ALPHA_LIMITS = [
+  ['Only the H2, H5 and H9 have been tried on real processors', ' (finding and reading them). MCTRL, VX, NovaPro, Unico and MX / CX processors have only been run against simulators so far. If something looks wrong, a report is the most useful thing you can send.'],
+  ['USB (NovaPro HD, a VX’s USB-B port) is ready, but the first test on a real NovaPro HD is still to come.', ' Windows: install NovaLCT once (it brings the USB driver). Open Nova and NovaLCT can both use the controller. To record what NovaLCT does, Open Nova asks once to Install USB capture (then restart the computer) and once per start to Allow USB recording.'],
+  ['USB on a Mac needs macOS 14 (Sonoma) or newer.', ' Network processors work on older versions. Linux needs libusb and a udev rule (RUNNING.md).'],
+  ['Windows 10 or 11, 64-bit.', ' Windows 7 and 8 can’t run it. When Windows asks about Python and the network, tick both Private and Public, then Allow.'],
+  ['Recording NovaStar’s own apps:', ' while NovaLCT, VMP or Unico is open, Open Nova records what it says to the processors. It only listens (Windows’ own packet recorder; Windows 10 version 2004 or newer) and never gets in the way. Windows asks once per start: Allow recording. Not tried yet with a real NovaLCT and processor. The Mac way (it asks for your password once) is untested. USB recording works on Windows only. The relay under Advanced is an experimental expert option. Recordings and Wireshark captures go into the report as they are (they may hold a login the NovaStar app sent). NovaStar apps’ logs go in only when you tick them.'],
+  ['A controller on a COM port:', ' close NovaLCT first. It holds the port, and Open Nova tells you which one.'],
+  ['Writing is off until you type the unlock code', ' (Settings ▸ Alpha ▸ Allow sending). Greyed buttons are locked, not broken. The unlock is per browser.'],
+  ['Unzip to a normal folder on this computer,', ' not OneDrive or a network share. Your projects live in the Open Nova folder (app/data): when you update, copy that folder across.'],
+  ['Browser:', ' current Chrome, Edge or Firefox, or Safari 16.4 or newer.']
+];
 // What the read-only alpha greys out (the helper refuses these anyway): Send, Save, Send backup, service, calibration
 // changes, receiving-card files, Screen Settings Apply, scene recall, blackout / freeze / normal, the Test menu (patterns,
 // identify, mapping), the dashboard's show buttons. (The Monitor's Clear stays: it clears Open Nova's own list; the
 // processor's counters are then not reset, and it says so. Live colour edits stay editable in the project; each send is refused.)
-var ALPHA_RO_SEL = '#btnSendHdr, #btnSaveHw, #btnSaveBar, #mtRcv, #scApply, [data-rd="send"], [data-hw="svc"], #svcGo, [data-co="mode"], ' +
+var ALPHA_RO_SEL = '#btnSendHdr, #btnSendMenu, #btnSaveHw, #btnSaveMenu, #btnSaveBar, #mtRcv, #scApply, [data-rd="send"], [data-hw="svc"], #svcGo, [data-co="mode"], ' +
   '[data-co="reset"], [data-co="reload"], [data-co="save"], [data-co="module"], [data-co="flash"], [data-ps="recall"], ' +
   '#btnBlackout, #btnFreeze, #btnNormalHdr, #btnNormalBar, #btnTest, #btnTestHdr, #mbTestTool, [data-db="blackout"], [data-db="freeze"], [data-db="normal"], [data-db="scene"], [data-db="save"]';
 
@@ -153,12 +166,14 @@ function alphaWhat(path, body) {
   return ['action', 'op', 'a', 'mode', 'name', 'level', 'on'].filter(function (k) { return body[k] != null && body[k] !== ''; }).map(function (k) { return String(body[k]).slice(0, 40); }).join(' ');
 }
 // Grey out what writes, with the reason as the tooltip (and back when unlocked). Run after every render and DOM change.
-function alphaApplyRO() {
-  var on = alphaReadOnly() && !alphaUnlocked();
-  // a project whose processors are all simulated (drv-offline.js: nothing leaves the app) keeps its buttons; DRV.post above
-  // still refuses every write to a real processor
+// Writes greyed out: locked, unless the project's processors are all simulated (drv-offline.js: nothing leaves the app), which
+// keeps its buttons; DRV.post above still refuses every write to a real processor.
+function alphaGrey() {
   var sim = (P.devices || []).length && P.devices.every(function (d) { return d.hw && d.hw.kind === 'offline'; });
-  var grey = on && !sim;
+  return alphaReadOnly() && !alphaUnlocked() && !sim;
+}
+function alphaApplyRO() {
+  var on = alphaReadOnly() && !alphaUnlocked(), grey = alphaGrey();
   Array.prototype.forEach.call(document.querySelectorAll(ALPHA_RO_SEL), function (b) {
     if (grey) {
       if (!b.dataset.ro) { b.dataset.ro = b.disabled ? 'was' : '1'; b.dataset.roTitle = b.title || ''; }
@@ -173,6 +188,14 @@ function alphaApplyRO() {
   var ro = $('mbRO'); if (ro) { ro.hidden = !on; }
   var a = $('mbAllowSend');
   if (a) { a.textContent = alphaReadOnly() && !on ? 'Lock again' : 'Allow sending…'; a.title = on ? 'Switch sending to processors on (asks for the unlock code)' : 'Back to read-only'; }
+}
+// A write control's own state, set by its module (off + the tooltip): on the button, or — while greyed above — into what
+// alphaApplyRO gives back, so a state from before the greying (e.g. "nothing linked" at start-up) never sticks.
+function alphaOwn(b, off, tip) {
+  if (!b) return;
+  if (b.dataset.ro) { b.dataset.ro = off ? 'was' : '1'; if (tip != null) b.dataset.roTitle = tip; return; }
+  if (b.disabled !== !!off) b.disabled = !!off;
+  if (tip != null && b.title !== tip) b.title = tip;
 }
 var ALPHA_RENDER = renderAll;
 renderAll = function () { var r = ALPHA_RENDER.apply(this, arguments); if (alphaReadOnly()) alphaApplyRO(); return r; };
@@ -197,6 +220,8 @@ function alphaIntro(first) {
     '<ul class="al-list"><li>Nothing is sent anywhere unless you send a report (Help ▸ Report a problem…).</li>' +
     '<li>Passwords and logins are never recorded.</li>' +
     '<li>Writing to processors is off: Open Nova finds, reads and monitors them. Anything that changes a processor — Send, Save, blackout, test patterns, identify, mapping, colour — needs the unlock code (Settings ▸ Alpha ▸ Allow sending).</li></ul>' +
+    '<details class="al-limits"' + (first ? ' open' : '') + '><summary>Known limits in this alpha</summary><ul class="al-list">' +
+      ALPHA_LIMITS.map(function (l) { return '<li><b>' + esc(l[0]) + '</b>' + esc(l[1]) + '</li>'; }).join('') + '</ul></details>' +
     '<div class="grid2 al-who"><label>Your name <input id="alName" type="text" autocomplete="name" value="' + esc(t.name || '') + '"></label>' +
     '<label>Contact <input id="alContact" type="text" autocomplete="email" placeholder="e-mail or phone (optional)" value="' + esc(t.contact || '') + '"></label></div>' +
     '<p class="hint">Optional: only goes into the reports you make.</p>',
@@ -247,6 +272,7 @@ function alphaFirstContact(found) {
   (found || []).forEach(function (x) {
     if (!x || x.error || !x.ip) return;
     var m = olModel(x), why = '';
+    if (!m && olNonLed(x)) return;   // an H's MVR card: known, not an LED output (app-processors.js NON_LED_CARDS)
     if (!m) why = x.modelId != null || (x.senders && x.senders.length) ? 'model not in the catalogue' : 'no model reported';
     else if (x.web && x.web.modelId != null && !hwModelKey(x.web.modelId)) why = 'H chassis model not in the catalogue';
     if (!why) return;
@@ -267,8 +293,10 @@ DRV.discoverAll = function (opts) { return ALPHA_DISCOVER(opts).then(function (a
 
 // ------------------------------------------------------------------ Help ▸ Report a problem…
 // pre = an error caught (alphaErr.list) to preselect; the menu's click event is not one.
+// Where reports go (version.json reportContact; the page's own copy when the helper is away), '' for a build without one.
+function alphaContact() { var c = String(((alpha.st && alpha.st.reportContact) || (alpha.ver && alpha.ver.reportContact) || '')).trim(); return c && c.charAt(0) !== '(' ? c : ''; }
 function alphaReportOpen(pre) {
-  var s = alpha.st, c = s && s.reportContact;
+  var c = alphaContact();
   pre = pre && pre.message != null && pre.id ? pre : null;
   alpha.mode = 'report';
   var box = function (id, label, tip) { return '<label class="chk" title="' + esc(tip) + '"><input type="checkbox" id="' + id + '" checked> ' + esc(label) + '</label>'; };
@@ -283,7 +311,7 @@ function alphaReportOpen(pre) {
     box('rpRec', 'Recordings of this session', 'Everything Open Nova said to the processors and what they answered (Tools ▸ Diagnostics)') +
     box('rpLogs', 'Logs', 'Open Nova’s own logs: what you clicked, what happened') +
     box('rpProc', 'Processor info', 'Models, IDs, firmware, receiving cards, links, what the search found — read from the processors now, nothing written') +
-    box('rpSys', 'System', 'OS, browser and Python versions; your name / contact from the intro') +
+    box('rpSys', 'System', 'OS, CPU, browser and Python; USB / COM drivers and libraries; the firewall’s rules for Open Nova’s Python; which programs use the search ports; the start window’s text; your name / contact from the intro') +
     // opt-in (app-vendor.js / tools/vendortap.py): NovaLCT / VMP / Unico's own log files, last 3 days, capped, scrubbed
     '<label class="chk" title="NovaLCT, VMP and Unico’s own log files from this computer (last 3 days, at most 40 MB, passwords and keys hidden) — Tools ▸ Vendor Apps"><input type="checkbox" id="rpVendor"' + (typeof vndLogsWanted === 'function' && vndLogsWanted() ? ' checked' : '') + '> NovaStar apps’ logs</label></div>' +
     '<label class="chk" title="Private addresses become device-A, device-B … the same in every file; your home folder becomes ~"><input type="checkbox" id="rpAnon"> Anonymise IP addresses</label>' +
@@ -322,9 +350,9 @@ function alphaSummary(o, reads) {
     app: { url: location.href, browser: navigator.userAgent, screen: innerWidth + '×' + innerHeight + ' @' + (window.devicePixelRatio || 1), project: P.name,
       mode: typeof olMode === 'function' ? olMode() : '', tab: ui.tab, unlocked: alphaUnlocked(), lockEvents: alpha.events },
     found: o.processors ? (hw.found || []).map(function (x) {
-      var m = !x.error && olModel(x);
+      var m = !x.error && olModel(x), nl = !x.error && !m && olNonLed(x);
       return { kind: x.kind, ip: x.ip, port: x.port, name: x.deviceName, modelId: hx(x.modelId), senders: x.senders || [], sn: x.SN || '',
-        firmware: (x.web && x.web.sw) || x.version || '', known: x.error ? null : !!m, model: m ? procModel(m.key).name : '', why: x.error || '' };
+        firmware: (x.web && x.web.sw) || x.version || '', known: x.error ? null : !!(m || nl), model: m ? procModel(m.key).name : nl || '', why: x.error || '' };
     }) : [],
     devices: o.processors ? (P.devices || []).map(function (d) {
       var lv = hw.live[d.id], n = 0, rd = reads[d.id] || {};
@@ -334,6 +362,10 @@ function alphaSummary(o, reads) {
         detected: lv ? n + ' cabinets' : d.hw ? 'not detected yet' : '', firmware: fwOf(d, rd['device-info']), cards: cardsOf(rd['receiving-cards']) };
     }) : [],
     errors: errs.slice(-50),
+    // Monitor's errors kept until Clear (app-health.js hlt.log: still going first), as the tester saw them
+    monitor: o.processors && typeof hlt !== 'undefined' ? (hlt.log || []).slice(0, 60).map(function (e) {
+      return { t: new Date(e.t).toISOString(), ended: e.ended ? new Date(e.ended).toISOString() : '', level: e.level, dev: e.dev, where: e.where, text: e.text, n: e.n || 1 };
+    }) : [],
     failedCalls: DRV.journal.filter(function (e) { return !e.ok; }).slice(-50).map(function (e) { return { t: e.t, path: e.path, ms: e.ms, error: e.error }; })
   };
 }
@@ -352,15 +384,17 @@ function alphaReportGo() {
     alpha.busy = false;
     if (!r || !r.ok) { $('alGo').disabled = false; $('rpMsg').textContent = 'The report failed: ' + ((r && r.error) || 'no answer'); return; }
     alpha.report = r; log('report_saved', { file: r.name, bytes: r.bytes, files: r.files, unknown: r.unknown });
-    var c = alpha.st && alpha.st.reportContact;
+    var c = alphaContact(), gh = !!(alpha.st && alpha.st.repoPublic);   // the GitHub link only once the repository is public (a 404 before)
     $('alBody').innerHTML = '<p><b>Saved:</b> ' + esc(r.name) + ' (' + alphaKb(r.bytes) + ', ' + r.files + ' files)</p><p class="hint al-path">' + esc(r.path || r.dir) + ' — on the computer running Open Nova</p>' +
       (r.unknown ? '<p>It includes ' + r.unknown + ' processor snapshot' + (r.unknown === 1 ? '' : 's') + ' Open Nova didn’t know yet — thank you.</p>' : '') +
+      (r.helperDown ? '<p class="rcv-bad">Open Nova’s hardware helper isn’t running, so the processor details are missing. The report has the rest — please send it anyway.</p>' : '') +
+      (r.leftOut ? '<p class="hint">Kept small enough to e-mail: ' + r.leftOut + ' older file' + (r.leftOut === 1 ? '' : 's') + ' left out (listed in REPORT.md).</p>' : '') +
       '<p>Please send this file' + (c ? ' to <b>' + esc(c) + '</b>' : '') + '. Nothing was uploaded.</p>' +
-      '<p><a id="rpGh" href="https://github.com/kman1898/Open-Nova/issues/new/choose" target="_blank" rel="noopener noreferrer" title="Opens GitHub in your browser: paste the issue text there and attach the .zip">Open GitHub issue page</a></p>';
+      (gh ? '<p><a id="rpGh" href="https://github.com/kman1898/Open-Nova/issues/new/choose" target="_blank" rel="noopener noreferrer" title="Opens GitHub in your browser: paste the issue text there and attach the .zip">Open GitHub issue page</a></p>' : '');
     $('alFoot').innerHTML = '<button id="rpFolder" title="Open the folder on the computer running Open Nova">Show in folder</button><button id="rpIssue" title="A short summary for the issue: version, OS, processor families, the error — no addresses, serials or names">Copy issue text</button><button id="rpDl" title="A copy to this browser’s downloads (another computer or tablet)">Download a copy</button><span class="grow"></span><button id="alGo" class="primary">Done</button>';
     $('alGo').onclick = alphaDlgClose;
-    $('rpGh').onclick = function () { log('report_github_link', {}); };   // only a link the user opens: the app sends nothing
-    $('rpIssue').onclick = function () { var t = alphaIssueText(r, pe); log('report_issue_text', { chars: t.length }); alphaCopy(t, 'Issue text copied — paste it into the GitHub issue and attach the .zip'); };
+    if (gh) $('rpGh').onclick = function () { log('report_github_link', {}); };   // only a link the user opens: the app sends nothing
+    $('rpIssue').onclick = function () { var t = alphaIssueText(r, pe); log('report_issue_text', { chars: t.length }); alphaCopy(t, gh ? 'Issue text copied — paste it into the GitHub issue and attach the .zip' : 'Issue text copied — paste it into your message with the .zip'); };
     $('rpFolder').onclick = function () { alphaPost('/api/hw/alpha/reveal', { name: r.name }).then(function (x) { if (!x.ok) toast(x.error); }, function (e) { toast(e.message); }); };
     $('rpDl').onclick = function () {
       var a = document.createElement('a'); a.href = DRV.HELPER + '/api/hw/report/download?name=' + encodeURIComponent(r.name); a.download = r.name;
@@ -476,6 +510,15 @@ function bindAlpha() {
   $('mbAllowSend').onclick = alphaUnlockAsk;
   $('mbAlphaIntro').onclick = function () { alphaIntro(false); };
   $('mbRO').onclick = alphaUnlockAsk;
+  // a greyed write control says why when clicked or tapped: a disabled button does nothing, and touch shows no tooltips
+  // (the hit is looked up from the point: some browsers give a disabled button's events to its parent)
+  var roSaid = 0;
+  document.addEventListener('pointerdown', function (e) {
+    var b = e.target && e.target.closest ? e.target.closest('.ro-off') : null;
+    if (!b && e.isTrusted) { var el = document.elementFromPoint(e.clientX, e.clientY); b = el && el.closest ? el.closest('.ro-off') : null; }
+    if (!b || !b.disabled || Date.now() - roSaid < 1500) return;
+    roSaid = Date.now(); toast(ALPHA_RO); log('alpha_locked_click', { id: b.id || undefined });
+  }, true);
   document.addEventListener('keydown', function (e) { if (e.key === 'Escape' && !$('alDlg').hidden && alpha.mode !== 'intro') alphaDlgClose(); });
   // buttons drawn later by the tabs: greyed as they appear (only while read-only)
   var queued = false;

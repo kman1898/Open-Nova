@@ -174,9 +174,11 @@ function closeScreen(id) {
   var lc = lctById(id), secs = P.screens.filter(function (s) { return s.screenId === id; });
   if (secs.length && !confirm('Close ' + lc.name + '? Its ' + cabsText(secs.reduce(function (n, s) { return n + cabCount(s); }, 0)) + ' will be deleted (Ctrl+Z brings them back).')) return log('close_screen', { screen: lc.name, cancelled: true });
   log('close_screen', { screen: lc.name, sections_deleted: secs.map(function (s) { return s.name; }) });
+  var ow = lctOwner(lc), rest = ow ? lctScreensOf(ow).filter(function (l) { return l.id !== id; }) : [], stay = rest.filter(function (l) { return l.id === ui.viewScreen; })[0] || rest[0];
   P.screens = P.screens.filter(function (s) { return s.screenId !== id; });
   P.lct = P.lct.filter(function (l) { return l.id !== id; });
-  if (ui.viewScreen === id) { ui.viewScreen = null; ui.sel = null; ui.view = null; }
+  P.processors.forEach(function (c) { if (c.screen === id) { if (stay) c.screen = stay.id; else delete c.screen; } });   // its cards stay on the processor's screen, no new one comes back
+  if (ui.viewScreen === id) { ui.viewScreen = stay ? stay.id : null; ui.sel = null; ui.view = null; }
   commit(); renderAll();
   toast('Closed ' + lc.name);
 }
@@ -217,9 +219,71 @@ function moveLct(lc, dir) {
 function lctFitCard() {
   var lc = lctById(ui.viewScreen); if (!lc) return;
   var cab = lctCabDevs(null, lc.id), own = lctOwner(lc, cab), d = deviceOfCard(ui.mSender || 0);
-  if (!own || !d || d.id === own.id || cab[lc.id].some(function (x) { return x.id === d.id; })) return;
-  var cards = cardsOfDevice(own); if (!cards.length) return;
-  ui.mSender = cards[0]; ui.mPort = firstFreePort(cards[0], portUsage(allCells()));
+  if (own && d && d.id !== own.id && !cab[lc.id].some(function (x) { return x.id === d.id; })) {
+    var cards = cardsOfDevice(own);
+    if (cards.length) { ui.mSender = cards[0]; ui.mPort = firstFreePort(cards[0], portUsage(allCells())); }
+  }
+  lctFollowCard();
+}
+// H series: which screen a sending card draws on is the user's choice (2026-11-06: "when i select the second card i should see
+// that cards screen"; "put the second sending card or fifth sending card ... on the same screen or a different screen if I
+// want"). P.processors[i].screen = the chosen screen; a card with none gets a screen of its own when it is selected. A screen
+// is on its chosen cards and the cards its cabinets are wired to, so one that already spans cards stays as it is.
+function cardHasScreen(d) { return !!d && procModel(d.model).family === 'H series'; }
+function lctCards(lc) {
+  var on = {};
+  P.processors.forEach(function (c, i) { if (c.screen === lc.id) on[i] = 1; });
+  P.screens.forEach(function (s) { if (s.screenId === lc.id) cellsOf(s).forEach(function (c) { if (c.sender != null && !c.hole) on[c.sender] = 1; }); });
+  return Object.keys(on).map(Number);
+}
+// The screen card is on: the one chosen, else the first with its cabinets.
+function cardScreen(card) {
+  var d = deviceOfCard(card), c = P.processors[card], lc = c && lctById(c.screen);
+  return lc || (d ? lctScreensOf(d).filter(function (x) { return lctCards(x).indexOf(card) >= 0; })[0] : null) || null;
+}
+// fixSel, on every render: whichever of the active card and the shown screen just changed, the other follows it (every place
+// that picks a card or a screen only sets ui.mSender / ui.viewScreen). An empty shown screen takes the card as it is.
+function lctFollowCard() {
+  var seen = ui.cardSeen, card = ui.mSender || 0, view = ui.viewScreen, d = deviceOfCard(card), lc = lctById(view);
+  ui.cardSeen = { card: card, view: view };
+  if (!seen || (seen.card === card && seen.view === view) || !cardHasScreen(d) || !lc) return;
+  var own = lctOwner(lc), mine = lctCards(lc), to = cardScreen(card);
+  if ((own && own.id !== d.id) || mine.indexOf(card) >= 0 || (!mine.length && !to)) return;
+  if (seen.card === card) {
+    if (mine.length) { ui.mSender = mine[0]; ui.mPort = firstFreePort(mine[0], portUsage(allCells())); ui.cardSeen.card = mine[0]; }
+    return;
+  }
+  if (!to) {
+    to = lctNew(d); P.processors[card].screen = to.id;
+    log('add_screen', { screen: to.name, processor: deviceLabel(d), card: card + 1, why: 'a sending card gets its own screen' }); commit();
+  }
+  ui.viewScreen = to.id; ui.view = null; ui.selKeys = new Set(); ui.selScreen = null; ui.sel = null; ui.cardSeen.view = to.id;
+}
+// Put card on screen `to` ('__new' = a new one). Its cabinets go with it, beside what the screen already shows; cabinets that
+// share a section (or a group) with another card stay where they are. A screen left with nothing is closed.
+function cardToScreen(card, to) {
+  var d = deviceOfCard(card); if (!cardHasScreen(d)) return;
+  var dest = to === '__new' ? lctNew(d) : lctById(to); if (!dest) return;
+  var alone = function (s) { var u = cardsUsed(cellsOf(s)); return u.length === 1 && u[0] === card; };
+  var here = P.screens.filter(function (s) { return s.screenId !== dest.id && cardsUsed(cellsOf(s)).indexOf(card) >= 0; });
+  var go = here.filter(function (s) { return (groupOf(s) ? groupMembers(groupOf(s)) : [s]).every(alone); }), from = {};
+  var there = P.screens.filter(function (s) { return s.screenId === dest.id; });
+  var right = there.reduce(function (m, s) { var b = screenBounds(s); return Math.max(m, b.x + b.w); }, 0);
+  var left = go.reduce(function (m, s) { return Math.min(m, screenBounds(s).x); }, Infinity);
+  go.forEach(function (s) { from[s.screenId] = 1; s.screenId = dest.id; if (there.length) s.x += right - left; });
+  var was = P.processors[card].screen; if (was) from[was] = 1;
+  P.processors[card].screen = dest.id;
+  P.lct = P.lct.filter(function (lc) { return !from[lc.id] || lc.id === dest.id || P.lct.length < 2 || lctCards(lc).length || P.screens.some(function (s) { return s.screenId === lc.id; }); });
+  ui.mSender = card; ui.mPort = firstFreePort(card, portUsage(allCells())); ui.viewScreen = dest.id; ui.view = null; ui.sel = null; ui.selKeys = new Set(); ui.selScreen = null;
+  log('card_to_screen', { card: card + 1, processor: deviceLabel(d), screen: dest.name, sections_moved: go.length, sections_left: here.length - go.length });
+  commit(); renderAll();
+  toast(cardName(card) + ' is on ' + dest.name + (here.length > go.length ? ' — cabinets sharing a section with another card stayed where they were' : ''));
+}
+// Screen ▸ for a card: its processor's screens (● = it is on that one), or a new one.
+function cardScreenItems(card) {
+  var d = deviceOfCard(card), now = cardScreen(card);
+  return lctScreensOf(d).map(function (lc) { return { label: (now === lc ? '● ' : '    ') + lc.name, disabled: now === lc, act: function () { cardToScreen(card, lc.id); } }; })
+    .concat([{ label: 'New screen', act: function () { cardToScreen(card, '__new'); } }]);
 }
 // The screen to draw on with sending card `card`: the one shown when it is that card's processor's (or nobody's yet), else
 // that processor's first screen, else a new screen for it. It becomes the shown screen.
@@ -256,7 +320,7 @@ function lctMenu(e, lc, d) {
     { header: lc.name + (own ? ' · ' + deviceLabel(own) + ' screen ' + (i + 1) : '') },
     { label: 'Earlier', disabled: i <= 0, act: function () { moveLct(lc, -1); } },
     { label: 'Later', disabled: i < 0 || i >= list.length - 1, act: function () { moveLct(lc, 1); } },
-    { label: 'Processor', sub: P.devices.map(function (x) { return { label: (own && own.id === x.id ? '● ' : '    ') + deviceLabel(x), act: function () { lctSetDev(lc, x); } }; }) },
+    { label: 'Processor', sub: (typeof olShownDevices === 'function' ? olShownDevices() : P.devices).map(function (x) { return { label: (own && own.id === x.id ? '● ' : '    ') + deviceLabel(x), act: function () { lctSetDev(lc, x); } }; }) },
     { sep: true },
     { label: '+ Screen' + (own ? ' on ' + deviceLabel(own) : ''), act: function () { if (own) { ui.devSel = own.id; var c = cardsOfDevice(own); if (c.length && c.indexOf(ui.mSender || 0) < 0) { ui.mSender = c[0]; ui.mPort = 0; } } addLctScreen(); } }
   ]);

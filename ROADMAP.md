@@ -18,7 +18,7 @@ parts have also been run on real processors.
   screens, undo.
 - Send, Dry run and Compare per processor; Save as its own button.
 - Redundancy: port-to-port backup sets, Send backup, Verify.
-- Screen settings: brightness, gamma and colour temperature, live, read back from the processor.
+- Screen settings: brightness, gamma, colour temperature and gamut, live; Read back compares them with the processor.
 - Blackout, Freeze, Normal, test patterns, identify.
 - Monitor: temperature, voltage, bit errors, power supplies, alarms that stay until cleared, a heat map.
 - Presets and schedules on processors that keep them.
@@ -41,6 +41,10 @@ these are the most useful ones.
 - **Several screens on one NovaLCT-family processor:** sent together and read back into the same screens, in order.
 - **Screens over several processors** in Unico (cross-device / Super Screens) and VMP (one screen over controllers of the
   same model and firmware): confirm live before enabling. Until then a screen belongs to one processor everywhere.
+- **Sending cards on their own screens** on an H series: a screen on the second card alone, Sent and read back.
+- **Gamut and LUTs on NovaLCT-family processors** (Off, PAL, NTSC, Custom gamut, Load LUT): on a real wall, with a meter: that the cards use
+  different R, G and B tables, that a coefficient of FF is 1.0, and that the matrix comes after the gamma table.
+- **Restarting single cabinets** on real .rcfgx and NCP cards; Unico's own cabinet Restart is still to be recorded.
 - **Colour read-back** on real H series and VX cards, and on a real VX Pro and MX controller.
 - **Receiving-card NCP sends** on a real wall, compared with NovaLCT's; a send to some ports leaving the others alone.
 - **Clearing error counters** on a real receiving card.

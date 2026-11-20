@@ -132,6 +132,8 @@
 :root[data-look="pro"] .dv-ptbl tbody tr:hover td { background: var(--lk-hover); }
 :root[data-look="pro"] .dv-ptbl tr.sel td { background: var(--accent-soft); }
 :root[data-look="pro"] .dv-ptbl tr.sel td:first-child { box-shadow: inset 3px 0 0 var(--acc); }
+:root[data-look="pro"] .mt-tbl tr.sel td { background: var(--accent-soft); }
+:root[data-look="pro"] .mt-tbl tr.sel td:first-child { box-shadow: inset 3px 0 0 var(--acc); }
 :root[data-look="pro"] .dv-ptbl .na { color: var(--ink-4); }
 :root[data-look="pro"] .dv-sw { display: inline-block; width: 10px; height: 10px; margin-right: 8px; vertical-align: -1px; border-radius: var(--r-xs); box-shadow: inset 0 0 0 1px rgba(0, 0, 0, .45); }
 :root[data-look="pro"] .dv-load { display: inline-block; position: relative; width: 120px; height: 6px; margin-right: 10px; vertical-align: 1px; border-radius: var(--r-xs);
@@ -235,6 +237,7 @@
 :root[data-look="pro"] .hm-pill.warn { background: rgba(242, 178, 62, .14); color: var(--warn-ink); box-shadow: inset 0 0 0 1px rgba(242, 178, 62, .38); }
 :root[data-look="pro"] .hm-pill.err, :root[data-look="pro"] .hm-pill.held { background: rgba(240, 72, 77, .16); color: var(--bad-ink); border: 0; box-shadow: inset 0 0 0 1px rgba(240, 72, 77, .42); }
 :root[data-look="pro"][data-theme="light"] .hm-pill.na { background: var(--raise); }
+:root[data-look="pro"] .hm-pill.beyond { background: rgba(160, 90, 120, .16); color: var(--ink-2); border: 0; box-shadow: inset 0 0 0 1px rgba(200, 120, 150, .5); }
 :root[data-look="pro"] .hm-h { align-self: stretch; }
 :root[data-look="pro"] .hm-svg { width: auto; max-width: 100%; height: calc(clamp(220px, 36vh, 460px) / var(--uiz, 1)); max-height: none; }
 :root[data-look="pro"] .hm-cab > rect:first-of-type { stroke: #000; }

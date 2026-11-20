@@ -147,13 +147,29 @@ cases.append({'hex': block(0x1C, 0xFF, 255, 255, 255).hex(), 'gamut': 'ff', 'rec
 cases.append({'hex': block(0xFE, 0x7B, 205, 195, 187).hex(), 'gamut': '00', 'record': None, 'src': 5})
 v = node(js % json.dumps(cases))
 ok(v[0]['v'] == {'brightness': 55, 'gamma': 2.2, 'colorTemp': 3200, 'gamut': 'rec709'}, 'read: 8C = 55 %%, 16 = gamma 2.2, FE B3 42 = 3200 K, colour space on with PAL = Rec.709 (%s)' % v[0]['v'])
-ok(v[1]['v']['gamut'] is None and 'PAL' in v[1]['n']['gamut'], 'read: NTSC colour space = not one of ours (shown as not known)')
+ok(v[1]['v']['gamut'] == 'ntsc', 'read: colour space on with NTSC')
+if os.path.isfile(REC_CAP):
+    drv = open(os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'app', 'js', 'drv-lct.js'), encoding='utf-8').read()
+    ok(rec['pal'].hex().upper() in drv and rec['ntsc'].hex().upper() in drv, 'gamut: the records Open Nova writes = NovaLCT\'s PAL and NTSC, byte for byte')
 ok(v[2]['v']['gamut'] == 'original' and v[2]['v']['colorTemp'] == 6500 and v[2]['v']['brightness'] == 100 and v[2]['v']['gamma'] is None and '10-bit' in v[2]['n']['gamma'],
    'read: FF = colour space off (Original), FF FF FF = 6500 K, a 10-bit source leaves gamma unknown')
 ok(v[3]['v']['gamma'] is None and 'custom' in v[3]['n']['gamma'] and v[3]['v']['colorTemp'] is None and v[3]['v']['brightness'] == 48,
    'read: 254 = custom gamma table, hand-set R/G/B = no temperature, 7B = 48 %')
 rt = node("var r = []; for (var p = 0; p <= 100; p++) { var b = Math.max(0, Math.min(255, Math.round(p * 255 / 100))); r.push(ctx.DRV_LCT.colorOf({ hex: ('0' + b.toString(16)).slice(-2).replace(/^/, '1c') + '00'.repeat(46), gamut: 'ff', src: 5 }).v.brightness === p); } console.log(JSON.stringify(r.every(Boolean)));")
 ok(rt is True, 'every brightness % written from here reads back as the same %')
+
+# Custom gamma tables (a LUT, app-lutfit.js): the same per-port checks as a gamma, the tables given, 0x02000000 = FE
+class Card:
+    def __init__(self): self.w = []
+    def read(self, dev, dst, port, card, addr, n, timeout=1.0): return bytes(0x25) + bytes([16]) + bytes(n - 0x26)
+    def write(self, dev, dst, port, card, addr, data, *a): self.w.append((addr, bytes(data)))
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import novalink
+tb = bytes(range(256)) * 6
+c = Card(); novalink.set_gamma(c, [{'dst': 0, 'port': 1}], 0, lambda s: None, tb.hex())
+ok(b''.join(d for a, d in c.w if 0x05000000 <= a < 0x05000600) == tb and (0x02000000, b'\xfe') in c.w and (0x060003CA, b'\x00') in c.w, 'custom gamma: the tables as given, then FE')
+try: novalink.set_gamma(Card(), [{'dst': 0, 'port': 1}], 0, lambda s: None, 'AA'); ok(False, 'a short table is refused')
+except novalink.LinkError: ok(True, 'a short table is refused')
 
 print('\n%s (%d failed)' % ('ALL PASSED' if not fails else 'FAILED', len(fails)))
 sys.exit(1 if fails else 0)

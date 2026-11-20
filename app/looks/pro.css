@@ -243,6 +243,14 @@
 :root[data-look="pro"] #pipe .tile:disabled { opacity: .62; background: var(--g-tile); cursor: not-allowed; }   /* the tooltip says why (nothing linked / the alpha) */
 :root[data-look="pro"] #btnSendHdr > .pic { color: var(--acc-hi); }
 :root[data-look="pro"] #btnSaveHw > .pic { color: var(--ink-2); }
+/* Send / Save: the tile = the action (it names the processor); the ▾ strip joined to its right = the menu (all, one, Compare) */
+:root[data-look="pro"] header.bar #pipe :is(#btnSendHdr, #btnSaveHw) { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+:root[data-look="pro"] #pipe .tile-more { flex: none; align-self: stretch; width: 17px; min-width: 0; min-height: 0; margin: 0 0 0 -5px; padding: 0; border: 1px solid var(--edge);
+  border-radius: 0 var(--r-tile) var(--r-tile) 0; background: var(--g-tile); color: var(--muted); box-shadow: inset 0 1px 0 var(--hi), 0 1px 2px rgba(0, 0, 0, .55); font-size: 10px; line-height: 1; }
+:root[data-look="pro"] #pipe .tile-more:hover:not(:disabled) { background: var(--g-tile-hov); color: var(--ink); }
+:root[data-look="pro"] #pipe .tile-more:disabled { opacity: .62; cursor: not-allowed; }
+:root[data-look="pro"] #pipe #btnSaveHw.warn + .tile-more { background: var(--g-warn-tile); color: var(--warn-ink); box-shadow: inset 0 1px 0 rgba(255, 220, 150, .18), 0 0 0 1px #b57d1c; }
+:root[data-look="pro"] #pipe :is(#btnSendHdr, #btnSaveHw) > .v { overflow: hidden; text-overflow: ellipsis; }
 :root[data-look="pro"] #btnSaveHw.warn > .pic { color: var(--warn-ink); }
 /* compact (short windows, big interface / text sizes, narrow windows): one line per tile, no picture */
 :root[data-look="pro"] header.bar.compact { padding-top: 4px; padding-bottom: 4px; }
@@ -460,8 +468,14 @@
 
 /* ===================================================================================================== banners (§2: flat, full width, never dimmed) */
 :root[data-look="pro"] .display-bar, :root[data-look="pro"] .wt-banner { background: #c62828; color: #fff; box-shadow: inset 0 -1px 0 rgba(0, 0, 0, .35); font-size: calc(13px * var(--fs, 1)); }
-:root[data-look="pro"] #unsavedBar { background: color-mix(in srgb, var(--warn) 14%, var(--panel)); border-bottom: 1px solid var(--edge); box-shadow: inset 4px 0 var(--warn); color: var(--ink); }
-:root[data-look="pro"] #btnSaveBar { background: linear-gradient(#f7c25a, #e09a1c); border-color: var(--edge); color: #1d1404; box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35); }
+/* the state chips on the menu bar's line (index.html #stateSlot, polish.css): red = the wall isn't showing the picture, amber =
+   not saved; one line, never pushing the workspace */
+:root[data-look="pro"] .mb-state > div { height: 19px; font: 700 calc(11px * var(--fs, 1))/1 var(--f-cond); letter-spacing: .08em; text-transform: uppercase; }
+:root[data-look="pro"] .mb-state > .display-bar { background: #c62828; border-color: #e0484b; box-shadow: 0 0 8px rgba(240, 72, 77, .35); }
+:root[data-look="pro"] #unsavedBar { background: var(--g-warn-tile); border: 1px solid #b57d1c; box-shadow: none; color: var(--warn-ink); font-size: calc(11px * var(--fs, 1)); font-weight: 600; letter-spacing: .06em; }
+:root[data-look="pro"] .menubar #btnNormalBar { height: 15px; padding: 0 7px; border: 1px solid #fff; border-radius: var(--r-ctl); background: #fff; color: #111; font: 700 calc(10.5px * var(--fs, 1))/13px var(--f-cond); letter-spacing: .06em; text-transform: uppercase; }
+:root[data-look="pro"] .menubar #btnSaveBar { height: 15px; padding: 0 7px; border: 1px solid var(--edge); border-radius: var(--r-ctl); background: linear-gradient(#f7c25a, #e09a1c); color: #1d1404;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, .35); font: 700 calc(10.5px * var(--fs, 1))/13px var(--f-cond); letter-spacing: .06em; text-transform: uppercase; }
 :root[data-look="pro"] #rbBar { background: color-mix(in srgb, var(--acc) 12%, var(--panel)); border-bottom: 1px solid var(--edge); box-shadow: inset 4px 0 var(--acc); }
 :root[data-look="pro"] .rd-verify-bar { background: var(--warn); color: #111; }
 

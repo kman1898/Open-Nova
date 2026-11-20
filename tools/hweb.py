@@ -163,6 +163,9 @@ def _masked(raw):
     return _SECRET.sub(rb'\1<hidden>\2', raw or b'')
 
 
+NOPROXY = urllib.request.build_opener(urllib.request.ProxyHandler({}))   # a processor on the show network: never through a (system) proxy
+
+
 def _post(host, path, body, token=None, login=False):
     url = 'http://%s%s/%s' % (host, '' if PORT == 80 else ':%d' % PORT, path.lstrip('/'))
     data = json.dumps(body, separators=(',', ':')).encode()
@@ -173,7 +176,7 @@ def _post(host, path, body, token=None, login=False):
     reqh = {'Content-Type': 'application/json', 'token': token or ''}
     t0 = time.time()
     try:
-        with urllib.request.urlopen(r, timeout=TIMEOUT) as x: raw = x.read(); code = x.status; resph = dict(x.headers.items())
+        with NOPROXY.open(r, timeout=TIMEOUT) as x: raw = x.read(); code = x.status; resph = dict(x.headers.items())
     except urllib.error.HTTPError as e:
         wirelog.http('POST', url, shown, e.code, _masked(e.read()) if login else e.read(), (time.time() - t0) * 1000, 'HTTP %d' % e.code, reqh, dict(e.headers.items()) if e.headers else None)
         raise HWebError('%s: HTTP %d' % (path, e.code))

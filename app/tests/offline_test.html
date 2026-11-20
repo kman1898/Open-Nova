@@ -83,10 +83,10 @@ function run(w, toasts, posts) {
     backup: [['#rdBody [data-rd="read"]', 4]], presets: [['#psDev [data-dp="save"]', 2]], schedule: [['#shBody [data-sh="add"]', 2], ['#shBody [data-sh="enable"]', 2]],
     health: [['#hlBody .hl-tiles', 4]] };
   // the per-screen tabs (a screen belongs to one processor): each processor's screen, with what its real model offers
-  // (NovaLCT: every calibration step; Unico: the switch; COEX: read only; gamut on VX Pro / MX only)
+  // (NovaLCT: every calibration step; Unico: the switch; COEX: read only; gamut on all, NovaLCT its own three)
   var PER = { correction: [[['#coForm [data-co="mode"]', 3], ['#coForm [data-co="reset"]', 1], ['#coForm [data-co="save"]', 1], ['#coForm [data-co="flash"]', 1], ['#coRead', 1]],
       [['#coForm [data-co="mode"]', 3], ['#coForm [data-co="reset"]', 1], ['#coRead', 1]], [['#coForm [data-co="mode"]', 3], ['#coRead', 1]], [['#coRead', 1]]],
-    screen: [[['#scForm input[data-k="brightness"]', 1]], [['#scForm input[data-k="brightness"]', 1]],
+    screen: [[['#scForm input[data-k="brightness"]', 1], ['#scForm select[data-k="gamut"] option', 3]], [['#scForm input[data-k="brightness"]', 1], ['#scForm select[data-k="gamut"] option', 3]],
       [['#scForm input[data-k="brightness"]', 1], ['#scForm select[data-k="gamut"]', 1]], [['#scForm input[data-k="brightness"]', 1], ['#scForm select[data-k="gamut"]', 1]]] };
   var visits = [];
   tabs.forEach(function (id) { if (PER[id]) lcs.forEach(function (lc, i) { visits.push({ id: id, lc: lc, want: PER[id][i], tag: id + ' (' + w.deviceLabel(devs[i]) + '’s screen)' }); }); else visits.push({ id: id, want: WANT[id], tag: id }); });
@@ -156,6 +156,20 @@ function run(w, toasts, posts) {
         if (held.length !== 4) bad.push(held.length + ' bit-error records held (want one per processor)');
         return bad.length ? bad.join('; ') : true;
       });
+      // Phase A: one number per fact — the tile, the per-processor counts, the map's badges and Dashboard count the same way
+      w.setTab('health'); w.renderHealth();
+      t('Monitor counts: tile, per-processor counts, map badges and Dashboard agree (4 warnings, 4 to clear), same words', function () {
+        var n = w.hltCounts(), tile = w.hltTile(), bad = [], sum = function (sel, re) { var s = 0; Array.prototype.forEach.call(d.querySelectorAll(sel), function (e) { var m = re.exec(e.textContent); if (m) s += +m[1]; }); return s; };
+        if (n.warn !== 4 || n.err !== 0 || n.clear !== 4) bad.push('counts ' + JSON.stringify(n));
+        if (tile.text !== '4 warnings' || tile.cls !== 'warn') bad.push('tile "' + tile.text + '" ' + tile.cls);
+        var rowW = Array.prototype.reduce.call(d.querySelectorAll('#hlBody .hl-tiles'), function (s, tl) { return s + +tl.children[3].querySelector('b').textContent; }, 0);
+        if (rowW !== 4) bad.push('counts row warnings ' + rowW);
+        if (sum('#hmBody .hm-pill.warn', /^(\d+) warnings?$/) !== 4) bad.push('map warning badges ' + sum('#hmBody .hm-pill.warn', /^(\d+) warnings?$/));
+        if (sum('#hmBody .hm-pill.held', /^(\d+) to clear$/) !== 4) bad.push('map to-clear badges ' + sum('#hmBody .hm-pill.held', /^(\d+) to clear$/));
+        var ds = devs.map(function (x) { return w.dbStatus(x).join(' '); });
+        if (ds.some(function (s) { return s !== 'warn 1 warning'; })) bad.push('Dashboard ' + ds.join(', '));
+        return bad.length ? bad.join('; ') : true;
+      });
       return w.hltClear(null);
     }).then(function () { return wait(100); }).then(function () {
       return Promise.all(devs.map(function (x) { return (w.hlt.watch[x.id] || {}).inflight ? wait(400) : w.hltPoll(x); }));
@@ -164,10 +178,11 @@ function run(w, toasts, posts) {
         var left = Object.keys(w.hlt.held).length, be = devs.map(function (x) { return w.hlt.by[x.id].cabinets.filter(function (c) { return c.bitErrors; }).length; }).join(',');
         return !left && be === '0,0,0,0' || left + ' held, bit errors ' + be;
       });
+      t('Monitor tile after Clear: "OK" (cabinets placed, read, nothing kept)', function () { var m = w.hltTile(); return m.text === 'OK' && m.cls === 'ok' || JSON.stringify(m); });
       // ---------------------------------------------------------------- Screen settings, presets, schedules, backup, service, info
       return Promise.all([w.DRV.of(pro).screenSet(pro, 'gamut', 'dcip3'), w.DRV.of(h5).screenSet(h5, 'gamut', 'dcip3'), w.DRV.of(pro).readColor(pro)]);
     }).then(function (r) {
-      t('Screen settings: what the real model offers (gamut on VX Pro, not on H5), values read back', function () {
+      t('Screen settings: what the real model offers (any gamut on VX Pro, NovaLCT’s own on H5), values read back', function () {
         return r[0].ok && /Simulated/.test(r[0].text) && !r[1].ok && r[1].unsupported && r[2].values.brightness === 100 && r[2].values.gamut === 'dcip3' || JSON.stringify(r);
       });
       return w.DRV.of(pro).presetSave(pro, 'Show A').then(function () { return w.DRV.of(mx).scheduleAdd(mx, { start: '2026-10-28 20:00', end: '2026-10-28 23:00', brightness: 40, repeat: [1] }); })
@@ -186,7 +201,30 @@ function run(w, toasts, posts) {
         var got = [h5, pro, mx].map(function (x) { return ['restart', 'factory', 'panels'].map(function (a) { return w.svWhy(x, a) ? '-' : a[0]; }).join(''); }).join(' ');
         return got === '-fp rf- --p' && /data-act="factory"/.test(w.svHtml(h5)) || got;
       });
-      return Promise.all([w.DRV.of(mx).deviceInfo(mx), w.DRV.of(h5).display(h5, 'blackout', null), w.DRV.of(pro).pattern(pro, 'red', null), w.DRV.of(h5).readLayout(h5), w.DRV.of(h5).display(h5, 'normal', null)]);
+      // ---------------------------------------------------------------- restart picked cabinets (Maintain / Layout)
+      var pc = w.hwPortCells(), keyOf = function (d) { var c = w.cardsOfDevice(d)[0], l = pc[c + ':0'] || []; return l.slice(0, 2).map(function (x, i) { return c + ':0:' + i; }); };
+      var picked = keyOf(h5).concat(keyOf(mx), keyOf(pro)), lctOps = null, keepPost = w.DRV.post;
+      w.svOpenCabinets(picked);
+      t('Restart cabinets: one dialog for the picked cabinets of two processors; Unico (not captured) is left out and named', function () {
+        var b = w.$('svcBody').textContent;
+        return !w.$('svcDlg').hidden && w.sv.act === 'cabs' && Object.keys(w.sv.by).length === 2 && w.sv.by[h5.id].length === 2 && w.sv.by[mx.id].length === 2 &&
+          /Left out: .*Unico/.test(b) && /\.rcfgx or an NCP/.test(b) && /Restart the 4 cabinets/.test(w.$('svcFoot').textContent) || b;
+      });
+      w.DRV.post = function (f, path, body) { if (path === '/api/hw/run') { lctOps = body.plan.ops; return Promise.resolve({ ok: true }); } return keepPost.apply(this, arguments); };
+      return w.DRV_LCT.restartPanels(h5, [{ card: 0, port: 0, index: 1 }]).then(function () {
+        w.DRV.post = keepPost;
+        t('NovaLCT restart of one cabinet: MCU then FPGA restart to that card only, not the broadcast', function () {
+          var ws = lctOps.filter(function (o) { return o.op === 'w'; });
+          return ws.length === 2 && ws[0].addr === 0x01000080 && ws[1].addr === 0x0100000B && ws.every(function (o) { return o.dst === 0 && o.port === 0 && o.card === 1; }) || JSON.stringify(lctOps);
+        });
+        return w.svRun();
+      }).then(function () {
+        t('…and Restart on simulated processors only pretends, one toast for both', function () {
+          var last = toasts[toasts.length - 1] || '';
+          return w.$('svcDlg').hidden && /2 cabinets restarted/.test(last) && /Simulated/.test(last) && !w.hw.busy || last;
+        });
+        return Promise.all([w.DRV.of(mx).deviceInfo(mx), w.DRV.of(h5).display(h5, 'blackout', null), w.DRV.of(pro).pattern(pro, 'red', null), w.DRV.of(h5).readLayout(h5), w.DRV.of(h5).display(h5, 'normal', null)]);
+      });
     }).then(function (r) {
       t('Device info, blackout, test pattern, read-back all answer (and say Simulated)', function () {
         var rows = r[0].rows.map(function (x) { return x[0]; }).join(',');
@@ -201,12 +239,213 @@ function run(w, toasts, posts) {
           w.alphaApplyRO(); if ($('btnBlackout').classList.contains('ro-off')) bad.push('greyed with simulated processors only');
           h5.hw = { kind: 'lct', host: '10.255.255.1', port: 5200, name: 'test', senders: [] };
           w.alphaApplyRO(); if (!$('btnBlackout').classList.contains('ro-off')) bad.push('not greyed with a real link');
+          if (!w.scrLocked()) bad.push('Screen Settings not locked with a real link');
           refused = w.DRV.post('lct', '/api/hw/run', { host: '10.255.255.1', port: 5200, plan: { ops: [{ op: 'w' }] } });
         } finally { h5.hw = keepHw; w.alpha.st = keepSt; w.alphaApplyRO(); }
         return bad.length ? bad.join('; ') : true;
       });
       return Promise.resolve(refused).then(function (x) { row(!!(x && x.readOnly), 'alpha read-only: a write to a real processor is still refused before it leaves the app'); });
-    }).then(function () { return wait(300); }).then(function () {
+    }).then(function () {
+      // ---------------------------------------------------------------- gamut on NovaLCT, as its buttons
+      var runs = [], keepPost = w.DRV.post;
+      w.DRV.post = function (f, path, body) { if (path === '/api/hw/run') { runs.push(body.plan.ops); return Promise.resolve({ ok: true }); } return keepPost.apply(this, arguments); };
+      return Promise.all([w.DRV_LCT.screenSet(h5, 'gamut', 'rec709', [{ card: 0, port: 1 }]), w.DRV_LCT.screenSet(h5, 'gamut', 'original', [{ card: 0, port: 1 }]), w.DRV_LCT.screenSet(h5, 'gamut', 'dcip3', [{ card: 0, port: 1 }])]).then(function (r) {
+        w.DRV.post = keepPost;
+        t('Gamut on NovaLCT: sending card 3C, then matrix + record per port (PAL); off = FF only; a colour space it lacks is refused', function () {
+          var a = runs[0].filter(function (o) { return o.op === 'w'; }), b = runs[1].filter(function (o) { return o.op === 'w'; });
+          return a.length === 3 && a[0].dev === 0 && a[0].dst === 255 && a[0].addr === 0x0200003F && a[0].hex === '3C' && a[1].addr === 0x02000130 && a[1].hex === '026C330703A90301074B' && a[1].port === 1 && a[1].card === 65535 &&
+            a[2].addr === 0x12009000 && a[2].hex.length === 512 && b.length === 2 && b[1].hex === 'FF' && r[2].unsupported && runs.length === 2 || JSON.stringify(runs).slice(0, 300);
+        });
+        w.setTab('screen'); w.ui.viewScreen = w.lctScreensOf(h5)[0].id; w.renderAll();
+        return w.scrReadBack();
+      });
+    }).then(function () {
+      t('Read back on Screen Settings: every setting, here against the processor', function () {
+        var rows = w.$('cmpBody').querySelectorAll('tr');
+        return !w.$('cmpDlg').hidden && /Read back/.test(w.$('cmpTitle').textContent) && rows.length >= 5 && /Brightness/.test(w.$('cmpBody').textContent) || w.$('cmpBody').textContent.slice(0, 200);
+      });
+      w.$('cmpDlg').hidden = true;
+      // ---------------------------------------------------------------- a LUT on a NovaLCT processor
+      t('Load LUT is offered on NovaLCT screens, not on the others', function () { return !!w.document.querySelector('#scForm [data-lf="open"]') || w.$('scForm').textContent.slice(0, 120); });
+      var lcH = w.lctById(w.ui.viewScreen), Lc = w.lutParse(w.lutMakeCube('warm', 17, 'warm'), 'warm.cube').lut, fit = w.lutFit(Lc, 2.8), asked = [], ops = [], kp = w.DRV.post;
+      w.lf = { name: 'warm.cube', L: Lc, fit: fit, lc: lcH }; w.lfShow();
+      t('Load LUT shows how close it gets before anything is sent', function () { return !w.$('lfDlg').hidden && /average difference/.test(w.$('lfBody').textContent) && !w.$('lfGo').disabled && w.$('lfA').width > 0 || w.$('lfBody').textContent.slice(0, 200); });
+      w.$('lfDlg').hidden = true;
+      w.DRV.post = function (f, path, body) { asked.push(path); if (path === '/api/hw/run') ops = body.plan.ops; return Promise.resolve({ ok: true, ports: 1, frames: 1, skipped: [] }); };
+      return w.DRV_LCT.lutApply(h5, [{ card: 0, port: 0 }], { tables: fit.tables, matrix: [200, 30, 10, 10, 220, 10, 5, 15, 225] }).then(function () {
+        var body = ops.filter(function (o) { return o.op === 'w'; });
+        t('A LUT goes out as Custom gamma, then the gamut: sending card 3C, 02 + the matrix, the record', function () {
+          return asked.join() === '/api/hw/gamma,/api/hw/run' && body[0].addr === 0x0200003F && body[1].addr === 0x02000130 && body[1].hex === '02C81E0A0ADC0A050FE1' && body[2].addr === 0x12009000 && body[2].hex.length === 512 || asked.join() + JSON.stringify(body[1]);
+        });
+        w.DRV.post = kp;
+        return w.lfSend();
+      });
+    }).then(function () {
+      var lcH = w.lctById(w.ui.viewScreen);
+      t('A sent LUT is kept on its screen, with the way back', function () { return lcH.lut && lcH.lut.name === 'warm.cube' && !!w.document.querySelector('#scForm [data-lf="remove"]') || JSON.stringify(lcH.lut); });
+      return w.lfRemove();
+    }).then(function () {
+      // ---------------------------------------------------------------- NovaLCT's custom gamut
+      w.gmOpen();
+      t('Custom gamut opens with NovaLCT’s settings: original and target R / G / B / white, PAL / NTSC / Custom', function () {
+        return !w.$('gmDlg').hidden && w.document.querySelectorAll('#gmBody [data-gmt]').length === 3 && w.document.querySelectorAll('#gmBody .gm-tbl input').length === 18 && !w.$('gmGo').disabled || w.$('gmBody').textContent.slice(0, 200) + ' inputs ' + w.document.querySelectorAll('#gmBody .gm-tbl input').length;
+      });
+      w.gm.e.white[2] = 1927.8; w.gm.e.auto = false; w.gmSend();
+      return wait(100);
+    }).then(function () {
+      var lcG = w.lctById(w.ui.viewScreen), en = w.gmEntry(lcG.color.gamut);
+      t('Custom gamut: kept by name, on the Gamut list, sent to the simulated processor', function () {
+        return en && en.name === 'Custom 1' && w.$('gmDlg').hidden && w.gmBuild(en).m === '026C330703A80301074B' && !!w.document.querySelector('#scForm select[data-k="gamut"] option[value="c:' + en.id + '"]') && w.DRV_OFFLINE.state(h5).color.gamut === 'c:' + en.id || JSON.stringify([lcG.color, en, w.DRV_OFFLINE.state(h5).color.gamut]);
+      });
+      var ops2 = [], kp2 = w.DRV.post; w.DRV.post = function (f, path, body) { if (path === '/api/hw/run') ops2 = body.plan.ops; return Promise.resolve({ ok: true }); };
+      return w.DRV_LCT.screenSet(h5, 'gamut', 'c:' + en.id, [{ card: 0, port: 1 }]).then(function () {
+        w.DRV.post = kp2;
+        t('Custom gamut on the wire: sending card 3C, then the matrix and record, as PAL', function () { var a = ops2.filter(function (o) { return o.op === 'w'; }); return a[0].addr === 0x0200003F && a[1].hex === '026C330703A80301074B' && a[2].addr === 0x12009000 || JSON.stringify(a).slice(0, 200); });
+        w.gm = { e: JSON.parse(JSON.stringify(en)), lc: lcG }; w.confirm = (function (k) { setTimeout(function () { w.confirm = k; }, 0); return function () { return true; }; })(w.confirm); w.gmDelete();
+        t('Deleting a custom gamut puts its screens back to off', function () { return !(w.P.gamuts || []).length && lcG.color.gamut === 'original' || JSON.stringify(lcG.color); });
+        return wait(100);
+      });
+    }).then(function () {
+      t('Remove: gamut off and the plain gamma again', function () { var lcH = w.lctById(w.ui.viewScreen), v = w.DRV_OFFLINE.state(h5).color; return !lcH.lut && v.gamut === 'original' && v.gamma === 2.8 || JSON.stringify([lcH.lut, v]); });
+      w.setTab('layout');
+      var before = w.P.screens.length; w.$('btnAddScreen').click();
+      t('+ Cabinets starts drawing by hand: no block of auto-wired cabinets', function () { return w.ui.tool === 'draw' && w.P.screens.length === before || w.ui.tool + ' ' + (w.P.screens.length - before); });
+      w.setSelfDraw(false);
+      return wait(300);
+    }).then(function () {
+      // ---------------------------------------------------------------- Phase A: trust (one number per fact, no false states, say why)
+      var use = w.portUsage(w.allCells()), vc = w.cardsOfDevice(vx)[0];
+      w.P.backup = { mode: 'port', pairs: [{ ms: vc, mp: 0, bs: vc, bp: 5 }], cards: [] }; w.commit(); w.setTab('devices'); w.ui.devSel = vx.id; w.renderAll();
+      t('Device ports: one meaning, said apart from backup ("2 of 10 ports used · 1 backup"), on the card too', function () {
+        var s = w.devPortWords(w.devPortCount(vx, use)), card = d.querySelector('#devCards .dv-card[data-id="' + vx.id + '"] .dv-c-use');
+        return s === '2 of 10 ports used · 1 backup' && card && card.textContent === s || s + ' / card ' + (card && card.textContent);
+      });
+      t('Gamut: one name per state (the list, the tile, the table, Dashboard: scrFmt) — Native, Rec.709', function () {
+        var f = w.scrField('gamut'), g = w.scrGamuts([{ d: h5 }]), bad = g.filter(function (x) { return x[0].indexOf('c:') !== 0 && x[1] !== w.scrFmt(f, x[0]); });
+        return !bad.length && w.scrFmt(f, 'original') === 'Native' && w.scrFmt(f, 'rec709') === 'Rec.709' || JSON.stringify(bad.length ? bad : g);
+      });
+      // the model of a processor with cabinets: asked first, undoable; a new one (nothing wired) changes at once
+      var asked = 0, keepC = w.confirm, m0 = h5.model;
+      w.confirm = function () { asked++; return false; }; w.devModelChange(h5, 'h9');
+      var refused = h5.model === m0 && asked === 1;
+      w.confirm = function () { asked++; return true; }; w.devModelChange(h5, 'h9');
+      var changed = h5.model === 'h9'; w.undo();   // undo replaces the project: the processors are new objects
+      h5 = devs[0] = w.deviceById(h5.id); vx = devs[1] = w.deviceById(vx.id); pro = devs[2] = w.deviceById(pro.id); mx = devs[3] = w.deviceById(mx.id);
+      var back = h5.model === m0, nw = w.addProcessor('vx1000'); asked = 0; w.devModelChange(nw, 'vx600');
+      var fresh = nw.model === 'vx600' && asked === 0; w.confirm = function () { return true; }; w.removeProcessor(nw); w.confirm = keepC; w.renderAll();
+      t('Model change: with cabinets it asks first (No keeps it), Yes changes it, Ctrl+Z undoes it; a new processor changes without asking', function () {
+        return refused && changed && back && fresh || JSON.stringify({ refused: refused, changed: changed, back: back, fresh: fresh });
+      });
+      // greyed controls say why
+      w.setTab('screen'); w.ui.viewScreen = w.lctScreensOf(h5)[0].id; w.scr.tab = 'lat'; w.renderScreenTab();
+      var ll = w.$('sc_llSender'), lp = d.querySelector('#scForm .sc-check');
+      if (w.DRV.caps(h5).llCheck) t('Low latency that can’t go on: the switch is greyed with the reason as its tooltip; one line under it', function () {
+        return ll && ll.disabled && /Can’t be switched on/.test(ll.closest('label').title) && lp && lp.textContent.length < 90 && /overlap/.test(lp.textContent) || (ll && [ll.disabled, ll.closest('label').title, lp && lp.textContent].join(' | '));
+      });
+      w.scr.tab = 'iq'; w.renderScreenTab();
+      var sb = d.createElement('div'); sb.innerHTML = w.svHtml(h5);
+      var rp = sb.querySelector('[data-act="restart"]');
+      t('Greyed with a reason: Service ▸ Restart processor', function () { return rp && rp.disabled && rp.title.length > 10 || rp && rp.outerHTML; });
+      // Maintain: Restart cabinets needs picked rows (never every cabinet by default)
+      w.setTab('maintain'); w.mt.sel.clear(); w.renderMaintain();
+      var rb = w.$('mtRestart'), off = rb.disabled && rb.title === 'Select cabinets first', n0 = toasts.length; w.mtRestart();
+      var none = w.$('svcDlg').hidden && /Select cabinets first/.test(toasts[n0] || '');
+      var k1 = d.querySelector('#mtBody tr[data-cab]').dataset.cab; w.mt.sel.add(k1); w.renderMaintain();
+      t('Maintain ▸ Restart cabinets: greyed "Select cabinets first" with nothing picked (and does nothing), "Restart 1 cabinet…" with one', function () {
+        return off && none && !rb.disabled && rb.textContent === 'Restart 1 cabinet…' || JSON.stringify({ off: off, none: none, text: rb.textContent, dis: rb.disabled });
+      });
+      w.mt.sel.clear(); w.renderMaintain();
+      // words that were wrong
+      w.lfShow(); var lt = w.$('lfBody').textContent; w.$('lfDlg').hidden = true;
+      t('Load LUT: says Remove appears once it is sent (no Remove button before)', function () { return /Once sent, Remove/.test(lt) && !/Remove or a power cycle/.test(lt) || lt.slice(-160); });
+      w.mbHelp('manual');
+      var dts = Array.prototype.slice.call(d.querySelectorAll('#helpBody dt')), sch = dts.filter(function (x) { return x.textContent === 'Schedule'; })[0];
+      var over = dts.filter(function (x) { return x.scrollWidth > x.clientWidth + 1; }).map(function (x) { return x.textContent; });
+      t('User Manual: Schedule says what the tab does; no label runs into its text', function () {
+        var dd = sch && sch.nextElementSibling.textContent;
+        return !!dd && /scheduler/.test(dd) && !/light sensor|diagnostics/.test(dd) && !over.length && !/Blackout · Freeze · Normal/.test(w.$('helpBody').textContent) || dd + ' | overflowing: ' + over.join(', ');
+      });
+      w.$('helpDlg').hidden = true;
+      return wait(100);
+    }).then(function () {
+      // ---------------------------------------------------------------- the "not saved" bar
+      var bar = w.$('unsavedBar'), keepConfirm = w.confirm, keepUn = JSON.stringify(w.hw.unsaved || {}), vid = vx.id;
+      t('Not saved bar: a processor that stops answering isn’t warned about, and is again when it answers', function () {
+        var bad = [], wt = w.hw.watch[vid] || (w.hw.watch[vid] = {}), keepErr = wt.err;
+        w.hw.unsaved = {}; w.hw.unsaved[vid] = { at: 1, why: 'test' }; wt.err = ''; w.renderUnsaved();
+        if (bar.hidden) bad.push('not shown for an answering processor');
+        wt.err = 'no NovaStar USB device'; w.renderUnsaved();
+        if (!bar.hidden) bad.push('shown for one that isn’t answering: ' + w.$('unsavedText').textContent);
+        wt.err = ''; w.renderUnsaved();
+        if (bar.hidden) bad.push('didn’t come back');
+        wt.err = keepErr; return bad.length ? bad.join('; ') : true;
+      });
+      w.confirm = function () { return true; }; w.removeProcessor(vx); w.confirm = keepConfirm;
+      t('Not saved bar: removing the processor removes its reminder, at once and from what is kept', function () {
+        var stored = JSON.parse(w.localStorage.getItem('opennova.unsaved') || '{}');
+        return bar.hidden && !w.hw.unsaved[vid] && !stored[vid] || 'bar hidden ' + bar.hidden + ', ' + JSON.stringify(w.hw.unsaved) + ', ' + w.$('unsavedText').textContent;
+      });
+      w.hw.unsaved = JSON.parse(keepUn); w.hwUnsavedStore(); w.renderUnsaved();
+      // ---------------------------------------------------------------- an H's sending cards: own screen, or shared by choice
+      var hc = w.cardsOfDevice(h5); if (hc.length < 2) { w.addOutputCard(h5); hc = w.cardsOfDevice(h5); }
+      var s1 = w.lctScreensOf(h5)[0], secs = function (lc) { return w.P.screens.filter(function (s) { return s.screenId === lc.id; }); };
+      w.ui.mSender = hc[0]; w.ui.viewScreen = s1.id; w.renderAll();
+      delete w.P.processors[hc[1]].screen;
+      var n0 = w.P.lct.length, cabs0 = secs(s1).length;
+      w.ui.mSender = hc[1]; w.ui.mPort = 0; w.renderAll();
+      var s2 = w.lctById(w.ui.viewScreen);
+      t('H series: selecting a sending card with no screen shows its own new screen, on the same processor', function () {
+        return s2.id !== s1.id && w.P.processors[hc[1]].screen === s2.id && w.P.lct.length === n0 + 1 && w.lctOwner(s2).id === h5.id || JSON.stringify({ view: s2, n: w.P.lct.length - n0 });
+      });
+      w.ui.viewScreen = s1.id; w.renderAll();
+      var back = w.ui.mSender;
+      w.ui.mSender = hc[1]; w.renderAll();
+      t('H series: showing a screen picks its card, and the card goes back to the same screen (no second one)', function () {
+        return back === hc[0] && w.ui.viewScreen === s2.id && w.P.lct.length === n0 + 1 && secs(s1).length === cabs0 || JSON.stringify({ back: back, view: w.ui.viewScreen, n: w.P.lct.length - n0 });
+      });
+      var blk = w.newScreen(0, 0); blk.screenId = s2.id; blk.wiring.sender = hc[1]; blk.wiring.port = 0; w.P.screens.push(blk); w.commit(); w.renderAll();
+      var r1 = secs(s1).reduce(function (m, s) { var b = w.screenBounds(s); return Math.max(m, b.x + b.w); }, 0);
+      w.cardToScreen(hc[1], s1.id);
+      t('H series: a card put on another card’s screen brings its cabinets, beside what is there, and its empty screen closes', function () {
+        var bx = w.screenBounds(blk);
+        return blk.screenId === s1.id && bx.x >= r1 && !w.lctById(s2.id) && w.ui.viewScreen === s1.id && w.ui.mSender === hc[1] && w.lctCards(s1).length === 2 || JSON.stringify({ on: blk.screenId === s1.id, x: bx.x, r1: r1, s2: !!w.lctById(s2.id), cards: w.lctCards(s1) });
+      });
+      w.ui.mSender = hc[0]; w.renderAll();
+      t('H series: two cards on one screen: picking either stays on that screen', function () { return w.ui.viewScreen === s1.id || w.ui.viewScreen; });
+      w.cardToScreen(hc[1], '__new');
+      t('H series: and back to a screen of its own', function () { var v = w.lctById(w.ui.viewScreen); return v.id !== s1.id && blk.screenId === v.id && w.ui.mSender === hc[1] || JSON.stringify(v); });
+      var s3 = w.lctById(w.ui.viewScreen), row = function (lc, c) { return w.document.querySelector('#tree .tn-card[data-id="' + lc.id + '"][data-card="' + c + '"]'); };
+      w.ui.viewScreen = s1.id; w.ui.mSender = hc[0]; w.renderAll();
+      t('H series: the tree lists a screen’s own cards, not the cards on another screen', function () { return !!row(s1, hc[0]) && !row(s1, hc[1]) || 'card rows ' + !!row(s1, hc[0]) + ' ' + !!row(s1, hc[1]); });
+      var kc = w.confirm, n3 = w.P.lct.length; w.confirm = function () { return true; }; w.closeScreen(s3.id); w.confirm = kc;
+      w.ui.mSender = hc[1]; w.ui.mPort = 0; w.renderAll();
+      t('H series: closing a card’s screen leaves the card on the processor’s screen; selecting it makes no new screen', function () {
+        return w.P.lct.length === n3 - 1 && w.ui.viewScreen === s1.id && w.P.processors[hc[1]].screen === s1.id || JSON.stringify({ n: w.P.lct.length - n3, view: w.lctById(w.ui.viewScreen).name, card: w.P.processors[hc[1]].screen });
+      });
+      // ---------------------------------------------------------------- Phase A: a new project, one processor, no cabinets
+      var np = w.ensureLct(w.newProject()); np.name = 'Empty'; np.mode = 'offline'; np.procsChosen = true; w.replaceProject(np);
+      var nh = w.addProcessor('h5'); w.commit(); w.setTab('dashboard'); w.renderAll();
+      t('New project (no cabinets): no Monitor "OK", the empty screen isn’t a warning, Dashboard names its processor, nothing false about saving', function () {
+        var m = w.hltTile(), txt = w.$('dbBody').textContent, bad = [], pdt = Array.prototype.filter.call(d.querySelectorAll('#dbBody dt'), function (x) { return x.textContent === 'Processors'; })[0];
+        if (m.text || m.cls !== 'dim') bad.push('Monitor tile "' + m.text + '" ' + m.cls);
+        if (/warning/.test(txt) || !/1 empty/.test(txt)) bad.push('screens ring: ' + (d.querySelector('#dbBody .db-ring') || {}).textContent);
+        if (!pdt || pdt.nextElementSibling.textContent.indexOf(w.deviceLabel(nh)) !== 0) bad.push('Processors: ' + (pdt && pdt.nextElementSibling.textContent));
+        if (/Everything sent is saved|Not saved on the processors/i.test(txt) || !/Unsaved changesNone/.test(txt)) bad.push('save card: ' + txt.slice(-80));
+        return bad.length ? bad.join('; ') : true;
+      });
+      w.setTab('layout'); w.renderAll();
+      var am = Array.prototype.slice.call(w.$('modeSeg').children, 0, 2), ms = w.$('btnMatchScreen');
+      t('New project: Auto / Manual and Match Screen greyed with the reason as their tooltip', function () {
+        return am.every(function (b) { return b.disabled && /^Add cabinets first/.test(b.title); }) && ms.disabled && ms.title.length > 5 || am.map(function (b) { return b.disabled + ' ' + b.title; }).join(' | ') + ' | ' + ms.disabled + ' ' + ms.title;
+      });
+      // ---------------------------------------------------------------- Phase A: one count per fact, Restart not in the Test menu
+      w.renderAll();
+      var tile = (w.$('tabHealth').textContent || '').replace(/\s+/g, ' '), ms = w.hltTile();
+      t('Monitor tile: the same words Monitor and the Dashboard use (hltTile)', function () { return !ms.text || tile.indexOf(ms.text) >= 0 || tile + ' vs ' + ms.text; });
+      var dt = (w.$('tabDevices').textContent || '').replace(/\s+/g, ' '), d0 = w.P.devices[0];
+      w.openTestMenu(w.$('btnTest') || w.document.body);
+      var tm = w.$('ctxMenu').textContent; w.closeMenu();
+      t('Test menu: patterns only, no Restart', function () { return !/Restart/i.test(tm) || tm.slice(0, 200); });
       var hits = toasts.filter(function (x) { return BAD.test(x); });
       row(!hits.length, 'no toast asks to link a processor' + (hits.length ? ' — ' + hits.join(' / ') : ''));
       row(!posts.length, 'nothing reached the helper’s hardware routes' + (posts.length ? ' — ' + posts.slice(0, 5).join(', ') : ''));

@@ -48,6 +48,7 @@ class FakePort(novalink._SerialBase):
     opened = []
 
     def __init__(self, name, baud, timeout):
+        if name == 'HELD': raise OSError(5, 'open HELD: Access is denied.')   # NovaLCT has the port open (Windows' answer)
         self.name, self.baud, self.timeout, self.out, self.closed = name, baud, timeout, bytearray(), False
         FakePort.opened.append((name, baud))
 
@@ -129,6 +130,9 @@ try:
     FakePort.speed = 0
     r = novalink.probe_serial({'name': 'FAKE5'}, timeout=0.2)
     ok(not r['answered'] and 'timeout' in r.get('error', ''), 'probe: a silent port is not a controller (%s)' % r.get('error'))
+    ok(not r.get('cause'), 'probe: a silent port has no cause')
+    r = novalink.probe_serial({'name': 'HELD'}, timeout=0.2)
+    ok(not r['answered'] and r.get('cause') == 'inuse' and 'denied' in r.get('error', ''), 'probe: a port another program holds says in use (%s)' % r)
     FakePort.speed = 115200
     l3 = novalink.open_link('serial:FAKE3')
     r = novalink.probe_serial({'name': 'FAKE3'}, timeout=0.3)

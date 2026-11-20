@@ -101,7 +101,9 @@ $inv = [Globalization.CultureInfo]::InvariantCulture
 $tsRx = New-Object Text.RegularExpressions.Regex '^\{\s*"timestamp"\s*:\s*"(\d{4}-\d\d-\d\d \d\d:\d\d:\d\d\.\d{3})"', 'Compiled'
 Add-Type -AssemblyName System.Web.Extensions
 Add-Type -AssemblyName System.Net.Http
-$helper = New-Object Net.Http.HttpClient            # hardware helper pass-through (/api/hw|unico|coex|rcv/*)
+$helperHandler = New-Object Net.Http.HttpClientHandler
+$helperHandler.UseProxy = $false                    # the helper is on 127.0.0.1: never through a (system) proxy
+$helper = New-Object Net.Http.HttpClient($helperHandler)   # hardware helper pass-through (/api/hw|unico|coex|rcv/*)
 $helper.Timeout = [TimeSpan]::FromMinutes(15)       # a Save waits for the receiving cards (up to 10 min)
 $jss = New-Object Web.Script.Serialization.JavaScriptSerializer
 $jss.MaxJsonLength = [int]::MaxValue

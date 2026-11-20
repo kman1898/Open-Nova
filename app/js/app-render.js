@@ -9,6 +9,7 @@
 // app-portlist (renderPortList), the last two at run time only; app-screenfit (renderScreenFit,
 // coordTagPlace), also at run time; app-quickadd (renderQuickAdd, qaBadgeText), at run time;
 // app-devices (renderDevices, cardOptionGroups) and app-processors, at run time; drv-offline (simEnsure), at run time;
+// app-save (renderUnsaved) and app-display (dispTiles), at run time;
 // app-pipeline (proLook) and app-backup (backupRole) for the pro look's port drawing (renderPortsPro), at run time.
 // Classic script, not an ES module: modules do not load from file://, and the app must run
 // when index.html is double-clicked. Every top-level var/function in these files is one
@@ -216,7 +217,8 @@ function renderCanvas(cellsBy) {
   renderGrid(svg, unit);   // optional grid (app-arrange.js)
   var pro = typeof proLook === 'function' && proLook();   // the pro look (app-pipeline.js) draws the ports as tints, outlines and plates (renderPortsPro); classic as before
   var cl = el('text', { class: 'cv-label', x: (pro ? 0 : 4) * unit, y: pro ? -7 * unit : P.canvasH + 14 * unit, 'font-size': (pro ? 10 : 11) * tk * unit, fill: 'currentColor', opacity: pro ? 1 : .6 }, svg);
-  cl.textContent = (lctById(ui.viewScreen) ? lctById(ui.viewScreen).name + ' · ' : '') + 'canvas ' + P.canvasW + (pro ? ' × ' : '×') + P.canvasH;
+  var vlc = lctById(ui.viewScreen); if (vlc && typeof olLcShown === 'function' && !olLcShown(vlc)) vlc = null;   // online: not a screen that isn't shown (app-online.js)
+  cl.textContent = (vlc ? vlc.name + ' · ' : '') + 'canvas ' + P.canvasW + (pro ? ' × ' : '×') + P.canvasH;
 
   if (typeof renderHeat === 'function') renderHeat(svg, cellsBy, unit);   // Live ▸ Temperature / Voltage: the heat image under the cabinets (app-heat.js)
   var pvOn = typeof pvLayer === 'function' && pvLayer(svg, cellsBy, unit);   // View ▸ Content: a picture under the cabinets, which become port bands (app-preview.js)
@@ -472,14 +474,18 @@ function renderModeSeg() {
     if (m === 'draw') { on = drawing; b.disabled = false; }
     else {
       on = !drawing && !!s && s.wiring.mode === m;
-      // while drawing they're always clickable: a click leaves Self draw
+      // while drawing they're always clickable: a click leaves Self draw; greyed, the tooltip says why
       b.disabled = !drawing && (!s || (m === 'auto' && s.kind === 'complex'));
+      if (b.dataset.tip == null) b.dataset.tip = b.title;
+      var t = !b.disabled ? b.dataset.tip : !s ? (P.screens.length ? 'Select cabinets first' : 'Add cabinets first (+ Cabinets or Quick add)') : 'A complex screen is wired by hand (Manual)';
+      if (b.title !== t) b.title = t;
     }
     b.classList.toggle('on', on); b.setAttribute('aria-pressed', String(on));
   });
 }
 
 function renderAll() {
+  if (typeof olView === 'function') olView();   // online: only connected processors are worked on and drawn (app-online.js)
   fixSel(); groupsFix();   // groups whose cabinets are gone (app-sections.js)
   if (typeof simEnsure === 'function') simEnsure();   // offline project: every processor simulated by itself (drv-offline.js)
   var cellsBy = allCells(), use = portUsage(cellsBy);
@@ -501,6 +507,8 @@ function renderAll() {
   renderMenuBar();     // the project's name in the menu bar (app-menubar.js)
   renderCanvas(cellsBy); renderStatus(problems(cellsBy, use)); renderModeBadge(); renderModeSeg();
   $('btnUndo').disabled = !ui.undo.length; $('btnRedo').disabled = !ui.redo.length;
+  if (typeof renderUnsaved === 'function') renderUnsaved(true);   // the "not saved" bar follows the project (app-save.js)
+  if (typeof dispTiles === 'function') dispTiles();                 // Blackout / Freeze / Normal follow the links (app-display.js)
   if (typeof renderPipe === 'function') renderPipe(use, cellsBy);   // the pro look's pipeline strip (app-pipeline.js)
   if (typeof ctlEnhance === 'function') ctlEnhance();               // and its controls (app-controls.js)
 }

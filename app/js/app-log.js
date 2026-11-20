@@ -240,7 +240,7 @@ document.addEventListener('change', function (e) {
   var t = e.target;
   if (!t || !/INPUT|SELECT|TEXTAREA/.test(t.tagName) || t.closest('#logDlg')) return;
   log('ui_change', { id: t.id || t.name || '', type: t.type || t.tagName.toLowerCase(),
-    value: t.type === 'checkbox' ? t.checked : t.type === 'file' ? Array.prototype.map.call(t.files || [], function (f) { return f.name; }).join(', ') : String(t.value).slice(0, 120) });
+    value: t.type === 'password' ? '(hidden)' : t.type === 'checkbox' ? t.checked : t.type === 'file' ? Array.prototype.map.call(t.files || [], function (f) { return f.name; }).join(', ') : String(t.value).slice(0, 120) });
 }, true);
 document.addEventListener('keydown', function (e) {
   var typing = document.activeElement && /INPUT|SELECT|TEXTAREA/.test(document.activeElement.tagName);

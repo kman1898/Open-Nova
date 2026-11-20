@@ -52,7 +52,9 @@ function allCells() {
 
 // ---- Screen tabs = NovaLCT screens. Each is a canvas holding any number of sections
 // (panel blocks) on any sending cards; the canvas shows the current screen's sections.
+// Online, a screen of a processor that isn't connected isn't drawn (app-online.js olLcShown).
 function visibleScreens() {
+  if (typeof olLcShown === 'function' && !olLcShown(lctById(ui.viewScreen))) return [];
   return P.screens.filter(function (s) { return s.screenId === ui.viewScreen; });
 }
 function cardsUsed(cells) {

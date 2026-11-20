@@ -140,6 +140,7 @@ svg .wire-end { fill: #0b0e14; stroke: #ffffff; pointer-events: none; }
 .hm-pill.warn { background: rgba(242, 179, 61, .18); color: var(--warn); }
 .hm-pill.err { background: rgba(255, 95, 95, .2); color: var(--danger); }
 .hm-pill.na { background: var(--raise); color: var(--muted); }
+.hm-pill.beyond { background: rgba(160, 90, 120, .2); color: var(--ink); border: 1px dashed rgba(200, 120, 150, .7); cursor: help; }
 .hm-pill.held { color: var(--danger); border: 1px solid var(--danger); cursor: help; }
 .hm-legend i.hm-held { background: transparent; border: 2px solid var(--danger); width: 12px; height: 12px; }
 .hm-legend i.hm-held.ended { border-style: dashed; }
@@ -292,7 +293,10 @@ header.bar .bar-actions { grid-area: actions; padding: 6px 14px; gap: 8px; backg
 .hl-form label input { flex: 1; min-width: 0; }
 /* ---- the alpha (app-alpha.js): intro / Allow sending / Report a problem; Read-only and Report on the menu bar's right */
 #alDlg { z-index: 80; }   /* over the first-run processor picker and the menu bar */
-.al-box { width: min(560px, 100%); height: auto; }
+.al-box { width: min(560px, 100%); height: auto; max-height: 100%; }   /* a long intro scrolls inside (375 px phones) */
+.al-box .keysbody { min-height: 0; }
+.al-limits { margin: 8px 0; }
+.al-limits summary { cursor: pointer; font-weight: 600; }
 .al-box .keysbody p { margin: 6px 0; }
 .al-box .rcv-foot .grow { flex: 1; }
 .al-list { margin: 6px 0 10px; padding-left: 20px; }
@@ -525,6 +529,25 @@ svg .grp-outline { fill: none; stroke: var(--sel); stroke-opacity: .8; }
 @media (min-width: 701px) and (max-width: 1000px) {           /* not enough room to centre the name: it sits on the right */
   .menubar .mb-proj { position: static; transform: none; max-width: none; flex: 1; min-width: 0; margin-left: 12px; text-align: right; }
 }
+/* the state slot (index.html #stateSlot; app-display.js, app-save.js): Blackout / Freeze / a pattern (red) and "Not saved"
+   (amber) as chips on the menu bar's own line — one fixed slot, so they never push the workspace. Narrow: the red one
+   keeps its words, the amber one shrinks to its Save button (the tooltip has the rest). */
+.mb-state { display: flex; align-items: center; gap: 6px; flex: 0 1 auto; min-width: 0; margin-left: auto; }
+.mb-state + .mb-right { margin-left: 6px; }
+.mb-state > div { display: flex; align-items: center; gap: 6px; height: 21px; min-width: 0; padding: 0 2px 0 8px; border: 1px solid transparent; border-radius: 4px;
+  box-shadow: none; font-size: calc(12px * var(--fs)); font-weight: 700; white-space: nowrap; }
+.mb-state > div[hidden] { display: none; }
+.mb-state > div > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
+.mb-state > .display-bar { background: var(--danger); color: #fff; text-transform: uppercase; letter-spacing: .04em; }
+.mb-state > .unsaved-bar { background: color-mix(in srgb, var(--warn) 22%, var(--panel)); border-color: var(--warn); color: var(--ink); font-weight: 600; }
+.mb-state > div > button { flex: none; height: 17px; min-height: 0; padding: 0 8px; border-radius: 3px; font-size: calc(11.5px * var(--fs)); line-height: 15px; }
+@media (min-width: 1001px) {   /* a chip showing: the project's name leaves the centre so the two never overlap */
+  .menubar:has(.mb-state > div:not([hidden])) .mb-proj { position: static; transform: none; flex: 0 1 auto; min-width: 40px; margin: 0 auto; }
+}
+@media (max-width: 700px) {
+  .mb-state > .unsaved-bar { padding: 0 1px; }
+  .mb-state > .unsaved-bar > span { display: none; }
+}
 
 /* ---- header on one row (app-shell.js fitHeader adds .one-row when everything fits): brand · tabs (centred) · actions */
 header.bar.one-row { grid-template-columns: 1fr auto 1fr; grid-template-areas: "brand tabs actions"; }
@@ -551,6 +574,7 @@ table.vnd-apps th:nth-child(1) { width: 42%; } table.vnd-apps th:nth-child(2) { 
 .vnd-row select { max-width: 100%; min-width: 0; flex: 1 1 160px; }
 .vnd-filter { flex: 1 1 200px; min-width: 0; padding: 3px 6px; border: 1px solid var(--line); border-radius: 4px; font-family: ui-monospace, Consolas, monospace; font-size: calc(12px * var(--fs)); overflow-wrap: anywhere; }
 .vnd-fam { margin: 6px 0; flex-wrap: wrap; }
+.vnd-fam button { flex: 1 1 auto; white-space: nowrap; }   /* each as wide as its name ("One processor" was cut), wrapping on phones */
 .vnd-steps { margin: 4px 0; padding-left: 20px; font-size: calc(12.5px * var(--fs)); }
 .vnd-steps code { overflow-wrap: anywhere; }
 .vnd-list { margin: 4px 0; padding-left: 18px; font-size: calc(12.5px * var(--fs)); overflow-wrap: anywhere; }
@@ -570,6 +594,11 @@ table.vnd-apps th:nth-child(1) { width: 42%; } table.vnd-apps th:nth-child(2) { 
 :root:not([data-look="pro"]) .pipe .tile > .led, :root:not([data-look="pro"]) #btnTestHdr, :root:not([data-look="pro"]) #pgMonitor,
 :root:not([data-look="pro"]) .menubar > .mb-logo, :root:not([data-look="pro"]) .modtabs .tab-st { display: none; }
 :root:not([data-look="pro"]) #cornerRow { display: none; }   /* Corners: the pro look's radius tokens only */
+/* Send / Save: the button = the action, named ("Send H5"); the ▾ joined to its right = the menu (all, one, Compare) */
+:root:not([data-look="pro"]) :is(#btnSendHdr, #btnSaveHw) > .v:not(:empty) { display: inline; margin-left: 5px; font-weight: 400; opacity: .85; }
+:root:not([data-look="pro"]) :is(#btnSendHdr, #btnSaveHw) { border-top-right-radius: 0; border-bottom-right-radius: 0; }
+:root:not([data-look="pro"]) #pipe .tile-more { margin-left: -9px; padding-left: 7px; padding-right: 7px; border-top-left-radius: 0; border-bottom-left-radius: 0; font-size: calc(13px * var(--fs)); }
+:root:not([data-look="pro"]) #btnSaveHw.warn + .tile-more { border-color: var(--warn); color: var(--warn); }
 :root:not([data-look="pro"]) .pro-only { display: none; }   /* the pro look's extra page pictures (looks/pro-pages.css): thumbnails, LEDs, previews */
 
 /* ---- Layout canvas: the navigator (app-navigator.js) and the content preview (app-preview.js), every look */

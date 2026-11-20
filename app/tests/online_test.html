@@ -1,0 +1,191 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Online: connected processors</title>
+<style>
+  body { font: 14px system-ui, sans-serif; margin: 20px; background: #15181c; color: #e6e9ed; }
+  .r { padding: 6px 10px; margin: 4px 0; border-left: 4px solid #58c08a; background: #1d2126; white-space: pre-wrap; }
+  .r.fail { border-color: #ef6b6b; } .r.info { border-color: #6b8bef; }
+  iframe { width: 1400px; height: 900px; border: 0; position: absolute; left: -3000px; }
+</style>
+</head>
+<body>
+<h1>Online: only connected processors</h1>
+<p>An online project shows only the processors that answer now (app-online.js olConn): one that doesn't answer is left out of the
+tree, Device's cards, the header's scope and Monitor's counts, listed once in Device's "not connected" fold, not polled, and back
+as soon as it answers. Nothing connected: the empty state, nothing alarming. Offline: everything. The helper is stubbed
+(DRV.post): nothing leaves the page.</p>
+<div id="sum"></div><div id="out"></div>
+<iframe id="app" src="../index.html"></iframe>
+<script>
+var out = document.getElementById('out'), fails = 0, passes = 0;
+function row(ok, text) { var d = document.createElement('div'); d.className = 'r' + (ok ? '' : ' fail'); d.textContent = (ok ? 'PASS ' : 'FAIL ') + text; out.appendChild(d); if (ok) passes++; else fails++; }
+function t(name, fn) { try { var r = fn(); row(r === true, name + (r === true ? '' : ' — ' + (typeof r === 'string' ? r : 'returned ' + JSON.stringify(r)))); } catch (e) { row(false, name + ' — threw ' + e.message); } }
+function wait(ms) { return new Promise(function (r) { setTimeout(r, ms); }); }
+function until(fn, ms) { var end = Date.now() + ms; return new Promise(function (res) { (function go() { var v = false; try { v = fn(); } catch (e) { /* not yet */ } if (v || Date.now() > end) return res(!!v); setTimeout(go, 100); })(); }); }
+var f = document.getElementById('app');
+f.onload = function () {
+  var w = f.contentWindow, tries = 0;
+  (function boot() {
+    if (!(w.OpenNova && typeof w.setTab === 'function') && tries++ < 100) return setTimeout(boot, 100);
+    if (w.location.protocol !== 'file:' && !(w.sync && w.sync.on) && tries++ < 140) return setTimeout(boot, 100);
+    w.pullProject = function () {};
+    w.saveLocal = function () {}; w.schedulePush = function () {}; w.liveApplySchedule = function () {};
+    w.olSearch = function () {}; w.olWebRefresh = function () {}; w.hwPing = function () {}; w.hw.bgAt = Date.now() + 1e9;
+    w.hltErrMark = function () {}; w.hltErrLoad = function () { return Promise.resolve(); }; w.hltErrReady = function () { return true; };
+    var toasts = []; w.toast = function (m) { toasts.push(String(m)); };
+    var logs = [], keepLog = w.log; w.log = function (k, o) { logs.push({ k: k, o: o || {} }); return keepLog.apply(this, arguments); };
+    wait(500).then(function () { return run(w, toasts, logs); }).then(finish, function (e) { row(false, 'threw ' + (e && e.stack || e)); finish(); });
+  })();
+};
+function finish() {
+  document.getElementById('sum').innerHTML = '<p class="r' + (fails ? ' fail' : '') + '">' + (fails ? fails + ' failed, ' + passes + ' passed' : 'All passed (' + passes + ')') + '</p>';
+  document.title = (fails ? 'FAIL ' : 'PASS ') + 'online connected';
+}
+var GOOD = '10.255.255.1', BAD = '10.255.255.2';
+function run(w, toasts, logs) {
+  var d = w.document, $ = function (id) { return d.getElementById(id); };
+  // the helper: GOOD answers, BAD times out (until it is plugged back in)
+  var asked = [], down = { };
+  down[BAD] = true;
+  w.DRV.post = function (fam, path, body) {
+    var host = body && body.host; asked.push({ path: path, host: host, t: Date.now() });
+    if (down[host]) return Promise.resolve({ ok: false, error: '[Errno 110] timed out' });
+    if (path === '/api/hw/detect') return Promise.resolve({ ok: true, cards: (body.cards || [{}]).map(function () { return { ports: {} }; }) });
+    if (path === '/api/hw/health') return Promise.resolve({ ok: true, health: { ports: [], cabinets: [], events: [] } });
+    return Promise.resolve({ ok: false, error: 'not in this test' });
+  };
+  w.hw.helper = true;
+  // an online project, two linked processors, each with its own screen and cabinets
+  function project(name, mode, link) {
+    var pj = w.ensureLct(w.newProject()); pj.name = name; pj.mode = mode; pj.procsChosen = true;
+    w.replaceProject(pj);
+    var devs = ['h5', 'vx1000'].map(function (k) { return w.addProcessor(k); }), lcs = [];
+    devs.forEach(function (dv, i) {
+      var c0 = w.cardsOfDevice(dv)[0], lc = i ? w.lctNew(dv) : w.P.lct[0]; lcs.push(lc);
+      var s = w.newScreen(i * 6 * 176, 0); s.screenId = lc.id; s.cols = 4; s.rows = 2; s.wiring.sender = c0; s.wiring.port = 0; w.P.screens.push(s);
+      if (link) dv.hw = { kind: 'lct', host: link[i], port: 5200, name: 'test ' + i, senders: [] };
+    });
+    w.commit(); w.renderAll();
+    return { devs: devs, lcs: lcs };
+  }
+  function poll(list) {   // one live detect + one health read of each (as the ticks do), and the 1 s step
+    return Promise.all(list.map(function (x) { return Promise.all([w.hwDetect(x, true), w.hltPoll(x)]); })).then(function () { return wait(200); }).then(function () { w.olConnTick(); });
+  }
+  var A = project('Online two', 'online', [GOOD, BAD]), good = A.devs[0], bad = A.devs[1];
+  return poll(A.devs).then(function () {
+    t('one answers, one times out: the answering one is connected, the other not (no 6 s wait after a failure)', function () {
+      return w.olConn(good) === 'yes' && w.olConn(bad) === 'no' && w.olGone().length === 1 || w.olConn(good) + ' / ' + w.olConn(bad);
+    });
+    t('the change is logged once each: processor_connected, processor_not_connected', function () {
+      var c = logs.filter(function (l) { return l.k === 'processor_connected'; }), n = logs.filter(function (l) { return l.k === 'processor_not_connected'; });
+      w.olConnTick(); w.olConnTick();
+      var c2 = logs.filter(function (l) { return l.k === 'processor_connected'; }).length, n2 = logs.filter(function (l) { return l.k === 'processor_not_connected'; }).length;
+      return c.length === 1 && n.length === 1 && c2 === 1 && n2 === 1 && n[0].o.processor === w.deviceLabel(bad) && /10\.255\.255\.2/.test(n[0].o.at) || JSON.stringify([c, n, c2, n2]);
+    });
+    w.setTab('layout'); w.renderAll();
+    t('tree: the connected processor and its screen are there; the other one and its screen are not', function () {
+      var r = function (sel) { return !!d.querySelector('#tree ' + sel); };
+      return r('.tn-dev[data-dev="' + good.id + '"]') && r('.tn-lct[data-id="' + A.lcs[0].id + '"]') && !r('.tn-dev[data-dev="' + bad.id + '"]') && !r('.tn-lct[data-id="' + A.lcs[1].id + '"]') ||
+        $('tree').textContent.slice(0, 300);
+    });
+    t('Layout: the screen shown is the connected one\'s; the other screen isn\'t drawn', function () {
+      w.ui.viewScreen = A.lcs[1].id; w.renderAll();
+      var vs = w.visibleScreens();
+      return w.ui.viewScreen === A.lcs[0].id && vs.length > 0 && vs.every(function (s) { return s.screenId === A.lcs[0].id; }) && (!$('olEmpty') || $('olEmpty').hidden) || 'view ' + (w.lctById(w.ui.viewScreen) || {}).name;
+    });
+    w.setTab('devices'); w.ui.devSel = bad.id; w.renderAll();
+    t('Device: only the connected processor\'s card; the one picked before falls back to it', function () {
+      return !!d.querySelector('#devCards .dv-card[data-id="' + good.id + '"]') && !d.querySelector('#devCards .dv-card[data-id="' + bad.id + '"]') && w.devSelected() === good || 'selected ' + (w.devSelected() && w.deviceLabel(w.devSelected()));
+    });
+    t('Device: one quiet line "1 processor not connected ▸"', function () { var g = $('olGone'); return g && !g.hidden && /^1 processor not connected ▸$/.test(g.textContent.trim()) || g && g.textContent; });
+    d.querySelector('#olGone [data-olg="fold"]').click();
+    t('…open: its name, its address, Remove from project and Find again', function () {
+      var g = $('olGone').textContent;
+      return g.indexOf(w.deviceLabel(bad)) >= 0 && /10\.255\.255\.2/.test(g) && !!d.querySelector('#olGone [data-olg="remove"][data-id="' + bad.id + '"]') && !!d.querySelector('#olGone [data-olg="find"]') || g;
+    });
+    t('header scope (Send / Save / Device tile) is the connected one only, even when both were picked', function () {
+      w.ui.devMulti = [good.id, bad.id]; w.renderAll();
+      var sc = w.pipeScope();
+      return sc.length === 1 && sc[0] === good && w.hwUnsaved().indexOf(bad) < 0 || sc.map(w.deviceLabel).join(', ');
+    });
+    // an error kept from before it went (as the user's H2 had): not counted while it isn't connected, and not cleared
+    var key = bad.id + '|test'; w.hlt.held[key] = { key: key, dev: bad.id, devName: w.deviceLabel(bad), card: w.cardsOfDevice(bad)[0], port: 0, index: 0, kind: 'port disconnected', text: 'port disconnected', level: 'error', t: Date.now(), n: 1 };
+    w.hltList();
+    t('Monitor: no error and no count for the processor that isn\'t connected (the tile isn\'t red)', function () {
+      var n = w.hltCounts(), m = w.hltTile();
+      return n.err === 0 && n.clear === 0 && m.cls !== 'bad' && !/error|no reply/.test(m.text) || JSON.stringify([n, m]);
+    });
+    w.setTab('health'); w.renderAll();
+    t('Monitor tab: only the connected processor, no event line for the other', function () {
+      var b = $('hlBody').textContent, l = $('hlLog').textContent;
+      return b.indexOf(w.deviceLabel(bad)) < 0 && l.indexOf('port disconnected') < 0 || b.slice(0, 200) + ' | ' + l;
+    });
+    return w.hltClear(null).then(function () {
+      t('Clear (all) leaves the not-connected processor\'s kept error alone (it is cleared once it is back)', function () { return !!w.hlt.held[key] || 'gone'; });
+      delete w.hlt.held[key]; w.hltList();
+      var n0 = asked.length;
+      return wait(2500).then(function () { return asked.slice(n0); });
+    });
+  }).then(function (later) {
+    t('not polled while not connected (the ticks ask only the connected one)', function () {
+      var toBad = later.filter(function (a) { return a.host === BAD; }), toGood = later.filter(function (a) { return a.host === GOOD; });
+      return !toBad.length || toBad.map(function (a) { return a.path; }).join(', ') + ' (good: ' + toGood.length + ')';
+    });
+    // plugged back in: a search finds it, the polls ask it at once, it answers -> back, with its layout
+    down[BAD] = false; w.renderAll();
+    w.hw.found = [{ kind: 'lct', ip: BAD, port: 5200, deviceName: 'VX1000' }];
+    return until(function () { return w.olConn(bad) === 'yes' && logs.some(function (l) { return l.k === 'processor_connected' && l.o.processor === w.deviceLabel(bad); }); }, 5000);
+  }).then(function (back) {
+    t('found again and answering: it shows again by itself, logged, one short toast', function () {
+      var tt = toasts.filter(function (x) { return x === w.deviceLabel(bad) + ' connected'; });
+      return back && tt.length === 1 && !w.olGone().length || JSON.stringify({ back: back, st: w.olConn(bad), toasts: toasts.slice(-3) });
+    });
+    w.setTab('devices'); w.renderAll();
+    t('…on Device and in the tree again, its screen too; the fold is gone', function () {
+      return !!d.querySelector('#devCards .dv-card[data-id="' + bad.id + '"]') && !!d.querySelector('#tree .tn-lct[data-id="' + A.lcs[1].id + '"]') && $('olGone').hidden && w.P.devices.length === 2 && w.P.screens.length === 2 || $('olGone').textContent;
+    });
+    // ---------------------------------------------------------------- nothing connected at all
+    down[GOOD] = true; down[BAD] = true;
+    var B = project('Online none', 'online', [GOOD, BAD]);
+    return poll(B.devs).then(function () { return B; });
+  }).then(function (B) {
+    w.setTab('layout'); w.renderAll();
+    t('nothing connected: the canvas says "No processors connected" with + Add processor', function () {
+      var e = $('olEmpty'); return !!e && !e.hidden && /No processors connected/.test(e.textContent) && !!e.querySelector('button') && !w.visibleScreens().length || e && e.outerHTML;
+    });
+    t('nothing connected: the Monitor tile is empty (no error), Send / Save name no processor', function () {
+      var m = w.hltTile(), st = $('tabHealth') ? $('tabHealth').textContent : '';
+      return !m.text && m.cls !== 'bad' && !/error/i.test(st) && !w.pipeScope().length && w.hwUnsaved().length === 0 || JSON.stringify(m) + ' | ' + st;
+    });
+    t('nothing connected: Screen Settings, Backup and Preset tiles say nothing about the hidden processors', function () {
+      var v = function (id) { var e = $(id); var s = e && e.querySelector('.pv, .tile-v, .tv'); return (s ? s.textContent : '').trim(); };
+      var txt = ['tabScreen', 'tabBackup', 'tabPresets'].map(function (id) { return ($(id) ? $(id).textContent : '').replace(/\s+/g, ' '); }).join(' | ');
+      return !/%|pair|scene/i.test(txt) || txt;
+    });
+    w.setTab('devices'); w.renderAll();
+    t('nothing connected: Device says "No processors connected." with + Add processor, and the fold lists both', function () {
+      var n = $('dvNone');
+      return !n.hidden && /No processors connected\./.test(n.textContent) && /^2 processors not connected/.test($('olGone').textContent.trim()) && !d.querySelector('#devCards .dv-card[data-id]') || n.textContent + ' | ' + $('olGone').textContent;
+    });
+    var opened = 0, keep = w.devOpenPicker; w.devOpenPicker = function () { opened++; };
+    $('olEmpty') && $('olEmpty').querySelector('button').click(); w.devOpenPicker = keep;
+    t('the empty state\'s button opens Add processor (the found list, online)', function () { return opened === 1 || opened; });
+    t('the project is untouched: both processors, their screens and cabinets are still in it', function () {
+      return w.P.devices.length === 2 && w.P.screens.length === 2 && w.P.lct.length === 2 && w.P.devices.every(function (x) { return x.hw; }) || JSON.stringify([w.P.devices.length, w.P.screens.length]);
+    });
+    // ---------------------------------------------------------------- offline: everything shown
+    var C = project('Offline two', 'offline', null);
+    return poll(C.devs).then(function () { return C; });
+  }).then(function (C) {
+    w.setTab('devices'); w.renderAll();
+    t('offline project: every processor shown (tree, Device, scope), no fold, no empty state', function () {
+      var ok = C.devs.every(function (x) { return w.olShown(x) && !!d.querySelector('#devCards .dv-card[data-id="' + x.id + '"]') && !!d.querySelector('#tree .tn-dev[data-dev="' + x.id + '"]'); });
+      return ok && !w.olGone().length && $('olGone').hidden && (!$('olEmpty') || $('olEmpty').hidden) || C.devs.map(function (x) { return w.deviceLabel(x) + ' ' + w.olConn(x); }).join(', ');
+    });
+  });
+}
+</script>
+</body>
+</html>

@@ -95,9 +95,11 @@ function rbApply(results, why) {
   // the next slot, else a new tab right after the processor's screens. Tabs of other processors (and empty ones of none)
   // stay as they are.
   var kept = {}; np.screens.forEach(function (s) { kept[s.screenId] = 1; });
-  var slotOf = {}, list = [];
+  // a processor with no screen yet takes the first empty screen of nobody, so reading doesn't leave it behind
+  var slotOf = {}, list = [], spare = screens.length && !np.lct.some(function (lc) { return (dm[lc.id] || []).some(function (x) { return x.id === devs[0].id; }); }) ? devs[0] : null;
   np.lct.forEach(function (lc) {
     var ow = kept[lc.id] ? null : (dm[lc.id] || []).filter(function (x) { return readId[x.id]; })[0];
+    if (!ow && spare && !kept[lc.id] && !(dm[lc.id] || []).length && !lc.dev) { ow = spare; spare = null; }
     list.push(ow ? { slot: ow.id, lc: lc } : { lc: lc });
     if (ow) slotOf[lc.id] = ow.id;
   });
@@ -178,6 +180,7 @@ function rbRead(devs, apply) {
 // Automatic, once per processor per session and after each Link: empty project there -> read it in; different -> ask.
 function rbAuto(d) {
   if (!d || !d.hw || rb.asked[d.id] || !DRV.of(d).readLayout || DRV.caps(d).simulated) return;
+  if (typeof olConnected === 'function' && !olConnected(d)) return;   // online: once it answers (app-online.js olConnTick asks again)
   rb.asked[d.id] = 1;
   DRV.of(d).readLayout(d).then(function (r) {
     if (!r.ok || !(r.cabinets || []).length) return;   // nothing stored there: keep the project as it is

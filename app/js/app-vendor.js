@@ -7,16 +7,30 @@
 //     diagnostics/<day>/vendor/ (decoded like the recorder's .nwl, the original kept) so the next report carries it.
 //     With dumpcap here, Start / Stop runs it (never elevated: when it needs admin, the steps are the way).
 //   - Relay (experimental — needs a live check): Open Nova stands in for the processor, passes every byte on unchanged and
-//     records both directions into vendor/relay/ (opens in Tools ▸ Diagnostics).
+//     records both directions into vendor/relay/ (opens in Tools ▸ Diagnostics). NovaLCT also to a controller on USB / a COM
+//     port (NovaPro HD has no Ethernet): the processor field takes "USB" or a COM port (vnd.tg: what the helper found).
+//   - USB capture (tools/usbcap.py, docs/USB_CAPTURE.md): USBPcap records NovaLCT <-> a USB-only controller while NovaLCT
+//     keeps it; Install USB capture… (USBPcap's own installer, once, then a restart), Start (Windows asks once) / Stop.
+//   - USB, automatic (tools/usbauto.py; user, 2026-11-16: "i dont want them to have to choose the bridge"): the helper decides
+//     between Open Nova + the bridge and USB capture by itself. One status line (vndAutoHtml) in the Device panel, the Add
+//     processor list and here; its only buttons are the two one-time steps (Install USB capture, Allow USB recording). The
+//     hand controls (USB capture, Relay) sit under Advanced.
+//   - Network, automatic (tools/netcap.py; user, 2026-11-17: "we dont want to get in his way at all"): while NovaLCT, VMP or
+//     Unico is open, Windows' own packet recorder (pktmon; macOS: tcpdump) records what it says to the processors — Open Nova
+//     only listens, nothing is in the way. Its line (vndNet) sits under the USB one; its only button: Allow recording
+//     (Windows asks once per session). The relay is the expert option under Advanced.
 // Owns: vnd, VND_FAM, vndPost, vndLogsWanted, vndKb, vndOpen, vndClose, vndLoad, vndRender, vndSteps, vndImport, vndCapture,
-// vndRelay, vndPoll, vndBindDlg, bindVendor.
+// vndRelay, vndPoll, vndBindDlg, bindVendor, vndUsbSec, vndUsb, vndUsbWait, vndAuto, vndAutoPoll, vndAutoHtml, vndAutoShow, vndAutoGo,
+// vndNet, vndNetGo.
 // Depends on: app-core ($, esc, toast), app-log (log), drv-core (DRV), app-rcvguard (rcvB64), app-shell (setTab),
-// app-diag (dgOpen), all at run time. Builds its own dialog (#vndDlg) on first open.
+// app-diag (dgOpen), app-hardware (hw), app-devices (devPick), all at run time. Builds its own dialog (#vndDlg) on first open.
 // Classic script, not an ES module (see app-core.js); every top-level name is a shared global.
 'use strict';
 
 var vnd = { det: null, logs: null, files: [], ifaces: null, cap: null, fam: 'lct', ip: '', iface: '', minutes: 30,
-  kind: 'lct', target: '', relayIp: '', busy: '', timer: 0, open: {} };
+  kind: 'lct', target: '', relayIp: '', busy: '', timer: 0, open: {}, tg: null, usb: null };
+var vndAuto = { st: null, timer: 0, key: '', fails: 0 };   // the USB coordinator's last status (helper: usb-auto)
+var vndNet = { st: null, key: '' };                         // network recording's last status (helper: net-auto)
 var VND_FAM = [['lct', 'NovaLCT'], ['unico', 'Unico'], ['coex', 'VMP / COEX'], ['host', 'One processor']];
 
 function vndPost(path, body) {   // straight to the helper (not DRV.post: nothing here writes to a processor)
@@ -42,19 +56,20 @@ function vndOpen() {
 function vndClose() { var d = $('vndDlg'); if (d) d.hidden = true; clearTimeout(vnd.timer); }
 function vndLoad(refresh) {
   vnd.busy = 'load'; vndRender();
-  return Promise.all([vndPost('detect', { refresh: !!refresh }), vndPost('logs', {}), vndPost('files', {}), vndPost('capture-status', {})]).then(function (r) {
-    vnd.busy = ''; vnd.det = r[0]; vnd.logs = r[1]; vnd.files = (r[2] && r[2].files) || []; vnd.cap = r[3] && r[3].capture;
+  return Promise.all([vndPost('detect', { refresh: !!refresh }), vndPost('logs', {}), vndPost('files', {}), vndPost('capture-status', {}),
+    vndPost('relay-targets', {}).catch(function () { return null; }), vndPost('usb-detect', {}).catch(function () { return null; })]).then(function (r) {
+    vnd.busy = ''; vnd.det = r[0]; vnd.logs = r[1]; vnd.files = (r[2] && r[2].files) || []; vnd.cap = r[3] && r[3].capture; vnd.tg = r[4] && r[4].ok ? r[4] : null; vnd.usb = r[5];
     if (vnd.det && vnd.det.capture && vnd.det.capture.dumpcap && !vnd.ifaces) vndPost('interfaces', {}).then(function (x) { vnd.ifaces = x; vndRender(); });
     vndRender(); vndPoll();
   }, function (e) { vnd.busy = ''; vnd.det = { ok: false, error: e.message }; vndRender(); });
 }
 function vndPoll() {   // relay / capture counters while the window is open and something runs
   clearTimeout(vnd.timer);
-  var d = $('vndDlg'), run = vnd.det && (vnd.det.relays || []).length || vnd.cap && vnd.cap.running;
+  var d = $('vndDlg'), run = vnd.det && (vnd.det.relays || []).length || vnd.cap && vnd.cap.running || vnd.usb && vnd.usb.capture && vnd.usb.capture.running;
   if (!d || d.hidden || !run) return;
   vnd.timer = setTimeout(function () {
-    Promise.all([vndPost('relay-status', {}), vndPost('capture-status', {})]).then(function (r) {
-      if (vnd.det) vnd.det.relays = r[0].relays || []; vnd.cap = r[1].capture; vndRender(); vndPoll();
+    Promise.all([vndPost('relay-status', {}), vndPost('capture-status', {}), vndPost('usb-status', {})]).then(function (r) {
+      if (vnd.det) vnd.det.relays = r[0].relays || []; vnd.cap = r[1].capture; if (vnd.usb) vnd.usb.capture = r[2].capture; vndRender(); vndPoll();
     }, function () { vndPoll(); });
   }, 2000);
 }
@@ -81,6 +96,7 @@ function vndRender() {
   var sec = function (id, title, sum, body) {
     return '<details class="vnd-sec" data-vsec="' + id + '"' + (vnd.open[id] ? ' open' : '') + '><summary><b>' + title + '</b>' + (sum ? ' <span class="hint">' + sum + '</span>' : '') + '</summary>' + body + '</details>';
   };
+  h += '<div id="vndAutoBox">' + vndAutoHtml('vnd') + '</div>';
   // on this computer
   h += '<h3>On this computer' + (vnd.busy === 'load' ? ' <span class="hint">looking…</span>' : '') + '</h3>';
   if (D.apps.length) {
@@ -114,22 +130,27 @@ function vndRender() {
       (cap ? '<span class="hint">Capturing on ' + esc(cap.iface) + ': ' + vndKb(cap.bytes) + ', ' + cap.seconds + ' s</span><span class="grow"></span><button type="button" id="vndCapStop" class="primary">Stop</button>' :
         '<select id="vndIface" title="Network adapter">' + ((vnd.ifaces && vnd.ifaces.interfaces) || []).map(function (i) { return '<option value="' + esc(i.name) + '"' + (vnd.iface === i.name ? ' selected' : '') + '>' + esc(i.desc || i.name) + '</option>'; }).join('') + '</select>' +
         '<label title="Stops by itself after this long">min <input id="vndMin" type="number" min="1" max="240" value="' + vnd.minutes + '"></label><button type="button" id="vndCapGo">Start here</button>') + '</div>' : ''));
-  // relay
-  var R = (D.relays || []), on = R.filter(function (r) { return r.kind === vnd.kind; })[0];
-  h += sec('relay', 'Relay <span class="vnd-exp">experimental — needs a live check</span>', R.length ? R.map(function (r) { return r.name + ' running'; }).join(', ') : '',
+  // Advanced: the hand controls (USB capture, the relay); the automatic USB handling above needs none of them
+  var R = (D.relays || []), on = R.filter(function (r) { return r.kind === vnd.kind; })[0], adv = vndUsbSec(sec);
+  adv += sec('relay', 'Relay <span class="vnd-exp">expert option · experimental</span>', R.length ? R.map(function (r) { return r.name + ' running'; }).join(', ') : '',
     '<p class="hint" title="NovaLCT: the relay answers NovaLCT’s search from the relay address with the processor’s own reply. Unico: the same for UCenter. VMP: XCenter is told about the relay address. The vendor app may still find the real processor too — then use the relay’s entry, or a second network adapter / another computer for the vendor app. Nothing is changed on the way; what the vendor app sends is sent (Open Nova’s read-only lock doesn’t cover it).">' +
-    'Open Nova stands in for the processor: the NovaStar app connects to the relay address, every byte goes on unchanged, both directions are recorded. Hover for the limits.</p>' +
+    'Not needed to record NovaLCT, VMP or Unico: that happens by itself while they’re open (the line at the top). The relay puts Open Nova in the middle instead — the NovaStar app connects to the relay address and every byte goes on unchanged. Hover for the limits.</p>' +
     '<div class="vnd-row"><select id="vndKind" title="Which NovaStar app"' + (on ? ' disabled' : '') + '>' + VND_FAM.slice(0, 3).map(function (x) { return '<option value="' + x[0] + '"' + (vnd.kind === x[0] ? ' selected' : '') + '>' + x[1] + '</option>'; }).join('') + '</select>' +
-    '<input id="vndTarget" type="text" spellcheck="false" placeholder="processor IP" title="The real processor’s address" value="' + esc(on ? on.target : vnd.target) + '"' + (on ? ' disabled' : '') + '>' +
+    '<input id="vndTarget" type="text" spellcheck="false" list="vndTargets" placeholder="' + (vnd.kind === 'lct' ? 'processor IP, USB or COM' : 'processor IP') + '" title="The real processor’s address.' +
+    (vnd.kind === 'lct' ? ' NovaLCT: also USB (NovaStar’s USB device, e.g. NovaPro HD) or a COM port — Open Nova then holds it, so close NovaLCT first and open it again once the relay runs' : '') + '" value="' + esc(on ? on.target : vnd.target) + '"' + (on ? ' disabled' : '') + '>' +
+    '<datalist id="vndTargets">' + (vnd.kind === 'lct' && vnd.tg ? [['USB', (vnd.tg.usb.length ? '' : 'none found · ') + 'NovaStar USB device']].concat(vnd.tg.usb.length > 1 ? vnd.tg.usb.map(function (u) { return [u.host, u.label]; }) : [],
+      vnd.tg.ports.map(function (p) { return [p.host.slice(7), p.label + (p.driver ? ' · ' + p.driver : '')]; })).map(function (o) { return '<option value="' + esc(o[0]) + '">' + esc(o[1]) + '</option>'; }).join('') : '') + '</datalist>' +
     '<input id="vndRelayIp" type="text" spellcheck="false" placeholder="' + esc(D.relayIp || (D.platform === 'darwin' ? '127.0.0.1' : '127.0.0.42')) + '" title="The relay’s address on this computer: a 127.x address when the NovaStar app runs here, or this computer’s address on a second network adapter" value="' + esc(on ? on.relayIp : vnd.relayIp) + '"' + (on ? ' disabled' : '') + '>' +
     (on ? '<button type="button" id="vndRelayStop" class="primary">Stop</button>' : '<button type="button" id="vndRelayGo"' + (vnd.busy === 'relay' ? ' disabled' : '') + '>Start</button>') + '</div>' +
     R.map(function (r) {
       var cn = r.counts || {};
-      return '<p class="hint vnd-st">' + esc(r.name) + ': ' + esc(r.relayIp) + ':' + esc(r.ports.join('+')) + ' → ' + esc(r.target) + ' · ' + r.clients + ' connected (' + r.opened + ' so far) · ' +
+      return '<p class="hint vnd-st">' + esc(r.name) + ': ' + esc(r.relayIp) + ':' + esc(r.ports.join('+')) + ' → ' + esc(r.bridge ? r.bridge + (r.model ? ' (' + r.model + ')' : '') : r.target) +
+        (r.bridge ? ' <span title="' + esc(r.device + ' · NovaLCT’s search is answered by the relay: ' + r.answer + ' · ' + (r.timeouts || 0) + ' requests without a reply') + '">ⓘ</span>' : '') + ' · ' + r.clients + ' connected (' + r.opened + ' so far) · ' +
         (cn.tg || 0) + ' frames, ' + (cn.http || 0) + ' web calls, ' + (cn.ws || 0) + ' WebSocket · ' + vndKb(r.up) + ' up, ' + vndKb(r.down) + ' down' +
         (r.kind !== 'coex' ? ' · searches answered ' + r.answers : '') + (r.notes.length ? '<br>' + esc(r.notes.join(' · ')) : '') +
         (r.errors.length ? '<br><span class="bk-err">' + esc(r.errors[r.errors.length - 1]) + '</span>' : '') + '</p>';
     }).join(''));
+  h += sec('adv', 'Advanced', R.length ? R.map(function (r) { return r.name + ' relay running'; }).join(', ') : 'by hand', '<p class="hint">USB and NovaLCT / VMP / Unico on the network are recorded by themselves (the lines at the top). These are for doing it by hand.</p>' + adv);
   // recorded here
   var F = vnd.files || [];
   h += sec('files', 'Recorded', F.length ? F.length + ' file' + (F.length === 1 ? '' : 's') + ' in the last 3 days' : 'nothing yet',
@@ -166,13 +187,109 @@ function vndCapture(go) {
     vnd.cap = r.capture; vndRender(); vndPoll();
   }, function (e) { toast(e.message); });
 }
+// USB capture: the state detect() gives (not-installed / reboot / no-cmd / ready), Install / Start / Stop
+function vndUsbSec(sec) {
+  var U = vnd.usb; if (!U || !U.supported) return '';
+  var c = U.capture || {}, run = c.running;
+  return sec('usb', 'USB capture', U.state !== 'ready' ? U.state.replace(/-/g, ' ') : run ? 'capturing · ' + (c.frames || 0) + ' frames' : U.nova ? 'ready' : 'ready · controller not plugged in',
+    '<p class="hint">' + esc(run ? c.say : U.say) + '</p><div class="vnd-row">' +
+    (U.state === 'not-installed' ? '<button type="button" id="vndUsbInstall"' + (vnd.busy === 'usbinst' ? ' disabled' : '') + ' title="Opens USBPcap ' + esc(U.pin.version) +
+      '’s own installer (Windows asks for permission first). Restart the computer afterwards.">Install USB capture…</button>' :
+     U.state !== 'ready' ? '' : run ? '<span class="hint">' + vndKb(c.bytes) + ', ' + c.seconds + ' s</span><span class="grow"></span><button type="button" id="vndUsbStop" class="primary">Stop</button>' :
+      '<button type="button" id="vndUsbGo" title="Windows asks for permission once: USBPcap only lets administrators capture. NovaLCT keeps the controller.">Start</button>') + '</div>');
+}
+function vndUsb(go) {
+  if (go === 'install') {
+    log('vendor_usb_install', {}); vnd.busy = 'usbinst'; vndRender();
+    return vndPost('usb-install', {}).then(function (r) {
+      if (!r.ok) { vnd.busy = ''; vndRender(); return toast(r.error); }
+      toast(r.say); vndUsbWait();
+    }, function (e) { vnd.busy = ''; vndRender(); toast(e.message); });
+  }
+  if (!go) {
+    log('vendor_usb_stop', {});
+    return vndPost('usb-stop', {}).then(function (r) {
+      toast(r.ok ? (r.total != null ? 'USB capture added: ' + r.total + ' records' : r.say) : 'USB capture: ' + r.error); vnd.open.files = true; vndLoad(false);
+    }, function (e) { toast(e.message); });
+  }
+  log('vendor_usb_start', { hub: vnd.usb && vnd.usb.nova && vnd.usb.nova.hub });
+  vndPost('usb-start', { consent: true, retry: true }).then(function (r) {   // the click is the tester's OK for Windows' prompt
+    if (!r.ok) return toast(r.error);
+    vnd.usb.capture = r.capture; vndRender(); vndPoll();
+  }, function (e) { toast(e.message); });
+}
+function vndUsbWait() {   // USBPcap's installer runs in its own window: ask until it is closed
+  setTimeout(function () {
+    vndPost('usb-install-status', {}).then(function (s) {
+      if (s.running) return vndUsbWait();
+      var r = s.result || {}; vnd.busy = '';
+      log('vendor_usb_installed', { ok: !!r.ok, exitCode: r.exitCode, state: r.state });
+      toast(r.ok ? (r.rebootNeeded ? 'USBPcap is installed — restart the computer, then USB capture works' : 'USBPcap is installed') : (r.error || r.say || 'USBPcap wasn’t installed'));
+      vndLoad(true);
+    }, function () { vnd.busy = ''; vndRender(); });
+  }, 2000);
+}
+// The USB coordinator's line: what happens with a NovaStar USB / COM controller, and at most one button (Install USB capture /
+// Allow USB recording). '' when there is nothing to say (no controller, macOS / Linux).
+function vndAutoHtml(where) {   // the USB line, then the network-recording line (each only when it has something to say)
+  var a = vndAuto.st, n = vndNet.st, h = '';
+  if (n && n.say) h = '<p class="usb-auto hint net-auto" data-where="' + where + '" title="' + esc(n.tip || '') + '"><span>' + esc(n.say) + '</span>' +
+    (n.action === 'allow' ? '<button type="button" class="mini" data-netauto="allow" title="' + esc(n.tip || 'Windows asks for permission once (only administrators may record network traffic). NovaLCT, VMP and Unico work as always: Open Nova only listens.') + '">Allow recording</button>' : '') + '</p>';
+  if (!a || !a.say) return h;
+  var b = a.action === 'install' ? '<button type="button" class="mini" data-usbauto="install" title="USBPcap (free, open source: the USB recorder Wireshark uses). Windows asks for permission, then its installer opens; restart the computer afterwards.">Install USB capture</button>' :
+    a.action === 'allow' ? '<button type="button" class="mini" data-usbauto="allow" title="Windows asks for permission once (USBPcap only lets administrators record). NovaLCT keeps the controller.">Allow USB recording</button>' : '';
+  return '<p class="usb-auto hint" data-where="' + where + '" title="' + esc(a.tip || '') + '"><span>' + esc(a.say) + '</span>' + b + '</p>' + h;
+}
+function vndAutoShow() {   // the line in the Device panel (under the processor cards), the Add processor list and Vendor apps
+  var cards = $('devCards'), box = $('usbAuto'), h = vndAutoHtml('dev');
+  if (cards && !box && h) { box = document.createElement('div'); box.id = 'usbAuto'; cards.parentNode.insertBefore(box, ($('olGone') || cards).nextSibling); }
+  if (box) { box.hidden = !h; box.innerHTML = h; }
+  var lead = $('dpLead'), pk = $('dpUsbAuto');
+  if (lead && !pk) { pk = document.createElement('div'); pk.id = 'dpUsbAuto'; lead.parentNode.insertBefore(pk, lead.nextSibling); }
+  if (pk) { pk.hidden = !h || lead.parentNode.querySelector('#dpFound').hidden; pk.innerHTML = vndAutoHtml('pick'); }
+  var d = $('vndDlg');
+  if (d && !d.hidden) { var w = $('vndAutoBox'), n = vndAutoHtml('vnd');
+    if (w && w.innerHTML !== n) w.innerHTML = n; }
+}
+function vndAutoPoll() {   // every 3 s while the helper answers and the page is shown (it costs the helper nothing: a status read)
+  clearTimeout(vndAuto.timer);
+  vndAuto.timer = setTimeout(vndAutoPoll, vndAuto.fails > 3 ? 30000 : 3000);
+  if (document.hidden || typeof hw === 'undefined' || hw.helper !== true) return;
+  vndPost('net-auto', {}).then(function (a) {
+    var k = a && a.ok ? a.state : '';
+    if (k !== vndNet.key) { if (vndNet.key || (a && a.say)) log('net_record_state', { state: a && a.state, say: a && a.say }); vndNet.key = k; }
+    var was = vndNet.st && vndNet.st.say; vndNet.st = a && a.ok ? a : null;
+    if ((vndNet.st && vndNet.st.say) !== was) vndAutoShow();
+  }, function () { /* an older helper: no network recording */ });
+  vndPost('usb-auto', {}).then(function (a) {
+    vndAuto.fails = 0;
+    var k = a && a.ok ? a.state + '/' + a.sub : '';
+    if (k !== vndAuto.key) { if (vndAuto.key || a.say) log('usb_auto_state', { state: a.state, sub: a.sub, say: a.say }); vndAuto.key = k; }
+    vndAuto.st = a && a.ok ? a : null; vndAutoShow();
+  }, function () { vndAuto.fails++; });
+}
+function vndAutoGo(what) {   // the tester's one-time step: Install USB capture / Allow USB recording (this one shows Windows' prompt)
+  log('usb_auto_' + what, { state: vndAuto.st && vndAuto.st.state, sub: vndAuto.st && vndAuto.st.sub });
+  vndPost('usb-auto-' + what, {}).then(function (a) {
+    if (!a.ok && a.error) toast(a.error); else if (a.message) toast(a.message);
+    vndAuto.st = a; vndAuto.key = a.state + '/' + a.sub; vndAutoShow();
+  }, function (e) { toast(e.message); });
+}
+function vndNetGo() {   // "Allow recording": Windows' permission prompt for the recorder (once per session)
+  log('net_record_allow', { state: vndNet.st && vndNet.st.state, apps: vndNet.st && vndNet.st.apps });
+  vndPost('net-auto-allow', {}).then(function (a) {
+    if (!a.ok && a.error) toast(a.error);
+    vndNet.st = a; vndNet.key = a.state; vndAutoShow();
+  }, function (e) { toast(e.message); });
+}
 function vndRelay(go) {
   if (!go) {
     log('vendor_relay_stop', { kind: vnd.kind });
     return vndPost('relay-stop', { kind: vnd.kind }).then(function (r) { vnd.det.relays = r.relays || []; vnd.open.files = true; vndLoad(false); }, function (e) { toast(e.message); });
   }
   vnd.kind = $('vndKind').value; vnd.target = $('vndTarget').value.trim(); vnd.relayIp = $('vndRelayIp').value.trim();
-  if (!/^\d{1,3}(\.\d{1,3}){3}$/.test(vnd.target)) return toast('Type the processor’s IP address');
+  var bridge = vnd.kind === 'lct' && /^(usb(:.*)?|serial:.+|COM\d+|\/dev\/.+)$/i.test(vnd.target);
+  if (!bridge && !/^\d{1,3}(\.\d{1,3}){3}$/.test(vnd.target)) return toast(vnd.kind === 'lct' ? 'Type the processor’s IP address, USB or a COM port' : 'Type the processor’s IP address');
   vnd.busy = 'relay'; vndRender();
   log('vendor_relay_start', { kind: vnd.kind, target: vnd.target, relayIp: vnd.relayIp || 'default' });
   vndPost('relay-start', { kind: vnd.kind, target: vnd.target, relayIp: vnd.relayIp || undefined }).then(function (r) {
@@ -180,7 +297,8 @@ function vndRelay(go) {
     if (!r.ok) { vndRender(); return toast('Relay: ' + r.error); }
     vnd.det.relays = r.relays || [];
     var x = r.relay, app = (VND_FAM.filter(function (f) { return f[0] === x.kind; })[0] || [0, 'the app'])[1];
-    toast('Relay on ' + x.relayIp + ' — now find the processor in ' + app + (x.kind === 'coex' ? ' (it appears at ' + x.relayIp + ':' + x.ports[0] + ')' : ' (use the one at ' + x.relayIp + ')'));
+    toast('Relay on ' + x.relayIp + (x.bridge ? ' for the ' + (x.model || 'controller') + ' on ' + x.bridge + ' — now open NovaLCT and use the one at ' + x.relayIp :
+      ' — now find the processor in ' + app + (x.kind === 'coex' ? ' (it appears at ' + x.relayIp + ':' + x.ports[0] + ')' : ' (use the one at ' + x.relayIp + ')')));
     vndRender(); vndPoll();
   }, function (e) { vnd.busy = ''; vndRender(); toast(e.message); });
 }
@@ -199,6 +317,9 @@ function vndBindDlg(d) {
     }
     if (id === 'vndCapGo') return vndCapture(true);
     if (id === 'vndCapStop') return vndCapture(false);
+    if (id === 'vndUsbInstall') return vndUsb('install');
+    if (id === 'vndUsbGo') return vndUsb(true);
+    if (id === 'vndUsbStop') return vndUsb(false);
     if (id === 'vndRelayGo') return vndRelay(true);
     if (id === 'vndRelayStop') return vndRelay(false);
     if (t.dataset.vopen) { log('vendor_open_recording', { name: t.dataset.vopen }); vndClose(); setTab('diag'); return dgOpen(t.dataset.vopen); }
@@ -208,7 +329,7 @@ function vndBindDlg(d) {
     var t = e.target;
     if (t.id === 'vndFile') { vndImport(t.files[0]); t.value = ''; }
     else if (t.id === 'vndLogs') { try { localStorage.setItem('on.vendorLogs', t.checked ? '1' : '0'); } catch (x) { /* private window */ } log('vendor_logs_in_reports', { on: t.checked }); }
-    else if (t.id === 'vndKind') vnd.kind = t.value;
+    else if (t.id === 'vndKind') { vnd.kind = t.value; vndRender(); }
     else if (t.id === 'vndIface') vnd.iface = t.value;
   });
   d.addEventListener('input', function (e) {
@@ -218,4 +339,11 @@ function vndBindDlg(d) {
   });
   d.addEventListener('keydown', function (e) { if (e.key === 'Escape') vndClose(); });
 }
-function bindVendor() { var b = $('mbVendor'); if (b) b.onclick = vndOpen; }
+function bindVendor() {
+  var b = $('mbVendor'); if (b) b.onclick = vndOpen;
+  document.addEventListener('click', function (e) {   // the status line's button, wherever it shows
+    var t = e.target.closest && e.target.closest('[data-usbauto]'); if (t && !t.disabled) { t.disabled = true; vndAutoGo(t.dataset.usbauto); }
+    t = e.target.closest && e.target.closest('[data-netauto]'); if (t && !t.disabled) { t.disabled = true; vndNetGo(); }
+  });
+  vndAutoPoll();
+}

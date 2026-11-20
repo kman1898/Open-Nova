@@ -4,7 +4,7 @@
 // errors" view of the cabinet map, and alerts when a new error comes in: a banner + the tab title always, a beep and a
 // desktop notification when switched on (desktop notifications only where the browser allows them: https or this PC).
 // Settings are per browser (localStorage 'opennova.watch'), never in the project.
-// Owns: WATCH_KEY, watch, watchLoad, watchSave, tempFmt, tempUnit, watchText, watchApply, watchRecord, watchAlert, watchAck,
+// Owns: WATCH_KEY, WATCH_VER, watch, watchLoad, watchSave, tempFmt, tempUnit, watchText, watchApply, watchRecord, watchAlert, watchAck,
 // watchHistHtml, watchBerFill, watchFormHtml, watchUnit, bindWatch.
 // Depends on: app-core ($, esc, toast, ui), app-log (log), app-tips (itip), app-health (hlt, renderHealth, HLT_COL), app-shell (setTab),
 // all at run time.
@@ -13,15 +13,23 @@
 
 var WATCH_KEY = 'opennova.watch';
 var watch = {
-  set: { tempWarn: 65, tempErr: 80, voltLow: 4.4, unit: 'C', sound: false, notify: false },   // limits in °C / V
+  // voltLow 3.3 V = NovaLCT's own default (novalink VOLT_LOW): many cabinets run their cards at 4.0-4.2 V (an H9 tester's
+  // ROE wall: 4.1 V everywhere), so the old 4.4 V flagged every cabinet of a healthy wall
+  set: { tempWarn: 65, tempErr: 80, voltLow: 3.3, unit: 'C', sound: false, notify: false },   // limits in °C / V
   hist: {},        // hist[device id] = [{t, ok, backup, dark, warn, err, tmax, ber}] (last 720 readings)
   alerts: 0,       // errors since the Monitor tab was last looked at
   audio: null
 };
+var WATCH_VER = 2;   // 2 = voltLow default 3.3 V (1 / none: 4.4 V)
 function watchLoad() {
-  try { var s = JSON.parse(localStorage.getItem(WATCH_KEY) || 'null'); if (s) for (var k in watch.set) if (k in s) watch.set[k] = s[k]; } catch (e) { /* defaults */ }
+  try {
+    var s = JSON.parse(localStorage.getItem(WATCH_KEY) || 'null');
+    // saved before version 2: every setting was saved with the old default, so 4.4 V there is that default, not a choice
+    if (s && !(s.v >= 2) && s.voltLow === 4.4) delete s.voltLow;
+    if (s) for (var k in watch.set) if (k in s) watch.set[k] = s[k];
+  } catch (e) { /* defaults */ }
 }
-function watchSave() { try { localStorage.setItem(WATCH_KEY, JSON.stringify(watch.set)); } catch (e) { /* private window */ } }
+function watchSave() { try { localStorage.setItem(WATCH_KEY, JSON.stringify(Object.assign({ v: WATCH_VER }, watch.set))); } catch (e) { /* private window */ } }
 function tempUnit() { return watch.set.unit === 'F' ? '°F' : '°C'; }
 // A °C reading in the chosen unit: tempFmt(41.25) -> "41.3 °C" / "106.3 °F"; dec 0 for the map labels.
 function tempFmt(t, dec, bare) {

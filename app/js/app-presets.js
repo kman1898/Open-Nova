@@ -90,7 +90,7 @@ function renderPresets() {
 
 // ------------------------------------------------------------------ presets stored on the processors (Unico, COEX)
 var dvp = {};   // dvp[devId] = { busy, presets: [{id, slot, name, flags, active}], error }
-function dvpDevices() { return P.devices.filter(function (d) { return d.hw && DRV.caps(d).presets; }); }   // a simulated one keeps its presets in memory (drv-offline.js)
+function dvpDevices() { return (typeof olShownDevices === 'function' ? olShownDevices() : P.devices).filter(function (d) { return d.hw && DRV.caps(d).presets; }); }   // online: the connected ones (app-online.js)   // a simulated one keeps its presets in memory (drv-offline.js)
 function dvpLoad(d) {
   var e = dvp[d.id] = dvp[d.id] || {}; e.busy = true; renderDevPresets();
   return DRV.of(d).presets(d).then(function (r) { return r; }, function (x) { return { ok: false, error: 'helper: ' + x.message }; }).then(function (r) {

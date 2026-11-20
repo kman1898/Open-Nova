@@ -72,13 +72,16 @@ function renderTree(use, cellsBy) {
       (m[u.sender] || (m[u.sender] = {}))[u.port] = u;
     });
   });
-  var realCards = P.processors.filter(function (c, i) { return cardIsReal(i); }).length;   // fixed processors aren't counted as cards
-  var hw2 = realCards ? realCards + ' card' + (realCards === 1 ? '' : 's') : P.devices.length + ' processor' + (P.devices.length === 1 ? '' : 's');
+  // online: a processor that isn't connected, and its screens, aren't listed (app-online.js; Device lists them)
+  var gone = typeof olGone === 'function' ? olGone() : [], isGone = function (d) { return !!d && gone.indexOf(d) >= 0; };
+  var lcs = gone.length ? P.lct.filter(function (lc) { return olLcShown(lc, gone); }) : P.lct, nDev = P.devices.length - gone.length;
+  var realCards = P.processors.filter(function (c, i) { return cardIsReal(i) && !isGone(deviceOfCard(i)); }).length;   // fixed processors aren't counted as cards
+  var hw2 = realCards ? realCards + ' card' + (realCards === 1 ? '' : 's') : nDev + ' processor' + (nDev === 1 ? '' : 's');
   var h = '<div class="tn tn-proj" data-kind="proj" role="treeitem" title="' + esc((P.name || 'Untitled') + ' — double-click to rename the project') + '">' +
     '<span class="tn-ico">▣</span><span class="tn-name">' + esc(P.name || 'Untitled') + '</span>' +
-    '<span class="tn-tag">' + P.lct.length + ' screen' + (P.lct.length === 1 ? '' : 's') + ' · ' + hw2 + '</span></div>';
+    '<span class="tn-tag">' + lcs.length + ' screen' + (lcs.length === 1 ? '' : 's') + ' · ' + hw2 + '</span></div>';
   var shown = 0, ldm = lctDevMap(cellsBy);   // each screen's processor(s) (app-processors.js)
-  P.lct.forEach(function (lc) {
+  lcs.forEach(function (lc) {
     if (q && lc.name.toLowerCase().indexOf(q) < 0) return;
     shown++;
     var cur = lc.id === ui.viewScreen, open = !ui.treeClosed[lc.id] || !!q, map = here[lc.id] || {};
@@ -112,7 +115,7 @@ function renderTree(use, cellsBy) {
     Object.keys(map).forEach(function (sd) { nCards = Math.max(nCards, +sd + 1); });
     for (var i = 0; i < nCards; i++) {
       var dv = deviceOfCard(i);
-      if (dv && ds.length && !show[dv.id] && !map[i]) continue;
+      if (isGone(dv) || (dv && ds.length && !show[dv.id] && !map[i])) continue;
       // cards this screen is wired to that aren't added get their own heading
       if (i === P.processors.length) h += '<div class="tn tn-dev missing" role="treeitem" aria-selected="false" title="' + (P.devices.length ? 'Wired on this screen, but no processor has these cards — add a processor or card, or move these ports' :
         'No processor yet — add one in Device (+ Add processor)') + '"><span class="tn-ico">!</span><span class="tn-name">' + (P.devices.length ? 'Not added' : 'No processor') + '</span></div>';
@@ -130,6 +133,7 @@ function renderTree(use, cellsBy) {
           '<span class="tn-go" data-act="devopen" title="Edit ' + esc(deviceLabel(dv)) + ' in Processors (model, output cards, cascade order)">Edit</span></div>';
       }
       if (dv && ui.treeDevClosed[lc.id + ':' + dv.id] && !q) continue;
+      if (cardHasScreen(dv) && cardScreen(i) && lctCards(lc).indexOf(i) < 0) continue;   // an H card on another screen (app-sections.js)
       var real = cardIsReal(i);   // a fixed processor: its ports hang straight under it, no "Sending card 1" row
       var ports = map[i] ? Object.keys(map[i]).length : 0, act = cur && i === (ui.mSender || 0), np = portsOfSender(i), bar = '';
       for (var p = 0; p < np; p++) {
@@ -156,7 +160,8 @@ function renderTree(use, cellsBy) {
       });
     }
   });
-  if (!shown) h += '<p class="hint tn-none">Nothing matches “' + esc(q) + '”.</p>';
+  if (!shown && q) h += '<p class="hint tn-none">Nothing matches “' + esc(q) + '”.</p>';
+  else if (!shown && gone.length) h += '<p class="hint tn-none">No processors connected.</p>';
   box.innerHTML = h;
 
   box.onclick = function (e) {
@@ -197,7 +202,11 @@ function renderTree(use, cellsBy) {
     }
   };
   // right-click a screen: Earlier / Later in its processor's order, + Screen on that processor (app-sections.js lctMenu)
-  box.oncontextmenu = function (e) { var row = e.target.closest('.tn-lct'), lc = row && lctById(row.dataset.id); if (lc) lctMenu(e, lc); };
+  box.oncontextmenu = function (e) {
+    var cr = e.target.closest('.tn-card'), ci = cr ? +cr.dataset.card : -1;
+    if (cr && cardHasScreen(deviceOfCard(ci))) { e.preventDefault(); return openMenu(e.clientX, e.clientY, [{ header: cardName(ci) + ' · which screen' }].concat(cardScreenItems(ci))); }   // app-sections.js
+    var row = e.target.closest('.tn-lct'), lc = row && lctById(row.dataset.id); if (lc) lctMenu(e, lc);
+  };
   // Double-click renames. Bound on the tree (not on the rows): the first click of a
   // double-click re-renders the rows, so the second one lands on a new element.
   box.ondblclick = function (e) {

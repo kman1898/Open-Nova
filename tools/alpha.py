@@ -24,6 +24,10 @@ everything needed to fix it or to add a model Open Nova doesn't know yet (docs/D
   build_report(payload)  Help ▸ Report a problem: one .zip with REPORT.md on top, passwords / tokens / logins scrubbed,
                        private IP addresses optionally anonymised (192.168.0.11 -> device-A, the same in every file), saved
                        to Downloads (or Nova/reports). Session subfolders (first-contact/, vendor/, …) go in as they are.
+                       At most REPORT_MAX_MB (e-mail): the essentials always, then processor snapshots, the newest
+                       recordings, logs, session files, NovaStar apps' logs while they fit; REPORT.md names what was left out.
+                       With "System": this computer (tools/sysdiag.py: OS, CPU, the Python, USB libraries tried, USB / COM
+                       drivers, who holds the search ports, the firewall) and the start window's text (console.txt).
 """
 import collections
 import datetime
@@ -37,6 +41,7 @@ import sys
 import threading
 import time
 import zipfile
+import zlib
 
 import wirelog
 
@@ -46,7 +51,9 @@ VERSION_FILE = os.environ.get('OPENNOVA_VERSION_FILE') or os.path.join(NOVA, 'ap
 SETTINGS_FILE = os.environ.get('OPENNOVA_ALPHA_SETTINGS') or os.path.join(NOVA, 'alpha-settings.json')
 LOG_DIR = os.environ.get('OPENNOVA_HELPER_LOGS') or os.path.join(HERE, 'novalink_logs')
 DEFAULTS = {'name': 'Open Nova', 'version': '0.0.0', 'build': 'dev', 'channel': 'dev', 'readOnly': True, 'unlock': None,
-            'reportContact': '', 'keepDays': 14, 'keepMB': 2048}
+            'reportContact': '', 'repoPublic': False, 'keepDays': 14, 'keepMB': 2048}
+REPORT_MAX_MB = 15        # a report's .zip at most: e-mail limits are 20-25 MB, and the attachment grows by a third on the way
+CONSOLE_LOG = os.environ.get('OPENNOVA_CONSOLE_LOG') or os.path.join(NOVA, 'app', 'data', 'logs', 'console.txt')   # opennova.py's copy of its window
 READ_ONLY_TEXT = 'Writing to processors is off in this alpha — Settings ▸ Alpha ▸ Allow sending'
 SESSION_DIRS = ('first-contact', 'vendor', 'bodies')   # subfolders of a day's recording folder that a report carries whole (bodies/: big http bodies, wirelog)
 STARTED = time.time()
@@ -109,6 +116,7 @@ def state():
     c = s.get('consent') or None
     return {'ok': True, 'version': v['version'], 'build': v['build'], 'channel': v['channel'], 'alpha': v['alpha'],
             'line': version_line(), 'readOnly': read_only(), 'unlock': v.get('unlock') or None, 'reportContact': v.get('reportContact') or '',
+            'repoPublic': bool(v.get('repoPublic')),   # the GitHub issue link only once the repository is public (a 404 before)
             'keepDays': v['keepDays'], 'keepMB': v['keepMB'], 'consented': bool(c), 'tester': c,
             'policy': {'read': sorted(READ), 'readPrefix': list(READ_PREFIX), 'readWhen': {p: [k, list(ok)] for p, (k, ok) in READ_WHEN.items()},
                        'readOps': list(READ_OPS)}}
@@ -446,7 +454,9 @@ def actions(records, limit=60):
         elif k == 'op' and r.get('phase') == 'end':
             if r.get('ok'): x['ok'] += 1
             else: x['failed'].append(str(r.get('error') or 'failed')[:120])
-        elif k == 'tg': x['tx' if r.get('dir') == 'tx' else 'rx'] += 1; x['err'] += 1 if (r.get('d') or {}).get('status') or (r.get('d') or {}).get('badsum') else 0
+        elif k == 'tg':   # a "no receiving card here" reply (nocard: the end of a chain walk) isn't an error
+            x['tx' if r.get('dir') == 'tx' else 'rx'] += 1; dd = r.get('d') or {}
+            x['err'] += 1 if (dd.get('status') and not r.get('nocard')) or dd.get('badsum') else 0
         elif k in ('echo', 'junk', 'usb', 'http', 'udp'):
             x[k] += 1
             if k == 'http' and (r.get('error') or (r.get('status') or 200) >= 400): x['err'] += 1
@@ -524,6 +534,11 @@ def report_md(p, h):
          'Made %s on the helper\'s computer' % h['when']]
     t = h.get('tester') or {}
     if t.get('name') or t.get('contact'): L.append('Tester: %s %s' % (t.get('name') or '', '<%s>' % t['contact'] if t.get('contact') else ''))
+    if contact_ok(v.get('reportContact')): L.append('Send this report to: %s' % v['reportContact'])
+    if h.get('helperDown'):
+        L += ['', '> **The hardware helper was not running** (%s). The app server made this report: the processor read-backs, '
+              'the helper\'s errors and its list of writes are missing. The newest recordings on this computer and the start '
+              'window\'s text are included.' % _cell(h['helperDown'])]
     L += prompt_md(p.get('prompt'), h.get('prompt') or [])
     L += ['', '## What happened', '', (p.get('text') or '(nothing written)').strip(), '']
     unknown = [x for x in found if x.get('known') is False] + [d for d in devs if d.get('known') is False]
@@ -562,6 +577,12 @@ def report_md(p, h):
                      ' '.join(_hex(s) for s in k.get('senders') or []) or _hex(k.get('modelId')) if k else '—', _cell(d.get('firmware')),
                      _cell('; '.join(d.get('cards') or [])), _cell(d.get('detected'))))
     else: L.append('No processors in the project.')
+    mon = S.get('monitor') or []
+    if mon:   # Monitor's errors kept until Clear, as the tester saw them (still going first)
+        L += ['', '## Monitor (errors kept until Clear)', '', '| Since | Ended | Level | Processor | Where | Event | Times |', '|---|---|---|---|---|---|---|']
+        for e in mon[:60]:
+            L.append('| %s | %s | %s | %s | %s | %s | %s |' % (_cell(str(e.get('t') or '')[11:19]), _cell(str(e.get('ended'))[11:19]) if e.get('ended') else 'going on',
+                     _cell(e.get('level')), _cell(e.get('dev')), _cell(e.get('where')), _cell(e.get('text')), _cell(e.get('n') or 1)))
     W = h['writes']
     L += ['', '## Writes to processors this session', '']
     L.append('Writing was %s.%s' % ('unlocked in the browser that made this report' if app.get('unlocked') else 'locked (read-only)' if h['readOnly'] else 'allowed',
@@ -578,9 +599,10 @@ def report_md(p, h):
               c.get('tg', 0), c.get('err', 0), c.get('echo', 0), c.get('junk', 0), c.get('http', 0), c.get('udp', 0)), '']
     links = st.get('links') or {}
     if links:
-        L += ['| Link | Sent | Received | Errors | Reply ms (avg / max) | Last error |', '|---|---|---|---|---|---|']
+        # "No card" = receiving-card reads answered "no card here" (ack 1): the end of every chain walk, not an error
+        L += ['| Link | Sent | Received | Errors | No card (end of chain) | Reply ms (avg / max) | Last error |', '|---|---|---|---|---|---|---|']
         for k, x in sorted(links.items()):
-            L.append('| %s | %s | %s | %s | %s / %s | %s |' % (_cell(k), x['tx'], x['rx'], x['err'], _cell(x.get('rtt_avg')), _cell(x.get('rtt_max')), _cell(x.get('last_err'))))
+            L.append('| %s | %s | %s | %s | %s | %s / %s | %s |' % (_cell(k), x['tx'], x['rx'], x['err'], x.get('nocard', 0), _cell(x.get('rtt_avg')), _cell(x.get('rtt_max')), _cell(x.get('last_err'))))
         L.append('')
     be, fc = S.get('errors') or [], S.get('failedCalls') or []
     if be:
@@ -609,7 +631,12 @@ def report_md(p, h):
     L += ['## Connection timeline (last 200)', '', '```'] + (h['timeline'] or ['(nothing yet)']) + ['```', '']
     L += h.get('vendor') or []     # NovaStar apps on this computer (tools/vendortap.py report_md)
     L += (h.get('network') or []) + ([''] if h.get('network') else [])   # Settings > Network: interfaces, what is searched (netif.report_md)
+    L += (h.get('machine') or []) + ([''] if h.get('machine') else [])   # this computer: CPU, Python, USB libraries, drivers, ports, firewall (sysdiag)
     L += ['## Files in this report', ''] + ['- `%s`%s' % (n, ' (binary, not scrubbed / anonymised)' if b else '') for n, b in h['files']] + ['']
+    if h.get('left'):
+        L += ['## Left out (the report is kept under %d MB for e-mail)' % h.get('maxMB', REPORT_MAX_MB), '',
+              'Still on the computer that made the report; ask the tester for them if they matter.', '']
+        L += ['- `%s` (%s)' % (n, _mb(b)) for n, b in h['left']] + ['']
     return '\n'.join(L)
 
 
@@ -624,6 +651,52 @@ def _session_records(sess):
     return out
 
 
+def _mtime(path):
+    try: return os.path.getmtime(path)
+    except OSError: return 0.0
+
+
+def _mb(n):
+    return '%.1f MB' % (n / 1048576.0) if n >= 1048576 else '%d KB' % max(1, n // 1024)
+
+
+def _fit(files, extra, cap):
+    """The size cap: `files` (the essentials: REPORT.md, the app's side, the helper's) always go in; each of `extra`
+    (priority order: processor snapshots, recordings newest first, logs, session files, NovaStar apps' logs) is appended
+    to files while the compressed total stays under cap bytes. -> [(name, uncompressed bytes)] left out."""
+    def z(b):
+        b = b if isinstance(b, bytes) else b.encode('utf-8', 'replace')
+        return len(zlib.compress(b, 6)) + 120 + len(b) // 4096   # + the zip entry's headers
+    total, left = sum(z(b) for _, b in files) + 64 * 1024, []   # 64 KB: REPORT.md and the helper files added after
+    for n, b in extra:
+        k = z(b)
+        if total + k > cap: left.append((n, len(b))); continue
+        total += k; files.append((n, b))
+    return left
+
+
+def contact_ok(c):
+    """A real report address (not empty, not the "(contact address to be filled in)" placeholder of a build without --contact)."""
+    c = str(c or '').strip()
+    return bool(c) and not c.startswith('(') and ('@' in c or '://' in c)
+
+
+def _recent_recordings(n=2, max_each=8 * 1024 * 1024):
+    """The newest n recordings on this computer, whoever made them (the helper isn't running: its run's files are among
+    them), as wirelog.session() gives them."""
+    import gzip
+    out = []
+    for f in sorted(wirelog.files(), key=lambda f: -f['mtime'])[:n]:
+        try:
+            p = wirelog.path_of(f['name'])
+            with (gzip.open(p, 'rb') if p.endswith('.gz') else open(p, 'rb')) as fh: b = fh.read()
+        except (OSError, KeyError): continue
+        cut = len(b) > max_each
+        if cut: b = b[-max_each:]; b = b[b.find(b'\n') + 1:]
+        out.append({'name': f['name'], 'text': b.decode('utf-8', 'replace'), 'n': f['size'], 'cut': cut})
+    return out
+
+
 def _safe(t, n=40):
     return re.sub(r'[^\w.-]+', '_', str(t or '')).strip('_')[:n] or 'x'
 
@@ -634,26 +707,38 @@ def build_report(p, out_dir=None, helper_logs=8):
     -> {ok, name, path, dir, bytes, files, unknown, os, version, build}"""
     inc = dict({'project': True, 'recordings': True, 'logs': True, 'processors': True, 'system': True}, **(p.get('include') or {}))
     v, now = info(), datetime.datetime.now()
+    if inc['recordings'] and 'netcap' in sys.modules:   # a vendor app being recorded now: what is recorded so far goes in too
+        try: sys.modules['netcap'].flush()
+        except Exception as e:  # noqa: BLE001 - the report is made anyway
+            wirelog.mark('Network recording not saved before the report: %s: %s' % (type(e).__name__, e), source='vendor')
     files = [('app/' + str(f.get('name', 'x')).lstrip('/'), str(f.get('text', ''))) for f in p.get('files') or [] if f and f.get('name')]
+    extra = {'snap': [], 'rec': [], 'logs': [], 'session': [], 'vendor': []}   # in the report while they fit (REPORT_MAX_MB), in this order
     st = wirelog.status()
-    sess = wirelog.session() if inc['recordings'] else []
+    down = str(p.get('helperDown') or '')   # made by the app server (app/serve.py helper_down): the helper isn't running
+    sess = (_recent_recordings() if down else wirelog.session()) if inc['recordings'] else []
     if inc['recordings']:
-        for r in sess:
-            files.append(('recordings/' + r['name'].replace('.gz', ''), r['text']))
-            if r['cut']: files.append(('recordings/' + r['name'].replace('.gz', '') + '.CUT.txt', 'Only the end of this recording is here (the whole file is %d bytes).' % r['n']))
+        for r in sess:            # newest first
+            extra['rec'].append(('recordings/' + r['name'].replace('.gz', ''), r['text']))
+            if r['cut']: extra['rec'].append(('recordings/' + r['name'].replace('.gz', '') + '.CUT.txt', 'Only the end of this recording is here (the whole file is %d bytes).' % r['n']))
         files.append(('recordings/recorder-status.json', json.dumps(st, indent=1, default=str)))
+    if inc['logs'] or inc['system']:   # the start window's text (opennova.py): start-up errors are printed there only
+        for n in (CONSOLE_LOG, os.path.join(os.path.dirname(CONSOLE_LOG), 'console-previous.txt')):
+            try:
+                with open(n, 'rb') as f: b = f.read()
+                files.append(('logs/' + os.path.basename(n), b[-200000:].decode('utf-8', 'replace')))
+            except OSError: pass
     if inc['logs'] and os.path.isdir(LOG_DIR):
         for n in sorted((n for n in os.listdir(LOG_DIR) if n.endswith('.txt')), reverse=True)[:helper_logs]:
             try:
                 with open(os.path.join(LOG_DIR, n), 'rb') as f: b = f.read()
-                files.append(('logs/helper/' + n, b[-400000:].decode('utf-8', 'replace')))
+                extra['logs'].append(('logs/helper/' + n, b[-400000:].decode('utf-8', 'replace')))
             except OSError: pass
     vend = []                     # NovaStar's own apps on this computer (tools/vendortap.py); their logs only when ticked (include.vendorLogs)
     if inc['system'] or inc.get('vendorLogs'):
         try:
             import vendortap
             if inc['system']: vend = vendortap.report_md()
-            files += vendortap.report_files(bool(inc.get('vendorLogs')))
+            extra['vendor'] += vendortap.report_files(bool(inc.get('vendorLogs')))
         except Exception as e:  # noqa: BLE001 - the report is made anyway
             files.append(('vendor/ERROR.txt', 'NovaStar apps / logs not collected: %s: %s' % (type(e).__name__, e)))
     net = []                      # Settings > Network: this computer's interfaces, what is searched, the app's bind, changes
@@ -663,26 +748,39 @@ def build_report(p, out_dir=None, helper_logs=8):
             net = netif.report_md(); files.append(('helper/network.json', json.dumps(netif.report(), indent=1, default=str)))
         except Exception as e:  # noqa: BLE001 - the report is made anyway
             files.append(('helper/network-ERROR.txt', 'Networks not collected: %s: %s' % (type(e).__name__, e)))
+    machine = []                  # this computer: OS, CPU, the Python, USB libraries tried, USB / COM drivers, search ports, firewall
+    if inc['system']:
+        try:
+            import sysdiag
+            sd = sysdiag.report(); machine = sysdiag.report_md(sd)
+            files.append(('helper/system.json', json.dumps(sd, indent=1, default=str)))
+        except Exception as e:  # noqa: BLE001 - the report is made anyway
+            files.append(('helper/system-ERROR.txt', 'This computer not described: %s: %s' % (type(e).__name__, e)))
     fcs = []
-    for name, path in session_files():
+    for name, path in sorted(session_files(), key=lambda x: -_mtime(x[1])):   # newest first
         sub = name.split('/')[2]
         if (sub == 'first-contact' and not inc['processors']) or (sub != 'first-contact' and not inc['recordings']): continue
         try:
             if os.path.getsize(path) > 16 * 1024 * 1024: files.append((name + '.TOO-BIG.txt', 'Left out: %d bytes. It is in %s' % (os.path.getsize(path), path))); continue
             with open(path, 'rb') as f: b = f.read()
         except OSError: continue
-        try: files.append((name, b.decode('utf-8')))
-        except UnicodeDecodeError: files.append((name, b))             # binary (a capture): as it is
+        try: b = b.decode('utf-8')
+        except UnicodeDecodeError: pass                                 # binary (a capture): as it is
+        extra['snap' if sub == 'first-contact' else 'session'].append((name, b))
         if sub == 'first-contact': fcs.append(name)
+    left = _fit(files, [x for k in ('snap', 'rec', 'logs', 'session', 'vendor') for x in extra[k]], int(p.get('maxMB') or REPORT_MAX_MB) * 1024 * 1024)
+    fcs = [n for n in fcs if n not in {x[0] for x in left}]
     he = [dict(e) for e in wirelog.helper_errors()][-50:]
     recs = _session_records(sess) or wirelog.frames(0, wirelog.RING)
     tester = (settings().get('consent') or {}) if inc['system'] else {}
     h = {'info': v, 'line': version_line(), 'readOnly': read_only(), 'when': now.strftime('%Y-%m-%d %H:%M'), 'tester': tester,
          'platform': platform.platform() if inc['system'] else '(left out)', 'python': sys.version.split()[0] if inc['system'] else '(left out)',
-         'recorder': '%s, file %s' % ('on' if st.get('enabled') else 'OFF', os.path.basename(st.get('file') or '') or '—'),
+         'recorder': 'the helper was not running' if down else '%s, file %s' % ('on' if st.get('enabled') else 'OFF', os.path.basename(st.get('file') or '') or '—'),
+         'helperDown': down,
          'status': st, 'helperErrors': he, 'writes': writes(), 'timeline': timeline(wirelog.frames(0, wirelog.RING)), 'firstContacts': fcs,
          'actions': actions(recs), 'prompt': prompt_frames(p['prompt'], recs) if isinstance(p.get('prompt'), dict) else [],
-         'files': [(n, isinstance(b, bytes)) for n, b in files], 'vendor': vend, 'network': net}
+         'files': [(n, isinstance(b, bytes)) for n, b in files], 'vendor': vend, 'network': net, 'machine': machine, 'left': left,
+         'maxMB': int(p.get('maxMB') or REPORT_MAX_MB)}
     if not inc['system']: (p.get('summary') or {}).get('app', {}).update(browser='(left out)', screen='(left out)')
     files.insert(0, ('REPORT.md', report_md(p, h)))
     files.append(('helper/version.json', json.dumps(dict(v, line=version_line(), python=h['python'], platform=h['platform']), indent=1)))
@@ -704,7 +802,8 @@ def build_report(p, out_dir=None, helper_logs=8):
     wirelog.mark('Problem report saved: %s (%d files)' % (os.path.basename(path), len(texts)), source='alpha')
     return {'ok': True, 'name': os.path.basename(path), 'path': path, 'dir': d, 'bytes': os.path.getsize(path), 'files': len(texts),
             'os': '%s %s' % (platform.system(), platform.release()), 'version': v['version'], 'build': v['build'],   # for the app's issue text
-            'unknown': len([x for x in S.get('found') or [] if x.get('known') is False]) + len([f for f in fcs if '_error-' not in f])}
+            'unknown': len([x for x in S.get('found') or [] if x.get('known') is False]) + len([f for f in fcs if '_error-' not in f]),
+            'leftOut': len(left), 'helperDown': down or None}
 
 
 def report_path(name):

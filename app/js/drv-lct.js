@@ -17,7 +17,7 @@ function lctHosts() { try { return JSON.parse(localStorage.getItem(LCT_HOSTS_KEY
 var DRV_LCT = {
   liveMs: 4000,
   caps: function () { return { link: true, detect: true, live: true, send: true, monitor: true, save: true, applyMode: 'send', display: true, patterns: true, mapping: true,
-    color: { brightness: true, colorTemp: true, gamma: true }, lowLatency: true, llCheck: true, verify: { backup: true, primary: false }, backupSend: true, rcvFile: { rcfgx: true, ncp: true }, readLayout: true,
+    color: { brightness: true, colorTemp: true, gamma: true, gamut: true, gamuts: ['original', 'rec709', 'ntsc'], lut: true }, lowLatency: true, llCheck: true, verify: { backup: true, primary: false }, backupSend: true, rcvFile: { rcfgx: true, ncp: true }, readLayout: true,
     service: { restart: false, factory: ['all'], panels: true } }; },   // NovaLCT has no restart command for the processor itself
   // One entry per processor: each link is asked which sending cards it has (ModelIDs), then the links of one IP are one
   // processor (an H lists one link per output slot, H_SUB_CARD 5201…, empty slots don't answer): its port becomes a spec
@@ -34,12 +34,20 @@ var DRV_LCT = {
     var usb = DRV.post('lct', '/api/hw/serial-ports', { probe: true, timeout: 1, usbOnly: !!o.background }).then(function (r) {
       var nu = (r.usb || []).filter(function (p) { return p.answered; }).map(function (p) { p.nova = true; return p; });
       var bad = (r.usb || []).filter(function (p) { return !p.answered && p.error && !p.busy; })[0];
-      if (!o.background && typeof toast === 'function' && (bad || (r.usbError && r.novaUsb))) toast(bad ? 'NovaStar ' + bad.label + ': ' + bad.error : r.usbError);
+      // a COM port another program holds (NovaLCT's MarsServerProvider) or, on Linux, one the user may not open (dialout)
+      var held = (r.ports || []).filter(function (p) { return !p.answered && p.cause === 'inuse'; }).map(function (p) { return p.label || p.name; });
+      var perm = (r.ports || []).filter(function (p) { return !p.answered && p.cause === 'perm'; }).map(function (p) { return p.label || p.name; });
+      var say = [];
+      if (bad || (r.usbError && r.novaUsb)) say.push(bad ? 'NovaStar ' + bad.label + ': ' + bad.error : r.usbError);
+      if (held.length) say.push(held.join(', ') + (held.length > 1 ? ' are' : ' is') + ' in use by another program — close NovaLCT (or VMP), then Find again');
+      if (perm.length) say.push(perm.join(', ') + ': no permission — run "sudo usermod -aG dialout $USER", log out and in, then Find again');
+      if (!o.background && typeof toast === 'function' && say.length) toast(say.join(' · '));
       return (r.ports || []).filter(function (p) { return p.answered; }).concat(nu);
     }, function () { return []; });
     var known = {}; (P.devices || []).forEach(function (d) { if (o.background && d.hw && d.hw.kind === 'lct') known[d.hw.host] = d.hw; });
     return Promise.all([DRV.post('lct', '/api/hw/discover', { timeout: o.timeout || 2, probe: lctHosts() }), usb]).then(function (rr) {
-      var r = rr[0], links = []; (r.devices || []).forEach(function (x) { x.links.forEach(function (port) {
+      var r = rr[0], links = []; DRV.noteWhy(r.search);   // found nothing: what the helper's searches met (app-online.js olWhy)
+      (r.devices || []).forEach(function (x) { x.links.forEach(function (port) {
         links.push({ kind: 'lct', ip: x.ip, port: port, iface: x.iface || '', addr: x.addr, conflict: x.conflict });   // the network it answered on (Settings ▸ Network)
       }); });
       rr[1].forEach(function (p) { links.push({ kind: 'lct', ip: p.host, port: 0, usb: p.label, nova: p.nova, modelId: p.modelId }); });
@@ -90,12 +98,14 @@ var DRV_LCT = {
     return DRV_LCT.runRx(d, [{ op: 'note', text: 'Factory reset (NovaLCT Restore Factory)' }, w(255, 0x01000002, '00', 7),
       w(0, 0x05065000, '00000000'), w(255, 0x05000000, '00000000'), w(0, 0x05066000, '00000000')], 'Factory reset');
   },
-  // Restart the receiving cards: the two restarts NovaLCT sends at the end of an NCP send (CAPTURE_NCP_SEND.md §2 [R]), to
-  // every card on every port: MCU 0x01000080 <- 00, wait 11 s, FPGA 0x0100000B <- 00, wait 12 s (Config.xml WaitTime).
-  restartPanels: function (d) {
-    var all = [{ dst: 255, port: 255, card: 65535 }];
-    return DRV_LCT.runRx(d, [{ op: 'note', text: 'Restart receiving cards' }].concat(DRV_LCT.rxOps(all, 0x01000080, '00'), [{ op: 'sleep', ms: 11000 }],
-      DRV_LCT.rxOps(all, 0x0100000B, '00'), [{ op: 'sleep', ms: 12000 }]), 'Receiving cards restarted');
+  // Restart the receiving cards: the two restarts NovaLCT sends at the end of an NCP send (CAPTURE_NCP_SEND.md §2 [R]):
+  // MCU 0x01000080 <- 00, wait 11 s, FPGA 0x0100000B <- 00, wait 12 s (Config.xml WaitTime). The same two are in the
+  // firmware recipes of .rcfgx-era cards (A5s, CONFIG_FILE_FORMATS §5.5), so they restart either kind of card. targets
+  // (Maintain: [{card, port, index}], with their backup paths) = those cabinets only; none = every card on every port.
+  restartPanels: function (d, targets) {
+    var A = DRV_LCT.rxAddrs(d, targets && targets.length ? targets : null), n = targets && targets.length;
+    return DRV_LCT.runRx(d, [{ op: 'note', text: 'Restart receiving cards' + (n ? ' (' + n + ' cabinet' + (n === 1 ? '' : 's') + ')' : '') }].concat(DRV_LCT.rxOps(A, 0x01000080, '00'), [{ op: 'sleep', ms: 11000 }],
+      DRV_LCT.rxOps(A, 0x0100000B, '00'), [{ op: 'sleep', ms: 12000 }]), n ? n + ' cabinet' + (n === 1 ? '' : 's') + ' restarted' : 'Receiving cards restarted');
   },
   // .rcfgx = its register script per target; NCP = parameters only, as LCT's Smart send (CAPTURE_NCP_SEND §3-§5.1). An NCP
   // takes ~35 s per target, so it goes one helper call per target (each well inside the helper's 15-minute limit).
@@ -213,7 +223,16 @@ var DRV_LCT = {
   // Screen settings. Brightness as LCT's Brightness window (docs\COLOR_BRIGHTNESS.md §2.1 [R]): per (sender, port) of the
   // screen, all cards, mirrored to the backup port: rx 0x02000001 = v (0-255) then 0x020001E3 = F0 F0 F0 00. Colour
   // temperature = NovaLCT's frames byte for byte (tools\test_lct_color.py); gamma = the helper's closed form (16-bit cards).
-  // Gamut and input bit depth are not offered (COLOR_BRIGHTNESS.md §5.2: the matrix needs the panel's measured primaries).
+  // Gamut = the Brightness window's Color Gamut buttons (CAPTURE_LCT_DIALOGS.md [R]): sending cards 0x0200003F = 3C, then per
+  // (sender, port), all cards, mirrored to the backup port: 0x02000130 = [02, 3x3 matrix], 0x12009000 = the 256 B record. PAL and
+  // NTSC below are NovaLCT's own bytes (tools\test_lct_color.py), made from its default LED primaries, as its buttons are.
+  // Off: 0x02000130 byte 0 = FF; NovaLCT rewrites the old matrix and record unchanged with it, so only that byte is written.
+  // A custom gamut (value 'c:<id>') is built from the panel's own colours, as its Configure Color Space (app-gamut.js).
+  // Input bit depth isn't offered.
+  GAMUT: {
+    rec709: { m: '026C330703A90301074B', rec: '4763096D00FFFFFFFFFFFFFFFFFFFFFF5E1AE40C6C07781E14059001240A590928235046B80B30750019E40CB80B7017DC055802370CDA0C0310DB356F054E4B6C003300070000000300A90003000000010007004B0000000000000000006C00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF' },
+    ntsc: { m: '02DB0A0400E113000570', rec: '4763096D00FFFFFFFFFFFFFFFFFFFFFF5E1AE40C6C07781E14059001240A590928235046B80B30752C1AE40C3408BC1B78052003370CDA0C641E8B3FFC0AEC68DB000A00040000000000E100130000000000050070000000000000000000DB00FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF' }
+  },
   // NovaLCT's colour temperature table (Bin\CommonData\ColorTRGBMapping.bin, deg_2 rows): 1700-9900 K in 100 K steps ->
   // per-colour brightness [R, G, B]; 6500 K = 255 / 255 / 255 (COLOR_BRIGHTNESS.md §4, 3200 K = FE B3 42 on the wire [R]).
   CT: [[254,90,1],[254,98,3],[254,106,5],[254,113,8],[254,120,12],[254,127,16],[254,133,20],[254,139,24],[254,145,28],[254,151,30],[254,156,38],[254,161,44],[254,166,49],[254,170,55],[254,175,60],[254,179,66],[254,183,73],[254,186,79],[254,190,85],[254,193,91],[254,197,97],[254,199,104],[254,202,110],[254,205,116],[254,208,122],[254,210,129],[254,213,135],[254,215,141],[254,217,147],[254,222,155],[254,228,164],[254,231,171],[254,229,174],[254,227,177],[254,228,183],[254,230,189],[254,231,195],[254,233,200],[254,234,206],[254,235,212],[254,236,217],[254,237,220],[254,238,223],[254,239,229],[254,241,236],[254,242,242],[254,243,248],[254,244,252],[255,255,255],[247,238,254],[243,234,254],[239,231,254],[235,228,254],[231,225,254],[227,222,254],[224,220,254],[221,217,254],[218,215,254],[215,212,254],[212,210,254],[209,208,254],[207,206,254],[204,203,254],[202,201,254],[200,200,254],[198,198,254],[195,196,254],[194,195,254],[192,193,254],[190,191,254],[188,190,254],[186,188,254],[184,186,254],[183,185,254],[181,183,254],[179,182,254],[178,181,254],[177,180,254],[175,178,254],[174,177,254],[173,176,254],[171,175,254],[170,174,254]],
@@ -236,6 +255,14 @@ var DRV_LCT = {
         return drvResult(r.ok, { error: r.error, writes: r.frames, warnings: r.skipped || [], text: r.ok ? 'Gamma ' + value + ' on ' + r.ports + ' port' + (r.ports === 1 ? '' : 's') + sk : 'Gamma failed: ' + r.error });
       });
     }
+    if (action === 'gamut') {
+      var ce = gmEntry(value), g = ce ? gmBuild(ce) : DRV_LCT.GAMUT[value];   // a custom gamut: app-gamut.js
+      if (!g && value !== 'original') return DRV.unsupported('That colour space on a NovaLCT processor');
+      if (g && g.error) return drvResult(false, { error: g.error });
+      var AG = DRV_LCT.rxAddrs(d, ports.map(function (p) { return { card: p.card, port: p.port, index: 65535 }; })), og = [{ op: 'w', dev: 0, dst: 255, port: 0, card: 0, addr: 0x0200003F, hex: '3C' }];
+      AG.forEach(function (a) { og.push.apply(og, g ? DRV_LCT.rxOps([a], 0x02000130, g.m).concat(DRV_LCT.rxOps([a], 0x12009000, g.rec)) : DRV_LCT.rxOps([a], 0x02000130, 'FF')); });
+      return DRV_LCT.runRx(d, og, 'Gamut ' + value);
+    }
     if (action !== 'brightness') return DRV.unsupported('That setting');
     var v = Math.max(0, Math.min(255, Math.round(value * 255 / 100))), hx = ('0' + v.toString(16).toUpperCase()).slice(-2);
     var A = DRV_LCT.rxAddrs(d, ports.map(function (p) { return { card: p.card, port: p.port, index: 65535 }; }));
@@ -243,13 +270,27 @@ var DRV_LCT = {
     A.forEach(function (a) { ops.push.apply(ops, DRV_LCT.rxOps([a], 0x02000001, hx).concat(DRV_LCT.rxOps([a], 0x020001E3, 'F0F0F000'))); });
     return DRV_LCT.runRx(d, ops, 'Brightness ' + value + ' %');
   },
+  // A LUT as fitted by app-lutfit.js: the Custom gamma tables (each colour its own; the helper checks every port as for gamma),
+  // then the gamut: its matrix and record as Screen Settings' gamut, or off when curves were enough. No save.
+  lutApply: function (d, ports, fit) {
+    var prim = ports.map(function (p) { return { dst: p.card, port: p.port }; }), all = prim.slice(), seen = {};
+    prim.forEach(function (t) { seen[t.dst + ':' + t.port] = 1; });
+    hwPairs(d).forEach(function (q) { prim.forEach(function (t) { if (q.ps === t.dst && q.pp === t.port && !seen[q.bs + ':' + q.bp]) { seen[q.bs + ':' + q.bp] = 1; all.push({ dst: q.bs, port: q.bp, backupOf: [t.dst, t.port] }); } }); });
+    return DRV.post('lct', '/api/hw/gamma', { host: d.hw.host, port: d.hw.port, targets: all, tables: lfTableHex(fit.tables) }).then(function (r) {
+      if (!r.ok) return drvResult(false, { error: r.error });
+      var A = DRV_LCT.rxAddrs(d, ports.map(function (p) { return { card: p.card, port: p.port, index: 65535 }; })), ops = [{ op: 'w', dev: 0, dst: 255, port: 0, card: 0, addr: 0x0200003F, hex: '3C' }];
+      var m = fit.matrix && '02' + lfHex(fit.matrix), rec = fit.matrix && lfRecord(fit.matrix);
+      A.forEach(function (a) { ops.push.apply(ops, m ? DRV_LCT.rxOps([a], 0x02000130, m).concat(DRV_LCT.rxOps([a], 0x12009000, rec)) : DRV_LCT.rxOps([a], 0x02000130, 'FF')); });
+      return DRV_LCT.runRx(d, ops, 'LUT');
+    });
+  },
   // What the cards hold now (read-only, /api/hw/color-read: card 0 of each port of the screen, through the backup port when
   // the primary doesn't answer), read as NovaLCT's windows read it (docs\COLOR_BRIGHTNESS.md §1): brightness = 0x02000001
   // as % (LCT's label v·100/255); gamma = 0x02000000 & 0x3F / 10 (254 / 255 = a custom table; with a 10 / 12-bit source,
   // sender 0x03100109 = 5A / 78, LCT shows the sending card's gamma, not read here); colour temperature = the first row of
-  // the 83-row table equal to R / G / B (as LCT's colour window shows it; none = adjusted by hand); gamut (shown, not settable yet):
-  // 0x02000130 FF = colour space off (Original), 02 + the 0x12009000 record's target = NovaLCT's PAL (Rec.709 primaries) or
-  // NTSC / custom. -> {ok, values {k: v}, notes {k: why}, mixed [k]} (mixed = the ports hold different values).
+  // the 83-row table equal to R / G / B (as LCT's colour window shows it; none = adjusted by hand); gamut:
+  // 0x02000130 FF = colour space off (Original), 02 + the 0x12009000 record's target = NovaLCT's PAL (Rec.709 primaries), NTSC
+  // or custom. -> {ok, values {k: v}, notes {k: why}, mixed [k]} (mixed = the ports hold different values).
   readColor: function (d, ports) {
     var prim = ports.map(function (p) { return { dst: p.card, port: p.port }; }), all = prim.slice(), seen = {};
     prim.forEach(function (t) { seen[t.dst + ':' + t.port] = 1; });
@@ -263,7 +304,7 @@ var DRV_LCT = {
         values[k] = per[0].v[k]; if (per[0].n[k]) notes[k] = per[0].n[k];
         if (per.some(function (x) { return x.v[k] !== per[0].v[k]; })) mixed.push(k);
       });
-      return drvResult(true, { values: values, notes: notes, mixed: mixed, ports: per.length });
+      return drvResult(true, { values: values, notes: notes, mixed: mixed, ports: per.length, record: (r.ports.filter(function (e) { return e.record; })[0] || {}).record });
     });
   },
   // One port's read (hex of 0x02000000.., 0x02000130, the 0x12009000 record, sender 0x03100109) -> {v: values, n: notes}.
@@ -282,8 +323,11 @@ var DRV_LCT = {
     if (g === 0xFF) v.gamut = 'original';
     else if (g === 0x02 && e.record) {   // target xy at [40..51] as u16 LE ·10000; NovaLCT's PAL = Rec.709 primaries
       var u = function (o) { return parseInt(e.record.substr(o * 2 + 2, 2) + e.record.substr(o * 2, 2), 16); };
-      var pal = [6400, 3300, 3000, 6000, 1500, 600], hit = pal.every(function (x, j) { return u(40 + 2 * j) === x; });
-      if (hit) v.gamut = 'rec709'; else n.gamut = 'a NovaLCT colour space other than PAL / Rec.709';
+      var is = function (t) { return t.every(function (x, j) { return u(40 + 2 * j) === x; }); };
+      if (is([6400, 3300, 3000, 6000, 1500, 600])) v.gamut = 'rec709'; else if (is([6700, 3300, 2100, 7100, 1400, 800])) v.gamut = 'ntsc'; else {
+        var ce = typeof P !== 'undefined' ? (P.gamuts || []).filter(function (x) { var c = gmBuild(x); return c.rec && c.rec.slice(128, 192).toLowerCase() === e.record.slice(128, 192).toLowerCase(); })[0] : null;
+        if (ce) v.gamut = 'c:' + ce.id; else n.gamut = 'a custom NovaLCT colour space';
+      }
     } else n.gamut = g === null ? 'not read' : 'colour space register ' + ('0' + g.toString(16).toUpperCase()).slice(-2);
     return { v: v, n: n };
   },
@@ -351,9 +395,13 @@ var DRV_LCT = {
         (r.senders || []).some(olHCard) ? ['Sending cards', r.senders.map(function (id, k) { return (k + 1) + ': ' + hwSenderName(id); }).join('; ')]   // H: its output cards
           : ['Model', (r.senders || []).map(hwSenderName).join(' + ') || 'didn’t answer']];   // a fixed processor (several: cascaded on this link)
       var fr = fs.map(function (f) { return f && !f.error ? f.freeRoute : null; });
-      rows.push(['Free topology (FreeRoute)', fr.length ? fr.map(function (v, k) { return (fr.length > 1 ? (k + 1) + ': ' : '') + (v === null ? 'couldn’t read' : v ? 'reported' : 'not reported'); }).join('; ') +
+      // a card that refuses the read (status 4, the H 16-port card) hasn't got it: "not available", not "couldn't read"
+      var na = function (k) { return fs[k] && fs[k].unsupported ? 'not available on this card' : 'couldn’t read'; };
+      rows.push(['Free topology (FreeRoute)', fr.length ? fr.map(function (v, k) { return (fr.length > 1 ? (k + 1) + ': ' : '') + (v === null ? na(k) : v ? 'reported' : 'not reported'); }).join('; ') +
         ' · Open Nova counts ' + (procFreeTopology(d) ? 'cabinet areas' : 'rectangles') + ' (Processor properties ▸ Free topology)' : 'not read']);
-      fs.forEach(function (f, k) { rows.push(['Function table ' + (fs.length > 1 ? 'card ' + (k + 1) : ''), f && f.hex ? f.hex.toUpperCase().match(/../g).join(' ') : (f && f.error) || '—']); });
+      fs.forEach(function (f, k) {
+        rows.push(['Function table ' + (fs.length > 1 ? 'card ' + (k + 1) : ''), f && f.hex ? f.hex.toUpperCase().match(/../g).join(' ') : f && f.byte4 ? 'byte 4 only: ' + f.byte4.toUpperCase() : f && f.unsupported ? 'not available on this card' : (f && f.error) || '—']);
+      });
       if (fr.some(function (v) { return v !== null; })) d.hw.freeRoute = fr.every(function (v) { return v === true; });
       return drvResult(true, { rows: rows, inputs: [] });
     });

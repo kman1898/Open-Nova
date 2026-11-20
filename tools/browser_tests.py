@@ -28,7 +28,7 @@ NOVA = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 try: sys.stdout.reconfigure(errors='replace')   # a Windows console can't show every character the tests print
 except AttributeError: pass
 # page -> seconds it may take. ui_sweep opens the app at several widths, sizes and both themes.
-PAGES = {'app_test.html': 300, 'check-modules.html': 120, 'offline_test.html': 120, 'save_rule_test.html': 60, 'scfg_test.html': 120, 'ui_sweep.html': 900}
+PAGES = {'app_test.html': 300, 'check-modules.html': 120, 'offline_test.html': 120, 'online_test.html': 90,'save_rule_test.html': 60, 'scfg_test.html': 120, 'ui_sweep.html': 900}
 MANUAL = {'hwsend_test.html': 'sends a show to a processor through the helper (manual tool)',
           'unicosend_test.html': 'sends a show to a Unico processor through the helper (manual tool)'}
 DONE_JS = "() => /^(PASS|FAIL)\\b/.test(document.title) || /^UI sweep done/.test(document.title)"

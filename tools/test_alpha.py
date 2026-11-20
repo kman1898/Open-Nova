@@ -8,6 +8,7 @@ Nothing here touches the real diagnostics, logs, settings or Downloads: every fo
 import io
 import json
 import os
+import re
 import shutil
 import socket
 import struct
@@ -275,6 +276,49 @@ ok(not [s for s in ['hunter2', 'inner-secret', 'sekret123'] if s in b'\n'.join(T
 code, body = get('/api/hw/report/download?name=' + rep['name'])
 ok(code == 200 and body == open(rep['path'], 'rb').read(), 'download a copy of the report')
 ok(get('/api/hw/report/download?name=..%2F..%2Fversion.json')[0] == 404 and get('/api/hw/report/download?name=OpenNova-report-x.zip')[0] == 404, 'only reports by name, nothing else')
+# this computer (tools/sysdiag.py) and the start window's text (opennova.py's console.txt), with "System"
+sysj = json.loads(T['helper/system.json'].decode('utf-8')) if 'helper/system.json' in T else {}
+ok(set(sysj) >= {'system', 'usbLibraries', 'usbSerial', 'udpPorts', 'firewall'} and '## This computer' in md,
+   'System: helper/system.json (OS, CPU, Python, USB libraries tried, USB / COM drivers, UDP port owners, firewall) and its part of REPORT.md')
+ok(not alpha.state()['repoPublic'], 'repoPublic false by default: the app hides the GitHub issue link (a 404 while the repository is private)')
+write_ver(repoPublic=True); ok(alpha.state()['repoPublic'] is True, 'version.json repoPublic true: the app shows it'); write_ver()
+# Known limits: the app's intro (app-alpha.js ALPHA_LIMITS) and README-ALPHA.md say the same things
+_nova = os.path.dirname(HERE)
+_js = open(os.path.join(_nova, 'app', 'js', 'app-alpha.js'), encoding='utf-8').read()
+_heads = [h.replace('’', "'") for h in re.findall(r"^  \['([^']+)',", _js.split('var ALPHA_LIMITS')[1].split('];')[0], re.M)]
+_readme = open(os.path.join(_nova, 'docs', 'README-ALPHA.md'), encoding='utf-8').read().split('## Known limits in this alpha')[1].split('\n## ')[0]
+_rm = ' '.join(_readme.replace('`', '').split())
+ok(len(_heads) >= 8 and all(h in _rm for h in _heads), 'Known limits: the app intro and README-ALPHA.md list the same points (%s)' % [h for h in _heads if h not in _rm])
+# where to send it (version.json reportContact) on top of REPORT.md; never the placeholder of a build without --contact
+ok('Send this report to: reports@example.invalid' in md2, 'REPORT.md says where to send it')
+ok([alpha.contact_ok(c) for c in ('a@b.c', 'https://x.invalid/up', '', None, '(contact address to be filled in)', 'nobody')] == [True, True, False, False, False, False],
+   'contact_ok: an address or a link, not empty / the placeholder')
+write_ver(reportContact='(contact address to be filled in)')
+z5 = zipfile.ZipFile(alpha.build_report(dict(payload, anonymise=False))['path'])
+ok('Send this report to' not in z5.read(z5.namelist()[0]).decode('utf-8'), 'the placeholder is never printed as an address'); write_ver()
+# made by the app server while the helper isn't running (app/serve.py helper_down): it says so, recordings come from the disk
+r4 = alpha.build_report(dict(payload, anonymise=False, helperDown='the hardware helper is not running (test)'))
+z4 = zipfile.ZipFile(r4['path']); T4 = {n.split('/', 1)[1]: z4.read(n) for n in z4.namelist()}; md4 = T4['REPORT.md'].decode('utf-8')
+ok(r4.get('ok') and r4.get('helperDown') and 'The hardware helper was not running' in md4 and '| Recorder | the helper was not running |' in md4
+   and any(n.startswith('recordings/') and n.endswith('.nwl') for n in T4) and 'app/project.json' in T4 and '## This computer' in md4,
+   'helper down: REPORT.md says so; the newest recordings, the app files and This computer are in it')
+ok(not rep.get('helperDown') and 'was not running' not in md, 'a report made by the helper doesn\'t say that')
+
+# the size cap: the essentials always; then the newest files while the .zip stays under maxMB; REPORT.md names the rest
+alpha.CONSOLE_LOG = os.path.join(TMP, 'console.txt')
+with open(alpha.CONSOLE_LOG, 'w', encoding='utf-8') as f: f.write('Open Nova 0.1.0-alpha.9\nPort 8765 is used by another program: the app uses 8766 instead.\n')
+big_old, big_new = os.path.join(vend, 'old-capture.bin'), os.path.join(vend, 'new-capture.bin')
+for pth, age in ((big_old, 600), (big_new, 0)):
+    with open(pth, 'wb') as f: f.write(os.urandom(700 * 1024))      # doesn't compress
+    os.utime(pth, (time.time() - age,) * 2)
+rep3 = post('/api/hw/report', dict(payload, anonymise=False, maxMB=1))
+z3 = zipfile.ZipFile(rep3['path']); T3 = {n.split('/', 1)[1]: z3.read(n) for n in z3.namelist()}; md3 = T3['REPORT.md'].decode('utf-8')
+ok(rep3.get('leftOut', 0) >= 1 and rep3['bytes'] < 1024 * 1024 and any(n.endswith('new-capture.bin') for n in T3) and not any(n.endswith('old-capture.bin') for n in T3),
+   'over the cap (1 MB here): the newest capture in, the older one left out, the .zip %d KB' % (rep3.get('bytes', 0) // 1024))
+ok('## Left out' in md3 and 'old-capture.bin' in md3.split('## Left out')[1] and 'REPORT.md' in [n.split('/')[-1] for n in T3] and 'app/project.json' in T3,
+   'REPORT.md lists what was left out; REPORT.md and the app files always go in')
+ok('the app uses 8766 instead' in T3.get('logs/console.txt', b'').decode('utf-8'), 'the start window\'s text (console.txt) is in the report')
+for pth in (big_old, big_new): os.remove(pth)
 
 # ------------------------------------------------------------------ scrub / anonymise units
 sc = alpha.scrub('{"Password": "a", "accessToken":"b", "user":"kept"} cookie: s=1 &password=zz')

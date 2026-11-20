@@ -6,7 +6,7 @@
 // The result can be downloaded as an HTML report.
 // Owns: pre, preCheck, preHtml, preReportDownload.
 // Depends on: app-core (P, ui, $, esc, fmt, toast), app-log (log), app-geometry (allCells), app-capacity (portUsage,
-// problems, portLabel), app-hardware (hw, hwPortCells, hwTileProblem, hwDetectedOf), app-health (hlt, hltPoll),
+// problems, portLabel), app-hardware (hw, hwPortCells, hwTileProblem, hwDetectedOf), app-health (hlt, hltPoll, hltWhere),
 // app-redundancy (rd), app-display (disp), app-processors (cardsOfDevice, deviceLabel, procModel), drv-core (DRV), all at run time.
 // Classic script, not an ES module (see app-core.js); every top-level name is a shared global.
 'use strict';
@@ -38,7 +38,9 @@ function preCheck() {
       if (!hw.live[d.id]) add('warn', name, 'Cabinets not detected yet', 'Hardware card → Detect now.');
       else placed.forEach(function (k) {
         var sp = k.split(':'), why = hwTileProblem(+sp[0], +sp[1]);
-        if (why) add('err', name, portLabel(+sp[0], +sp[1]) + ': ' + why, 'Check the cabling on that port, or fix the layout.');
+        var det = hwPortDetected(+sp[0], +sp[1]) || [], nm = (cells[k] || []).length;
+        if (why) add('err', name, portLabel(+sp[0], +sp[1]) + ': ' + why, /swapped/.test(why) ? (alarmInfo('cables of ports 1 and 2 swapped') || {}).suggestion : 'Check the cabling on that port, or fix the layout.');
+        else if (det.length > nm) add('warn', name, portLabel(+sp[0], +sp[1]) + ': ' + nm + ' cabinets mapped, ' + det.length + ' answer', 'The cable has cabinets the layout doesn’t map (they’re still monitored): check which cable is in which port, or fix the layout and Send.');
         else if (!(hwPortDetected(+sp[0], +sp[1]) || []).length) add('err', name, portLabel(+sp[0], +sp[1]) + ': cabinets placed, none detected', 'Check the cable and power on that port.');
       });
       if (hw.unsaved && hw.unsaved[d.id]) add('warn', name, 'Changes not saved on the processor (' + (hw.unsaved[d.id].why || 'edits') + ')', 'Save, or a power cycle loses them.');
@@ -46,9 +48,13 @@ function preCheck() {
       var pairs = P.backup && P.backup.mode === 'port' ? P.backup.pairs.filter(function (q) { return mine.indexOf(q.ms) >= 0; }) : [];
       if (pairs.length && !(rd.verified && rd.verified[d.id])) add('warn', name, pairs.length + ' backup pair(s) not verified this session', 'Backup tab → press Verify, look at the wall, then press Verify again.');
       if (h) {
+        // a whole fibre down (app-health.js hltFiber) is one line, as on Monitor, not one per port
+        h.events.forEach(function (e) {
+          if (e.cardWide) add(e.level === 'error' ? 'err' : 'warn', name, hltWhere(e) + ': ' + e.text, (alarmInfo(e.text) || {}).suggestion || '');
+        });
         h.ports.forEach(function (p) {
-          if (p.backup && p.backup.link === false) add('err', name, portLabel(p.card, p.port) + ': backup port ' + portLabel(p.backup.card, p.backup.port) + ' has no link', 'Plug in the backup cable.');
-          if (!/^(ok|redundant, ok)$/.test(p.link || 'ok')) add('err', name, portLabel(p.card, p.port) + ': ' + p.link, (alarmInfo(p.link) || {}).suggestion || '');
+          if (p.backup && p.backup.link === false && !p.backupOpt) add('err', name, portLabel(p.card, p.port) + ': backup port ' + portLabel(p.backup.card, p.backup.port) + ' has no link', 'Plug in the backup cable.');
+          if (!p.opt && !/^(ok|redundant, ok)$/.test(p.link || 'ok')) add('err', name, portLabel(p.card, p.port) + ': ' + p.link, (alarmInfo(p.link) || {}).suggestion || '');
         });
         var s = h.sum || {};
         if (s.dark) add('err', name, s.dark + ' cabinet(s) dark', (alarmInfo('dark') || {}).suggestion);
