@@ -1,6 +1,6 @@
 {
  "name": "Open Nova",
- "version": "0.1.0-alpha.4",
+ "version": "0.1.0-alpha.5",
  "build": "dev",
  "channel": "dev",
  "readOnly": true,

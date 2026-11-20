@@ -98,6 +98,7 @@ def _keepalive(s):
 
 
 NO_REPLY_WAIT = 0.3   # s: how long a no-reply write waits for an answer that may come anyway (TcpLink.write)
+OWED_WAIT = 1.5       # s after it was sent: how long the next request waits for the late answer to a read that timed out
 
 
 class TcpLink:
@@ -116,8 +117,23 @@ class TcpLink:
         self.serial = 0
         self.buf = b''
         self.last = None   # the request waiting for its reply (for the error record)
+        # Reads that timed out but may still be answered: {serial: time sent}. An H9 answers a read past the end of a cabled
+        # chain with status 1 only after ~500 ms, and answers in order: a request sent before that answer waits behind it
+        # and times out too (tester report 2026-11-20: detect gave up on the end probe after ~60 ms, so the first cabinet of
+        # the NEXT port timed out and the port showed 0 cards, 14 the next time). So the next request waits for the owed
+        # answer first (_settle). late: None = not known yet, True = this processor does answer late, False = it stays
+        # silent (no wait then: a processor whose cards past the end never answer keeps its fast detect).
+        self.owed, self.late = {}, None
 
     lock = None   # the target's lock, when opened through open_link (released on close)
+    owed = None   # TCP only (set in __init__): the serial / USB links built on this class don't wait for owed answers
+    late = False
+
+    def _owe(self, serial):
+        if self.owed is not None: self.owed[serial] = getattr(self, 'sent_at', time.time())
+
+    def _paid(self, serial):
+        if self.owed and self.owed.pop(serial, None) is not None: self.late = True
 
     def close(self, why=None):
         if getattr(self, 'buf', b''): wirelog.stray(self.tag, self.buf, 'left over at close'); self.buf = b''   # nothing received goes unrecorded
@@ -130,8 +146,39 @@ class TcpLink:
         wirelog.err(self.tag, text, self.last)
         raise (LinkLost if lost else LinkError)(text)
 
+    def _settle(self):
+        """Before a new request: wait (up to OWED_WAIT after each was sent) for the late answers still owed, so the new
+        request isn't queued behind them in the processor. They are recorded as stale replies."""
+        deadline = max(self.owed.values()) + OWED_WAIT; old = self.s.gettimeout()
+        try:
+            while self.owed:
+                while len(self.buf) >= 2:
+                    i = self.buf.find(b'\xAA\x55')
+                    if i < 0: break
+                    if i > 0: wirelog.stray(self.tag, self.buf[:i]); self.buf = self.buf[i:]
+                    if len(self.buf) < 20: break
+                    n = struct.unpack_from('<H', self.buf, 16)[0]
+                    if len(self.buf) < 20 + n: break
+                    r = self.buf[:20 + n]; self.buf = self.buf[20 + n:]
+                    wirelog.tg(self.tag, 'rx', r, stale=True)
+                    self._paid(r[3])
+                if not self.owed: break
+                left = deadline - time.time()
+                if left <= 0:
+                    if self.late is None: self.late = False      # it stays silent: don't wait for it again
+                    self.owed.clear(); break
+                self.s.settimeout(left)
+                try: d = self.s.recv(65536)
+                except socket.timeout: continue
+                except OSError as e: self._fail('receive failed: %s' % e, True)
+                if not d: self._fail('connection closed', True)
+                self.buf += d
+        finally: self.s.settimeout(old)
+
     def _send(self, f):
-        self.last = f
+        if self.owed and self.late is not False: self._settle()
+        if self.owed: self.owed.clear()
+        self.last = f; self.sent_at = time.time()
         wirelog.tg(self.tag, 'tx', f)
         try: self.s.sendall(f)
         except OSError as e: self._fail('send failed: %s' % e, True)
@@ -164,7 +211,10 @@ class TcpLink:
                 n = struct.unpack_from('<H', self.buf, i + 16)[0]
                 if len(self.buf) - i >= 20 + n:
                     r = self.buf[i:i + 20 + n]; self.buf = self.buf[i + 20 + n:]
-                    if r[3] != serial: wirelog.tg(self.tag, 'rx', r, stale=True); continue          # stale reply
+                    if r[3] != serial:                                                       # stale reply
+                        wirelog.tg(self.tag, 'rx', r, stale=True)
+                        self._paid(r[3])
+                        continue
                     wirelog.tg(self.tag, 'rx', r)
                     if struct.unpack_from('<H', r, len(r) - 2)[0] != sum16(r[2:-2], 0x5555): self._fail('bad reply checksum')
                     if full: return r
@@ -173,11 +223,11 @@ class TcpLink:
                     return r[18:18 + n]
             if time.time() > deadline:
                 if quiet: raise LinkError('no reply (timeout)')
-                self._fail('no reply (timeout)')
+                self._owe(serial); self._fail('no reply (timeout)')
             try: d = self.s.recv(65536)
             except socket.timeout:
                 if quiet: raise LinkError('no reply (timeout)')
-                self._fail('no reply (timeout)')
+                self._owe(serial); self._fail('no reply (timeout)')
             except OSError as e: self._fail('receive failed: %s' % e, True)
             if not d: self._fail('connection closed', True)
             self.buf += d

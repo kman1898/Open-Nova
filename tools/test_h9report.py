@@ -2,13 +2,16 @@
 aren't link errors; identify stays on the backup once a port's cards answer only there; the H 16-port card's function
 table (status 4) falls back to the FreeRoute byte or says "not available"; the H's MVR card (0x7B47) is never asked for a
 sending card's table; one processor heard on two adapters of the same network is listed once (same MAC in the ARP table),
-two isolated networks stay two. Stdlib only, stand-ins only (no hardware)."""
+two isolated networks stay two. The second report (2026-11-20): the H9 answers a read past the end of a cabled chain only
+after ~500 ms, in order, so detect waits for that late answer before its next read (no more "port 2: 0 cards" one run, 14
+the next); a processor that stays silent there keeps its fast detect. Stdlib only, stand-ins only (no hardware)."""
 import os
 import socket
 import struct
 import sys
 import tempfile
 import threading
+import time
 
 DIAG = tempfile.mkdtemp(prefix='opennova_diag_test_')
 os.environ['OPENNOVA_DIAG'] = DIAG
@@ -46,7 +49,9 @@ def tg_server(answer):
                     req, buf = buf[:ln], buf[ln:]
                     dst, dev, port = req[5], req[6], req[7]
                     card, addr = struct.unpack_from('<H', req, 8)[0], struct.unpack_from('<I', req, 12)[0]
-                    st, data = answer(dst, dev, port, card, addr, n)
+                    got = answer(dst, dev, port, card, addr, n)
+                    if got is None: continue                                   # a processor that stays silent
+                    st, data = got
                     h = bytearray(req[:18]); h[0], h[1], h[2] = 0xAA, 0x55, st
                     struct.pack_into('<H', h, 16, len(data)); b = bytes(h) + data
                     c.sendall(b + struct.pack('<H', (0x5555 + sum(b[2:])) & 0xFFFF))
@@ -146,6 +151,36 @@ md = alpha.report_md({'summary': {'app': {}, 'monitor': mon}}, hh)
 ok('## Monitor (errors kept until Clear)' in md and '| 19:09:43 | going on | error | H9 | S2 | OPT1 fiber: no link — ports 1–8 running on backup (OPT2) | 1 |' in md
    and '| 19:09:43 | 19:10:00 | warning | H9 | S2 P1 | 10 cabinets mapped, 5 answer | 2 |' in md, 'REPORT.md lists Monitor kept errors (going on / ended)')
 ok('## Monitor' not in alpha.report_md({'summary': {'app': {}}}, hh), 'REPORT.md: no Monitor section when nothing is kept')
+
+# ------------------------------------------------------------------ the end probe the H9 answers late (second report, 2026-11-20)
+SLOW = 0.8      # the H9: ~500 ms (957 ms when two queued); longer here so a request sent behind it surely misses its time
+def chains(silent):
+    def answer(dst, dev, port, card, addr, n):
+        if dev == 0 and addr == 0x02000000: b = bytearray(n); b[31] = 0b0011; return 0, bytes(b)   # ports 1 and 2 linked
+        if dev == 0: return 0, bytes(n)
+        if dev == 1 and addr == 0x02000000 and port in (0, 1):
+            if card < 14: b = bytearray(32); b[0x17] = b[0x19] = 216; return 0, bytes(b)
+            if silent: return None
+            time.sleep(SLOW); return 1, b''                       # "no card here", late; the next request waits behind it
+        if dev == 1: return 1, b''
+        return 2, b''
+    return answer
+
+
+def run_detect(silent):
+    srv = tg_server(chains(silent)); h, pt = srv.getsockname()
+    lk = novalink.TcpLink(h, pt, 2.0); t0 = time.time(); logs = []
+    out = novalink.detect(lk, [{'dst': 0, 'ports': 4}], logs.append)
+    took = time.time() - t0; late = getattr(lk, 'late', None); lk.close(); srv.close()
+    return {p: len(c) for p, c in out[0]['ports'].items()}, took, late
+
+
+for k in range(3):
+    got, took, late = run_detect(False)
+    ok(got == {0: 14, 1: 14} and late is True, 'H9 end probe answered late: both ports 14 cards, every run (run %d, %.1f s)' % (k + 1, took), got)
+got, took, late = run_detect(True)
+ok(got == {0: 14, 1: 14} and late is False, 'a processor silent past the end: both ports 14 cards, and it isn\'t waited for again', got, late)
+ok(took < novalink.OWED_WAIT + 1.0, 'silent past the end: one wait for the late answer at most (%.1f s)' % took)
 
 print('All passed' if not fails else '%d FAILED' % fails)
 sys.exit(1 if fails else 0)

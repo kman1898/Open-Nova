@@ -115,8 +115,8 @@ function hwPortCells() {
 function hwTileProblem(card, port) {
   var det = hwPortDetected(card, port), cells = det ? (hwPortCells()[card + ':' + port] || []) : [];
   if (!det || !cells.length) return '';
-  var sw = typeof hltSwapOf === 'function' ? hltSwapOf(card, port) : null;   // its cable and another port's go to each other's runs
-  if (sw) return (sw.backup ? 'backup cable' : 'cable') + ' swapped with ' + portLabel(card, sw.port) + '’s';
+  var sw = typeof hltSwapOf === 'function' ? hltSwapOf(card, port) : null;   // map and cables disagree: it reaches another port's run
+  if (sw) return (sw.backup ? 'backup ' : '') + 'crossed with ' + portLabel(card, sw.port) + ' (map or cables)';
   if (cells.length > det.length) return cells.length + ' cabinets placed, ' + det.length + ' detected';
   var bad = cells.filter(function (c, i) { var x = det[i]; return x && (x.w !== c.width || x.h !== c.height); });
   if (bad.length) { var c = bad[0], i = cells.indexOf(c), x = det[i];

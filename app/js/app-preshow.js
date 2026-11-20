@@ -39,7 +39,7 @@ function preCheck() {
       else placed.forEach(function (k) {
         var sp = k.split(':'), why = hwTileProblem(+sp[0], +sp[1]);
         var det = hwPortDetected(+sp[0], +sp[1]) || [], nm = (cells[k] || []).length;
-        if (why) add('err', name, portLabel(+sp[0], +sp[1]) + ': ' + why, /swapped/.test(why) ? (alarmInfo('cables of ports 1 and 2 swapped') || {}).suggestion : 'Check the cabling on that port, or fix the layout.');
+        if (why) add('err', name, portLabel(+sp[0], +sp[1]) + ': ' + why, /crossed/.test(why) ? (alarmInfo('ports 1 and 2 crossed') || {}).suggestion : 'Check the cabling on that port, or fix the layout.');
         else if (det.length > nm) add('warn', name, portLabel(+sp[0], +sp[1]) + ': ' + nm + ' cabinets mapped, ' + det.length + ' answer', 'The cable has cabinets the layout doesn’t map (they’re still monitored): check which cable is in which port, or fix the layout and Send.');
         else if (!(hwPortDetected(+sp[0], +sp[1]) || []).length) add('err', name, portLabel(+sp[0], +sp[1]) + ': cabinets placed, none detected', 'Check the cable and power on that port.');
       });

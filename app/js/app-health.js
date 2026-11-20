@@ -194,13 +194,15 @@ function hltFiber(d, h) {
 // warning per port, kept like the others; the mapped cabinets past the cable's count are drawn "not answering — mapping has
 // more cabinets than the cable" (hltCabinet). Monitoring itself reads what the cables have (the detection), so nothing on
 // the wall goes unread.
-// Two ports whose cables answer with each other's mapped counts are SWAPPED cables (an H9 tester, 2026-11-19: OPT1 unplugged,
-// so the counts came through the backups; port 1 maps 10 and port 5 maps 5 — the user: "port 5 is the one that has 5
-// panels" — but backup port 9 reached 5 cards and port 13 reached 10). One error for the pair instead of two count
-// warnings, and each reading goes on the cabinet it came from: what was read for port 1 is port 5's run, and back.
+// Two ports whose cables answer with each other's mapped counts are CROSSED: the map and the cabling disagree, and the
+// counts can't tell which is wrong (an H9 tester, 2026-11-19: OPT1 unplugged, so the counts came through the backups; the
+// screen layout read from the H9 gave port 1 10 and port 5 5, but backup port 9 reached 5 cards and port 13 reached 10.
+// First taken for swapped cables; the tester's NovaLCT screen (2026-11-20) has port 1 on the 5, so the layout was the odd
+// one out). One error for the pair instead of two count warnings, and each reading goes on the cabinets that cable
+// reaches: what was read for port 1 is drawn on the layout's port-5 run, and back.
 var HLT_CAB_EVENT = /^(temperature|supply voltage|bit errors|power supply|not answering)/;
 function hltViaOf(list) { return list && list.length && list.every(function (x) { return x.via === 'backup'; }) ? 'backup' : 'primary'; }
-// The port of the same card whose cable this port's cable is swapped with: the counts cross over exactly (and only one port
+// The port of the same card this port is crossed with (map vs cables): the counts cross over exactly (and only one port
 // fits), both read the same way (primary / backup). Else null.
 function hltSwapOf(card, port) {
   var cells = hwPortCells(), n = function (p) { return (cells[card + ':' + p] || []).length; };
@@ -238,8 +240,8 @@ function hltMapGap(d, h) {
       done[k] = 1;
       var a = port, b = sw.port, ba = bkPort(card, a), bb = bkPort(card, b), nb = (cells[card + ':' + b] || []).length;
       var text = sw.backup && ba != null && bb != null
-        ? 'Backup cables of ports ' + (a + 1) + ' and ' + (b + 1) + ' swapped: port ' + (ba + 1) + ' reaches port ' + (b + 1) + '’s ' + nb + ' cabinets, port ' + (bb + 1) + ' reaches port ' + (a + 1) + '’s ' + mapped
-        : 'Cables of ports ' + (a + 1) + ' and ' + (b + 1) + ' swapped: port ' + (a + 1) + '’s cable has port ' + (b + 1) + '’s ' + nb + ' cabinets, port ' + (b + 1) + '’s has port ' + (a + 1) + '’s ' + mapped;
+        ? 'Ports ' + (a + 1) + ' and ' + (b + 1) + ' crossed: backup port ' + (ba + 1) + ' reaches ' + nb + ' cabinets (port ' + (a + 1) + ' has ' + mapped + ' mapped), port ' + (bb + 1) + ' reaches ' + mapped + ' (port ' + (b + 1) + ' has ' + nb + ' mapped)'
+        : 'Ports ' + (a + 1) + ' and ' + (b + 1) + ' crossed: port ' + (a + 1) + '’s cable reaches ' + nb + ' cabinets (' + mapped + ' mapped), port ' + (b + 1) + '’s reaches ' + mapped + ' (' + nb + ' mapped)';
       h.events.push({ level: 'error', card: card, port: a, index: null, swap: true, text: text });
       return;
     }

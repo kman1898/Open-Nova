@@ -2,8 +2,9 @@
 // 1–8 on the same card, OPT1 = primary (ports 1–8), OPT2 = backup (9–16). OPT1's fibre wasn't plugged in: card 2's five ports had
 // no link and ran on OPT2 -> ONE "OPT1 fiber" event, no per-port "primary port failed" and no break at cabinet 1. Card 1 had
 // one port down and one up -> per-port, as before. Also the layout vs the cables: card 2's port 1 maps 10 and port 5 maps 5 (the
-// user: "port 5 is the one that has 5 panels"), but backup port 9 reached 5 cards and port 13 reached 10 -> the backup cables
-// of ports 1 and 5 are swapped (one error, each reading on the cabinet it came from); a plain count gap; the cabinets mapped
+// layout read from the H9), but backup port 9 reached 5 cards and port 13 reached 10 -> ports 1 and 5 are crossed, map vs
+// cables (the tester's NovaLCT screen: port 1 has the 5, so the layout was wrong; one error, each reading on the cabinets its
+// cable reaches); a plain count gap; the cabinets mapped
 // past the cable; and the backup-side fibre. The fixture is the report's
 // own shape (helper health reply, detection, layout counts); no tester data.
 var vm = require('vm'), fs = require('fs'), path = require('path');
@@ -102,13 +103,15 @@ ok(held.length === 1 && held[0].cardWide && c.hltWhere(held[0]) === 'S2', 'kept 
 var line = c.hlt.log.filter(function (e) { return /^OPT1 fiber/.test(e.text); })[0];
 ok(line && line.where === 'S2' && line.level === 'error', 'the event list: "H9 S2 · OPT1 fiber: no link — …"', line);
 
-// ------------------------------------------------------------------ layout vs cables: the swapped backup cables
-var gap = ev(/cabinets? mapped/), swp = ev(/swapped/);
-ok(swp.length === 1 && swp[0].card === 1 && swp[0].port === 0 && swp[0].level === 'error' &&
-   swp[0].text === 'Backup cables of ports 1 and 5 swapped: port 9 reaches port 5’s 5 cabinets, port 13 reaches port 1’s 10',
-  'card 2: ONE error "Backup cables of ports 1 and 5 swapped: port 9 reaches port 5’s 5 cabinets, port 13 reaches port 1’s 10"', swp);
-ok(gap.length === 0, 'no "mapped / answer" count warnings for the swapped pair', gap);
-ok(c.alarmInfo(swp[0].text) && /Swap the two cables back/.test(c.alarmInfo(swp[0].text).suggestion), 'Monitor explains it: swap the two cables back, then Verify');
+// ------------------------------------------------------------------ layout vs cables: ports 1 and 5 crossed (on the backups)
+var X15 = 'Ports 1 and 5 crossed: backup port 9 reaches 5 cabinets (port 1 has 10 mapped), port 13 reaches 10 (port 5 has 5 mapped)';
+var gap = ev(/cabinets? mapped/), swp = ev(/crossed/);
+ok(swp.length === 1 && swp[0].card === 1 && swp[0].port === 0 && swp[0].level === 'error' && swp[0].text === X15,
+  'card 2: ONE error "' + X15 + '"', swp);
+ok(gap.length === 0, 'no "mapped / answer" count warnings for the crossed pair', gap);
+var xi = c.alarmInfo(swp[0].text);
+ok(xi && /map/.test(xi.cause) && /cables are swapped/.test(xi.cause) && /fix it and Send/.test(xi.suggestion) && /swap them back/.test(xi.suggestion),
+  'Monitor explains it without blaming the cables: map or cables, fix whichever is wrong, then Verify', xi);
 var on = function (port) { return h.cabinets.filter(function (x) { return x.card === 1 && x.port === port; }); };
 ok(on(0).length === 10 && on(4).length === 5 && on(0).concat(on(4)).every(function (x) { return x.swapped && x.side === 'backup'; }),
   'the readings go where they came from: port 13\'s 10 on port 1\'s run, port 9\'s 5 on port 5\'s', [on(0).length, on(4).length]);
@@ -129,8 +132,8 @@ ok(te.length === 1 && te[0].port === 0 && te[0].index === 7, 'a cabinet event mo
 setup(c, { via: 'primary' });
 c.hlt.held = {};
 var hp = c.hltNorm(c.P.devices[0], reply({ card2: 'up' }));
-var sp = hp.events.filter(function (e) { return /swapped/.test(e.text); });
-ok(sp.length === 1 && sp[0].text === 'Cables of ports 1 and 5 swapped: port 1’s cable has port 5’s 5 cabinets, port 5’s has port 1’s 10', 'primary cables crossed: "Cables of ports 1 and 5 swapped: …"', sp);
+var sp = hp.events.filter(function (e) { return /crossed/.test(e.text); });
+ok(sp.length === 1 && sp[0].text === 'Ports 1 and 5 crossed: port 1’s cable reaches 5 cabinets (10 mapped), port 5’s reaches 10 (5 mapped)', 'on the primaries: "Ports 1 and 5 crossed: port 1’s cable reaches 5 cabinets (10 mapped), …"', sp);
 
 // ------------------------------------------------------------------ layout vs cables: a plain count gap (port 1's backup has 5, port 5's has 5)
 setup(c, { cable: { 0: 5, 1: 10, 2: 10, 3: 10, 4: 5 } });
@@ -139,7 +142,7 @@ h = c.hltNorm(c.P.devices[0], reply());
 gap = h.events.filter(function (e) { return /cabinets? mapped/.test(e.text); });
 var g1 = gap.filter(function (e) { return e.card === 1 && e.port === 0; })[0];
 ok(gap.length === 1 && g1 && g1.text === '10 cabinets mapped, 5 answer on its backup cable (port 9)' && g1.level === 'warning', 'card 2 port 1: "10 cabinets mapped, 5 answer on its backup cable (port 9)"', gap);
-ok(!h.events.some(function (e) { return /swapped/.test(e.text); }), 'counts that don\'t cross over are not called a swap');
+ok(!h.events.some(function (e) { return /crossed/.test(e.text); }), 'counts that don\'t cross over are not called crossed');
 ok(c.alarmInfo(g1.text) && /which cable/.test(c.alarmInfo(g1.text).suggestion), 'Monitor explains the gap');
 // the map: the mapped cabinets past the cable
 c.hlt.by.h9 = h;
